@@ -1,0 +1,72 @@
+{
+  "name": "语义预筛选",
+  "domain": "business",
+  "owner": "aok",
+  "version": "1.0.0",
+  "description": "事务 语义预筛选",
+  "tags": [],
+  "docs": {
+    "md_path": "autodokit/affairs/语义预筛选/affair.md"
+  },
+  "runner": {
+    "module": "autodokit.affairs.语义预筛选.affair",
+    "callable": "execute",
+    "pass_mode": "config_path",
+    "kwargs": {}
+  },
+  "interface": {
+    "inputs": [],
+    "outputs": []
+  },
+  "config": {
+    "defaults": {},
+    "required": []
+  },
+  "legacy": {
+    "module_aliases": [
+      "autodokit.affairs.语义预筛选"
+    ]
+  },
+  "node": {
+    "node_type": "transform",
+    "affair_type": "semantic_prescreen_v1",
+    "config": {
+      "input_table_csv": "workflows/workflow_导入和预处理文献元数据/data/题录导出文件/文献数据表.csv",
+      "input_keywords": "workflows/workflow_生成关键词集合/data/01_keyword_set",
+      "output_dir": "workflows/workflow_语义预筛选/data/01_prescreen",
+      "include_if_has_pdf": true,
+      "include_domains": [
+        "房地产",
+        "银行系统性风险"
+      ],
+      "exclude_domains": [
+        "DSGE模型"
+      ],
+      "year_range": null,
+      "top_k": 80,
+      "semantic_enable": false,
+      "semantic_queries": []
+    },
+    "payload_defaults": {},
+    "inputs": {
+      "table": {
+        "name": "table",
+        "data_type": "csv"
+      },
+      "keywords": {
+        "name": "keywords",
+        "data_type": "dir"
+      }
+    },
+    "outputs": {
+      "prescreen": {
+        "name": "prescreen",
+        "data_type": "dir"
+      }
+    },
+    "allow_multi_input_ports": [],
+    "is_leaf": false,
+    "is_business": true,
+    "is_graph": false
+  }
+}

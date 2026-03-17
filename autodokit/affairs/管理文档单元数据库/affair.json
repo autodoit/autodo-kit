@@ -1,0 +1,56 @@
+{
+  "name": "管理文档单元数据库",
+  "domain": "business",
+  "owner": "aok",
+  "version": "1.0.0",
+  "description": "事务 管理文档单元数据库",
+  "tags": [],
+  "docs": {
+    "md_path": "autodokit/affairs/管理文档单元数据库/affair.md"
+  },
+  "runner": {
+    "module": "autodokit.affairs.管理文档单元数据库.affair",
+    "callable": "execute",
+    "pass_mode": "config_path",
+    "kwargs": {}
+  },
+  "interface": {
+    "inputs": [],
+    "outputs": []
+  },
+  "config": {
+    "defaults": {},
+    "required": []
+  },
+  "legacy": {
+    "module_aliases": [
+      "autodokit.affairs.管理文档单元数据库"
+    ]
+  },
+  "node": {
+    "node_type": "transform",
+    "affair_type": "manage_unit_db_v1",
+    "config": {
+      "input_documents_dir": "data/文献原文数据",
+      "unit_db_dir": "data/文档单元数据库",
+      "output_dir": "workflows/workflow_管理文档单元数据库/data/01_unit_db"
+    },
+    "payload_defaults": {},
+    "inputs": {
+      "documents": {
+        "name": "documents",
+        "data_type": "dir"
+      }
+    },
+    "outputs": {
+      "unit_db": {
+        "name": "unit_db",
+        "data_type": "dir"
+      }
+    },
+    "allow_multi_input_ports": [],
+    "is_leaf": false,
+    "is_business": true,
+    "is_graph": false
+  }
+}

@@ -1,0 +1,50 @@
+{
+  "name": "图节点_input",
+  "domain": "graph",
+  "owner": "aok",
+  "version": "1.0.0",
+  "description": "事务 图节点_input",
+  "tags": [],
+  "docs": {
+    "md_path": "autodokit/affairs/图节点_input/affair.md"
+  },
+  "runner": {
+    "module": "autodokit.affairs.图节点_input.affair",
+    "callable": "execute",
+    "pass_mode": "config_path",
+    "kwargs": {}
+  },
+  "interface": {
+    "inputs": [],
+    "outputs": []
+  },
+  "config": {
+    "defaults": {},
+    "required": []
+  },
+  "legacy": {
+    "module_aliases": [
+      "autodokit.affairs.graph_node_input"
+    ]
+  },
+  "node": {
+    "node_type": "input",
+    "affair_type": "graph_node_input_v1",
+    "config": {
+      "input_name": "input",
+      "input_source": ""
+    },
+    "payload_defaults": {},
+    "inputs": {},
+    "outputs": {
+      "data": {
+        "name": "data",
+        "data_type": "any"
+      }
+    },
+    "allow_multi_input_ports": [],
+    "is_leaf": false,
+    "is_business": false,
+    "is_graph": true
+  }
+}

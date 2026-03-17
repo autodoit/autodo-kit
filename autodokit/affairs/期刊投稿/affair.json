@@ -1,0 +1,36 @@
+{
+  "name": "期刊投稿",
+  "domain": "business",
+  "owner": "aok",
+  "version": "1.0.0",
+  "description": "事务 期刊投稿",
+  "docs": {
+    "md_path": "autodokit/affairs/期刊投稿/affair.md"
+  },
+  "runner": {
+    "module": "autodokit.affairs.期刊投稿.affair",
+    "callable": "execute",
+    "pass_mode": "config_path",
+    "kwargs": {}
+  },
+  "legacy": {
+    "module_aliases": ["autodokit.affairs.期刊投稿"]
+  },
+  "node": {
+    "node_type": "transform",
+    "affair_type": "journal_submission_v1",
+    "config": {
+      "manuscript_title": "",
+      "target_journal": "",
+      "package_files": [],
+      "version_tag": "v1"
+    },
+    "payload_defaults": {},
+    "inputs": {},
+    "outputs": {},
+    "allow_multi_input_ports": [],
+    "is_leaf": false,
+    "is_business": true,
+    "is_graph": false
+  }
+}

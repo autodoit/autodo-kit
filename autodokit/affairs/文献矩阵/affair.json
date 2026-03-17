@@ -1,0 +1,54 @@
+{
+  "name": "文献矩阵",
+  "domain": "business",
+  "owner": "aok",
+  "version": "1.0.0",
+  "description": "事务 文献矩阵",
+  "tags": [],
+  "docs": {
+    "md_path": "autodokit/affairs/文献矩阵/affair.md"
+  },
+  "runner": {
+    "module": "autodokit.affairs.文献矩阵.affair",
+    "callable": "execute",
+    "pass_mode": "config_path",
+    "kwargs": {}
+  },
+  "interface": {
+    "inputs": [],
+    "outputs": []
+  },
+  "config": {
+    "defaults": {},
+    "required": []
+  },
+  "legacy": {
+    "module_aliases": [
+      "autodokit.affairs.文献矩阵"
+    ]
+  },
+  "node": {
+    "node_type": "source",
+    "affair_type": "literature_matrix_v1",
+    "config": {
+      "input_docs_jsonl": "output/docs/docs.jsonl",
+      "output_dir": "output/matrix",
+      "limit": 20,
+      "uids": null,
+      "model": "qwen-plus",
+      "max_chars": 8000
+    },
+    "payload_defaults": {},
+    "inputs": {},
+    "outputs": {
+      "result": {
+        "name": "result",
+        "data_type": "jsonl"
+      }
+    },
+    "allow_multi_input_ports": [],
+    "is_leaf": false,
+    "is_business": true,
+    "is_graph": false
+  }
+}

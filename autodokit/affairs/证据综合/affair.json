@@ -1,0 +1,47 @@
+{
+  "name": "证据综合",
+  "domain": "business",
+  "owner": "aok",
+  "version": "1.0.0",
+  "description": "事务 证据综合",
+  "tags": [],
+  "docs": {
+    "md_path": "autodokit/affairs/证据综合/affair.md"
+  },
+  "runner": {
+    "module": "autodokit.affairs.证据综合.affair",
+    "callable": "execute",
+    "pass_mode": "config_path",
+    "kwargs": {}
+  },
+  "interface": {
+    "inputs": [],
+    "outputs": []
+  },
+  "config": {
+    "defaults": {},
+    "required": []
+  },
+  "legacy": {
+    "module_aliases": [
+      "autodokit.affairs.证据综合"
+    ]
+  },
+  "node": {
+    "node_type": "transform",
+    "affair_type": "rag_evidence_synthesis_v1",
+    "config": {
+      "question": "",
+      "passages": [],
+      "top_k": 3,
+      "output_dir": ""
+    },
+    "payload_defaults": {},
+    "inputs": {},
+    "outputs": {},
+    "allow_multi_input_ports": [],
+    "is_leaf": false,
+    "is_business": true,
+    "is_graph": false
+  }
+}

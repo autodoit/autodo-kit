@@ -1,0 +1,52 @@
+{
+  "name": "Word转LaTeX",
+  "domain": "business",
+  "owner": "aok",
+  "version": "1.0.0",
+  "description": "事务 Word转LaTeX",
+  "tags": [],
+  "docs": {
+    "md_path": "autodokit/affairs/Word转LaTeX/affair.md"
+  },
+  "runner": {
+    "module": "autodokit.affairs.Word转LaTeX.affair",
+    "callable": "execute",
+    "pass_mode": "config_path",
+    "kwargs": {}
+  },
+  "interface": {
+    "inputs": [],
+    "outputs": []
+  },
+  "config": {
+    "defaults": {},
+    "required": []
+  },
+  "legacy": {
+    "module_aliases": [
+      "autodokit.affairs.Word转LaTeX"
+    ]
+  },
+  "node": {
+    "node_type": "transform",
+    "affair_type": "Word转LaTeX",
+    "config": {},
+    "payload_defaults": {},
+    "inputs": {
+      "in": {
+        "name": "in",
+        "data_type": "any"
+      }
+    },
+    "outputs": {
+      "out": {
+        "name": "out",
+        "data_type": "any"
+      }
+    },
+    "allow_multi_input_ports": [],
+    "is_leaf": false,
+    "is_business": true,
+    "is_graph": false
+  }
+}

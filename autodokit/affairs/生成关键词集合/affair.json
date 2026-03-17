@@ -1,0 +1,88 @@
+{
+  "name": "生成关键词集合",
+  "domain": "business",
+  "owner": "aok",
+  "version": "1.0.0",
+  "description": "事务 生成关键词集合",
+  "tags": [],
+  "docs": {
+    "md_path": "autodokit/affairs/生成关键词集合/affair.md"
+  },
+  "runner": {
+    "module": "autodokit.affairs.生成关键词集合.affair",
+    "callable": "execute",
+    "pass_mode": "config_path",
+    "kwargs": {}
+  },
+  "interface": {
+    "inputs": [],
+    "outputs": []
+  },
+  "config": {
+    "defaults": {},
+    "required": []
+  },
+  "legacy": {
+    "module_aliases": [
+      "autodokit.affairs.生成关键词集合"
+    ]
+  },
+  "node": {
+    "node_type": "source",
+    "affair_type": "keyword_set_generation_v1",
+    "config": {
+      "description": "研究主题：房地产市场与银行系统性风险的交叉研究，关注房价波动、抵押品渠道、银行风险传导与宏观审慎监管。",
+      "research_domains": {
+        "房地产": [
+          "房地产",
+          "房价",
+          "住房市场",
+          "房地产价格波动",
+          "抵押品",
+          "房地产周期"
+        ],
+        "银行系统性风险": [
+          "银行系统性风险",
+          "系统性风险",
+          "风险溢出",
+          "CoVaR",
+          "宏观审慎",
+          "银行风险传导"
+        ],
+        "DSGE模型": [
+          "DSGE"
+        ]
+      },
+      "reference_materials_dir": "workflows/workflow_生成关键词集合/data/00_reference_materials",
+      "reference_materials_max_files": 20,
+      "reference_materials_max_chars": 20000,
+      "output_dir": "workflows/workflow_生成关键词集合/data/01_keyword_set",
+      "output_json_name": "keyword_set.json",
+      "output_txt_name": "keyword_set.txt",
+      "output_pairs_name": "keyword_pairs.txt",
+      "output_debug_name": "keyword_debug.json",
+      "output_domains_name": "keyword_domains.json",
+      "model": "qwen-plus",
+      "temperature": 0.2,
+      "max_keywords": 80,
+      "include_chinese": true,
+      "include_english": true,
+      "include_phrases": true,
+      "max_domain_keywords": 40,
+      "max_pairs": 2000,
+      "dry_run": false
+    },
+    "payload_defaults": {},
+    "inputs": {},
+    "outputs": {
+      "keywords": {
+        "name": "keywords",
+        "data_type": "dir"
+      }
+    },
+    "allow_multi_input_ports": [],
+    "is_leaf": false,
+    "is_business": true,
+    "is_graph": false
+  }
+}

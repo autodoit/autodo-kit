@@ -1,0 +1,55 @@
+{
+  "name": "单篇精读",
+  "domain": "business",
+  "owner": "aok",
+  "version": "1.0.0",
+  "description": "事务 单篇精读",
+  "tags": [],
+  "docs": {
+    "md_path": "autodokit/affairs/单篇精读/affair.md"
+  },
+  "runner": {
+    "module": "autodokit.affairs.单篇精读.affair",
+    "callable": "execute",
+    "pass_mode": "config_path",
+    "kwargs": {}
+  },
+  "interface": {
+    "inputs": [],
+    "outputs": []
+  },
+  "config": {
+    "defaults": {},
+    "required": []
+  },
+  "legacy": {
+    "module_aliases": [
+      "autodokit.affairs.单篇精读"
+    ]
+  },
+  "node": {
+    "node_type": "sink",
+    "affair_type": "single_paper_reading_v1",
+    "config": {
+      "input_docs_jsonl": "workflows/workflow_从PDF提取可检索文本/output/02_pdf_to_docs/docs.jsonl",
+      "output_dir": "workflows/workflow_单篇精读/output/05_single_reading",
+      "uid": 1,
+      "doc_id": null,
+      "model": "qwen-plus",
+      "system_prompt": "你是一名严谨的学术研究助理。请用中文输出，结构清晰。",
+      "max_chars": 12000
+    },
+    "payload_defaults": {},
+    "inputs": {
+      "docs": {
+        "name": "docs",
+        "data_type": "jsonl"
+      }
+    },
+    "outputs": {},
+    "allow_multi_input_ports": [],
+    "is_leaf": true,
+    "is_business": true,
+    "is_graph": false
+  }
+}

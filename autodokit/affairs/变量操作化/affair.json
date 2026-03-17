@@ -1,0 +1,36 @@
+{
+  "name": "变量操作化",
+  "domain": "business",
+  "owner": "aok",
+  "version": "1.0.0",
+  "description": "事务 变量操作化",
+  "docs": {
+    "md_path": "autodokit/affairs/变量操作化/affair.md"
+  },
+  "runner": {
+    "module": "autodokit.affairs.变量操作化.affair",
+    "callable": "execute",
+    "pass_mode": "config_path",
+    "kwargs": {}
+  },
+  "legacy": {
+    "module_aliases": [
+      "autodokit.affairs.变量操作化"
+    ]
+  },
+  "node": {
+    "node_type": "transform",
+    "affair_type": "variable_operationalization_v1",
+    "config": {
+      "concepts": [],
+      "output_dir": ""
+    },
+    "payload_defaults": {},
+    "inputs": {},
+    "outputs": {},
+    "allow_multi_input_ports": [],
+    "is_leaf": false,
+    "is_business": true,
+    "is_graph": false
+  }
+}

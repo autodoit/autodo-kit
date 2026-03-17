@@ -1,0 +1,40 @@
+{
+  "name": "模型路由派发",
+  "domain": "business",
+  "owner": "aok",
+  "version": "1.0.0",
+  "description": "事务 模型路由派发",
+  "docs": {
+    "md_path": "autodokit/affairs/模型路由派发/affair.md"
+  },
+  "runner": {
+    "module": "autodokit.affairs.模型路由派发.affair",
+    "callable": "execute",
+    "pass_mode": "config_path",
+    "kwargs": {}
+  },
+  "legacy": {
+    "module_aliases": ["autodokit.affairs.模型路由派发"]
+  },
+  "node": {
+    "node_type": "transform",
+    "affair_type": "model_routing_dispatch_v1",
+    "config": {
+      "task_type": "general",
+      "quality_tier": "standard",
+      "budget_level": "medium",
+      "latency_level": "medium",
+      "risk_level": "medium",
+      "mainland_only": true,
+      "workspace_root": "",
+      "output_dir": ""
+    },
+    "payload_defaults": {},
+    "inputs": {},
+    "outputs": {},
+    "allow_multi_input_ports": [],
+    "is_leaf": false,
+    "is_business": true,
+    "is_graph": false
+  }
+}

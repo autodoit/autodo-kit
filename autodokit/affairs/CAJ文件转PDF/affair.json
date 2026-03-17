@@ -1,0 +1,30 @@
+{
+  "name": "CAJ文件转PDF",
+  "domain": "business",
+  "owner": "aok",
+  "version": "1.0.0",
+  "description": "事务 CAJ文件转PDF",
+  "tags": [],
+  "docs": {
+    "md_path": "autodokit/affairs/CAJ文件转PDF/affair.md"
+  },
+  "runner": {
+    "module": "autodokit.affairs.CAJ文件转PDF.affair",
+    "callable": "execute",
+    "pass_mode": "config_path",
+    "kwargs": {}
+  },
+  "interface": {
+    "inputs": [],
+    "outputs": []
+  },
+  "config": {
+    "defaults": {},
+    "required": []
+  },
+  "legacy": {
+    "module_aliases": [
+      "autodokit.affairs.CAJ文件转PDF"
+    ]
+  }
+}
