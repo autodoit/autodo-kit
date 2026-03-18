@@ -78,6 +78,7 @@ class PrescreenConfig:
             该字段用于表达“(A ∩ B) 且不包含 C”。
         year_range: 年份区间 [start, end]（闭区间）；为 None 则不限制。
         top_k: 保留候选的最大数量；为 None 则不裁剪。
+        top_ratio: 保留候选的比例上限（0, 1]；基于排序后的候选集裁剪；为 None 则不按比例裁剪。
         semantic_enable: 是否启用轻量“语义”打分（占位）。
         semantic_queries: 主题/示例文本（多个 query）；用于计算轻量相似度。
         output_candidates_name: 候选清单输出文件名（仅文件名，默认 review_candidates.csv）。
@@ -94,11 +95,49 @@ class PrescreenConfig:
     exclude_domain_keywords_any: List[str] | None = None
     year_range: List[int] | None = None
     top_k: int | None = 100
+    top_ratio: float | None = None
     semantic_enable: bool = False
     semantic_queries: List[str] | None = None
     output_candidates_name: str = "review_candidates.csv"
     output_excluded_name: str = "review_excluded.csv"
     output_report_name: str = "prescreen_report.json"
+
+
+def _apply_candidate_limit(cand_df: pd.DataFrame, *, top_k: int | None, top_ratio: float | None) -> pd.DataFrame:
+    """按比例和数量上限裁剪候选结果。
+
+    规则：
+    - 若设置 top_ratio，则先根据当前候选总量计算比例上限；
+    - 若同时设置 top_k，则最终取两者更严格的上限；
+    - 至少保留 1 条（前提是候选非空）。
+
+    Args:
+        cand_df: 已排序的候选 DataFrame。
+        top_k: 数量上限。
+        top_ratio: 比例上限，要求 0 < top_ratio <= 1。
+
+    Returns:
+        裁剪后的 DataFrame。
+    """
+
+    if cand_df.empty:
+        return cand_df
+
+    limit: int | None = None
+
+    if top_ratio is not None:
+        ratio = float(top_ratio)
+        if ratio <= 0 or ratio > 1:
+            raise ValueError(f"top_ratio 必须位于 (0, 1]，当前值={top_ratio!r}")
+        limit = max(1, int(np.ceil(len(cand_df) * ratio)))
+
+    if top_k is not None:
+        k = int(top_k)
+        limit = k if limit is None else min(limit, k)
+
+    if limit is None or len(cand_df) <= limit:
+        return cand_df
+    return cand_df.head(limit)
 
 
 def _resolve_output_filename(raw_name: Any, *, default_name: str, field_name: str) -> str:
@@ -527,6 +566,7 @@ def execute(config_path: Path) -> List[Path]:
         exclude_domain_keywords_any=affair_cfg.get("exclude_domain_keywords_any"),
         year_range=affair_cfg.get("year_range"),
         top_k=affair_cfg.get("top_k"),
+        top_ratio=affair_cfg.get("top_ratio"),
         semantic_enable=bool(affair_cfg.get("semantic_enable", False)),
         semantic_queries=affair_cfg.get("semantic_queries"),
         output_candidates_name=str(affair_cfg.get("output_candidates_name") or "review_candidates.csv"),
@@ -735,8 +775,7 @@ def execute(config_path: Path) -> List[Path]:
             )
 
         cand_df = pd.DataFrame(candidates).sort_values(["score", "year"], ascending=[False, False])
-        if ps_cfg.top_k is not None and len(cand_df) > int(ps_cfg.top_k):
-            cand_df = cand_df.head(int(ps_cfg.top_k))
+        cand_df = _apply_candidate_limit(cand_df, top_k=ps_cfg.top_k, top_ratio=ps_cfg.top_ratio)
 
         excl_df = pd.DataFrame(excluded)
 
@@ -755,6 +794,7 @@ def execute(config_path: Path) -> List[Path]:
             "excluded": int(len(excl_df)),
             "semantic_enable": bool(ps_cfg.semantic_enable),
             "top_k": ps_cfg.top_k,
+            "top_ratio": ps_cfg.top_ratio,
             "include_if_has_pdf": ps_cfg.include_if_has_pdf,
             "include_keywords_any": include_keywords_any,
             "exclude_keywords_any": exclude_keywords_any,
@@ -766,8 +806,7 @@ def execute(config_path: Path) -> List[Path]:
 
     # 新实现写出
     cand_df = cand_df.sort_values(["score", "year"], ascending=[False, False]) if "year" in cand_df.columns else cand_df.sort_values(["score"], ascending=[False])
-    if ps_cfg.top_k is not None and len(cand_df) > int(ps_cfg.top_k):
-        cand_df = cand_df.head(int(ps_cfg.top_k))
+    cand_df = _apply_candidate_limit(cand_df, top_k=ps_cfg.top_k, top_ratio=ps_cfg.top_ratio)
 
     excl_df = pd.DataFrame(excluded_rows)
 
@@ -786,6 +825,7 @@ def execute(config_path: Path) -> List[Path]:
         "excluded": int(len(excl_df)),
         "semantic_enable": bool(ps_cfg.semantic_enable),
         "top_k": ps_cfg.top_k,
+        "top_ratio": ps_cfg.top_ratio,
         "include_if_has_pdf": ps_cfg.include_if_has_pdf,
         "include_keywords_any": include_keywords_any,
         "exclude_keywords_any": exclude_keywords_any,
