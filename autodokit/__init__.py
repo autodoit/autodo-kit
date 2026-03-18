@@ -15,6 +15,14 @@ _BRIDGED_NAMES = {
     "import_affair_module",
     "prepare_affair_config",
     "run_affair",
+    "api",
+    "bootstrap_runtime",
+    "create_task",
+    "run_task_step",
+    "run_task_until_terminal",
+    "run_task_until_wait",
+    "load_graph",
+    "register_graph",
 }
 
 
@@ -30,6 +38,9 @@ def __getattr__(name: str) -> Any:
     Raises:
         AttributeError: 当属性不存在时抛出。
     """
+
+    if name == "api":
+        return import_module("autodoengine.api")
 
     if name in _BRIDGED_NAMES:
         api_module = import_module("autodoengine.api")
