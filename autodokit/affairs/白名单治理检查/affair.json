@@ -1,37 +1,7 @@
 {
-  "name": "白名单治理检查",
-  "domain": "business",
-  "owner": "aok",
-  "version": "1.0.0",
-  "description": "事务 白名单治理检查",
-  "docs": {
-    "md_path": "autodokit/affairs/白名单治理检查/affair.md"
-  },
-  "runner": {
-    "module": "autodokit.affairs.白名单治理检查.affair",
-    "callable": "execute",
-    "pass_mode": "config_path",
-    "kwargs": {}
-  },
-  "legacy": {
-    "module_aliases": ["autodokit.affairs.白名单治理检查"]
-  },
-  "node": {
-    "node_type": "transform",
-    "affair_type": "whitelist_governance_check_v1",
-    "config": {
-      "requested_scopes": [],
-      "approved_scopes": [],
-      "operator": "",
-      "change_reason": "",
-      "output_dir": ""
-    },
-    "payload_defaults": {},
-    "inputs": {},
-    "outputs": {},
-    "allow_multi_input_ports": [],
-    "is_leaf": false,
-    "is_business": true,
-    "is_graph": false
-  }
+  "requested_scopes": [],
+  "approved_scopes": [],
+  "operator": "",
+  "change_reason": "",
+  "output_dir": ""
 }

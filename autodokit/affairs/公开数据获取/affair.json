@@ -1,41 +1,9 @@
 {
-  "name": "公开数据获取",
-  "domain": "business",
-  "owner": "aok",
-  "version": "1.0.0",
-  "description": "事务 公开数据获取",
-  "docs": {
-    "md_path": "autodokit/affairs/公开数据获取/affair.md"
-  },
-  "runner": {
-    "module": "autodokit.affairs.公开数据获取.affair",
-    "callable": "execute",
-    "pass_mode": "config_path",
-    "kwargs": {}
-  },
-  "legacy": {
-    "module_aliases": [
-      "autodokit.affairs.公开数据获取"
-    ]
-  },
-  "node": {
-    "node_type": "transform",
-    "affair_type": "api_data_fetch_v1",
-    "config": {
-      "query": "",
-      "object_type": "dataset",
-      "source_type": "online",
-      "region_type": "global",
-      "access_type": "open",
-      "metadata": {},
-      "output_dir": ""
-    },
-    "payload_defaults": {},
-    "inputs": {},
-    "outputs": {},
-    "allow_multi_input_ports": [],
-    "is_leaf": false,
-    "is_business": true,
-    "is_graph": false
-  }
+  "query": "",
+  "object_type": "dataset",
+  "source_type": "online",
+  "region_type": "global",
+  "access_type": "open",
+  "metadata": {},
+  "output_dir": ""
 }

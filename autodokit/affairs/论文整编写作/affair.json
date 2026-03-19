@@ -1,36 +1,6 @@
 {
-  "name": "论文整编写作",
-  "domain": "business",
-  "owner": "aok",
-  "version": "1.0.0",
-  "description": "事务 论文整编写作",
-  "docs": {
-    "md_path": "autodokit/affairs/论文整编写作/affair.md"
-  },
-  "runner": {
-    "module": "autodokit.affairs.论文整编写作.affair",
-    "callable": "execute",
-    "pass_mode": "config_path",
-    "kwargs": {}
-  },
-  "legacy": {
-    "module_aliases": ["autodokit.affairs.论文整编写作"]
-  },
-  "node": {
-    "node_type": "transform",
-    "affair_type": "ml_paper_writing_v1",
-    "config": {
-      "section_materials": {},
-      "evidence_points": [],
-      "journal_style": "general",
-      "output_dir": ""
-    },
-    "payload_defaults": {},
-    "inputs": {},
-    "outputs": {},
-    "allow_multi_input_ports": [],
-    "is_leaf": false,
-    "is_business": true,
-    "is_graph": false
-  }
+  "section_materials": {},
+  "evidence_points": [],
+  "journal_style": "general",
+  "output_dir": ""
 }

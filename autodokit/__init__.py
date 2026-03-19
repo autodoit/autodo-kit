@@ -13,6 +13,7 @@ from typing import Any
 
 _BRIDGED_NAMES = {
     "import_affair_module",
+    "import_user_affair",
     "prepare_affair_config",
     "run_affair",
     "api",

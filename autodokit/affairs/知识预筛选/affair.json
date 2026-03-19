@@ -1,50 +1,9 @@
 {
-  "name": "知识预筛选",
-  "domain": "business",
-  "owner": "aok",
-  "version": "1.0.0",
-  "description": "事务 知识预筛选",
-  "tags": [],
-  "docs": {
-    "md_path": "autodokit/affairs/知识预筛选/affair.md"
-  },
-  "runner": {
-    "module": "autodokit.affairs.知识预筛选.affair",
-    "callable": "execute",
-    "pass_mode": "config_path",
-    "kwargs": {}
-  },
-  "interface": {
-    "inputs": [],
-    "outputs": []
-  },
-  "config": {
-    "defaults": {},
-    "required": []
-  },
-  "legacy": {
-    "module_aliases": [
-      "autodokit.affairs.知识预筛选"
-    ]
-  },
-  "node": {
-    "node_type": "transform",
-    "affair_type": "knowledge_prescreen_v1",
-    "config": {
-      "focus": "",
-      "items": [],
-      "literature_items_path": "",
-      "include_terms": [],
-      "exclude_terms": [],
-      "min_score": 1.0,
-      "output_dir": ""
-    },
-    "payload_defaults": {},
-    "inputs": {},
-    "outputs": {},
-    "allow_multi_input_ports": [],
-    "is_leaf": false,
-    "is_business": true,
-    "is_graph": false
-  }
+  "focus": "",
+  "items": [],
+  "literature_items_path": "",
+  "include_terms": [],
+  "exclude_terms": [],
+  "min_score": 1.0,
+  "output_dir": ""
 }

@@ -1,64 +1,18 @@
 {
-  "name": "导入和预处理文献元数据",
-  "domain": "business",
-  "owner": "aok",
-  "version": "1.0.0",
-  "description": "事务 导入和预处理文献元数据",
-  "tags": [],
-  "docs": {
-    "md_path": "autodokit/affairs/导入和预处理文献元数据/affair.md"
-  },
-  "runner": {
-    "module": "autodokit.affairs.导入和预处理文献元数据.affair",
-    "callable": "execute",
-    "pass_mode": "config_path",
-    "kwargs": {}
-  },
-  "interface": {
-    "inputs": [],
-    "outputs": []
-  },
-  "config": {
-    "defaults": {},
-    "required": []
-  },
-  "legacy": {
-    "module_aliases": [
-      "autodokit.affairs.导入和预处理文献元数据"
-    ]
-  },
-  "node": {
-    "node_type": "source",
-    "affair_type": "import_and_preprocess_bibliography_v1",
-    "config": {
-      "bibtex_path": "data/题录元数据",
-      "output_dir": "workflows/workflow_导入和预处理文献元数据/data/题录导出文件",
-      "pdf_dir": "data/文献原文数据",
-      "tag_list": [
-        "graph",
-        "risk",
-        "bank",
-        "systemic"
-      ],
-      "tag_match_fields": [
-        "title",
-        "abstract",
-        "keywords"
-      ],
-      "has_pdf_enable": true,
-      "pdf_match_mode": "title"
-    },
-    "payload_defaults": {},
-    "inputs": {},
-    "outputs": {
-      "table": {
-        "name": "table",
-        "data_type": "csv"
-      }
-    },
-    "allow_multi_input_ports": [],
-    "is_leaf": false,
-    "is_business": true,
-    "is_graph": false
-  }
+  "bibtex_path": "data/题录元数据",
+  "output_dir": "workflows/workflow_导入和预处理文献元数据/data/题录导出文件",
+  "pdf_dir": "data/文献原文数据",
+  "tag_list": [
+    "graph",
+    "risk",
+    "bank",
+    "systemic"
+  ],
+  "tag_match_fields": [
+    "title",
+    "abstract",
+    "keywords"
+  ],
+  "has_pdf_enable": true,
+  "pdf_match_mode": "title"
 }

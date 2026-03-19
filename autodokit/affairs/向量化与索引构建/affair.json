@@ -1,61 +1,10 @@
 {
-  "name": "向量化与索引构建",
-  "domain": "business",
-  "owner": "aok",
-  "version": "1.0.0",
-  "description": "事务 向量化与索引构建",
-  "tags": [],
-  "docs": {
-    "md_path": "autodokit/affairs/向量化与索引构建/affair.md"
-  },
-  "runner": {
-    "module": "autodokit.affairs.向量化与索引构建.affair",
-    "callable": "execute",
-    "pass_mode": "config_path",
-    "kwargs": {}
-  },
-  "interface": {
-    "inputs": [],
-    "outputs": []
-  },
-  "config": {
-    "defaults": {},
-    "required": []
-  },
-  "legacy": {
-    "module_aliases": [
-      "autodokit.affairs.向量化与索引构建"
-    ]
-  },
-  "node": {
-    "node_type": "transform",
-    "affair_type": "vectorize_and_build_index_v1",
-    "config": {
-      "input_chunks_jsonl": "workflows/workflow_解析与分块/output/03_chunk/chunks.jsonl",
-      "output_dir": "workflows/workflow_向量化与索引构建/output/04_vector_index",
-      "vectorizer_type": "tfidf",
-      "max_features": 20000,
-      "ngram_range": [
-        1,
-        2
-      ]
-    },
-    "payload_defaults": {},
-    "inputs": {
-      "chunks": {
-        "name": "chunks",
-        "data_type": "jsonl"
-      }
-    },
-    "outputs": {
-      "index": {
-        "name": "index",
-        "data_type": "dir"
-      }
-    },
-    "allow_multi_input_ports": [],
-    "is_leaf": false,
-    "is_business": true,
-    "is_graph": false
-  }
+  "input_chunks_jsonl": "workflows/workflow_解析与分块/output/03_chunk/chunks.jsonl",
+  "output_dir": "workflows/workflow_向量化与索引构建/output/04_vector_index",
+  "vectorizer_type": "tfidf",
+  "max_features": 20000,
+  "ngram_range": [
+    1,
+    2
+  ]
 }

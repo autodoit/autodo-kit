@@ -1,1 +1,7 @@
-{"name":"CNKI结果解析","domain":"business","owner":"aok","version":"1.0.0","description":"事务 CNKI结果解析","docs":{"md_path":"autodokit/affairs/CNKI结果解析/affair.md"},"runner":{"module":"autodokit.affairs.CNKI结果解析.affair","callable":"execute","pass_mode":"config_path","kwargs":{}},"legacy":{"module_aliases":["autodokit.affairs.CNKI结果解析"]},"node":{"node_type":"transform","affair_type":"cnki_parse_results_v1","config":{"page_url":"","current_page":1,"access_type":"closed","metadata":{},"output_dir":""},"payload_defaults":{},"inputs":{},"outputs":{},"allow_multi_input_ports":[],"is_leaf":false,"is_business":true,"is_graph":false}}
+{
+  "page_url": "",
+  "current_page": 1,
+  "access_type": "closed",
+  "metadata": {},
+  "output_dir": ""
+}

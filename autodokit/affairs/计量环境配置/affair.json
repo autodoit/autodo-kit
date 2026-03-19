@@ -1,39 +1,7 @@
 {
-  "name": "计量环境配置",
-  "domain": "business",
-  "owner": "aok",
-  "version": "1.0.0",
-  "description": "事务 计量环境配置",
-  "docs": {
-    "md_path": "autodokit/affairs/计量环境配置/affair.md"
-  },
-  "runner": {
-    "module": "autodokit.affairs.计量环境配置.affair",
-    "callable": "execute",
-    "pass_mode": "config_path",
-    "kwargs": {}
-  },
-  "legacy": {
-    "module_aliases": [
-      "autodokit.affairs.计量环境配置"
-    ]
-  },
-  "node": {
-    "node_type": "transform",
-    "affair_type": "econometrics_runtime_setup_v1",
-    "config": {
-      "project_root": "",
-      "require_r": true,
-      "require_stata": false,
-      "python_baseline": "3.13",
-      "output_dir": ""
-    },
-    "payload_defaults": {},
-    "inputs": {},
-    "outputs": {},
-    "allow_multi_input_ports": [],
-    "is_leaf": false,
-    "is_business": true,
-    "is_graph": false
-  }
+  "project_root": "",
+  "require_r": true,
+  "require_stata": false,
+  "python_baseline": "3.13",
+  "output_dir": ""
 }

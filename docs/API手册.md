@@ -21,7 +21,11 @@ autodo-kit 对外公开的是“事务内容 + 事务工具 + 少量桥接入口
 
 ### 1.3 autodokit.import_affair_module(...)
 
-用途：按事务 UID 解析 runner.module 并导入实际事务模块。
+用途：按事务 UID 导入实际事务模块，优先读取 runner.module，必要时回退到源码文件路径加载。
+
+### 1.4 autodokit.import_user_affair(...)
+
+用途：将用户功能程序导入为事务三件套目录（`affair.py`、`affair.json`、`affair.md`），并自动写入事务管理数据库。名称冲突时自动追加 `_v正整数`。
 
 ## 2. autodokit.tools 导出
 
@@ -45,10 +49,10 @@ autodokit.tools 统一导出两类能力：
 每个事务目录通常包含：
 
 - affair.py：事务执行主体
-- affair.json：元数据、runner、node 契约
-- affair.md：说明文档
+- affair.json：纯业务参数模板
+- affair.md：说明文档（用途、场景、参数、输出、示例）
 
-runner.module 必须保持为 autodokit.affairs.<事务名>.affair。
+事务目录应保持“业务三件套纯粹化”。事务管理所需 runner/node/governance 等元数据由事务管理系统数据库统一承载。
 
 ## 4. 不再由本仓提供的接口
 

@@ -1,34 +1,4 @@
 {
-  "name": "任务数据库回放",
-  "domain": "business",
-  "owner": "aok",
-  "version": "1.0.0",
-  "description": "事务 任务数据库回放",
-  "docs": {
-    "md_path": "autodokit/affairs/任务数据库回放/affair.md"
-  },
-  "runner": {
-    "module": "autodokit.affairs.任务数据库回放.affair",
-    "callable": "execute",
-    "pass_mode": "config_path",
-    "kwargs": {}
-  },
-  "legacy": {
-    "module_aliases": ["autodokit.affairs.任务数据库回放"]
-  },
-  "node": {
-    "node_type": "transform",
-    "affair_type": "taskdb_replay_v1",
-    "config": {
-      "project_root": ".",
-      "output_dir": ""
-    },
-    "payload_defaults": {},
-    "inputs": {},
-    "outputs": {},
-    "allow_multi_input_ports": [],
-    "is_leaf": false,
-    "is_business": true,
-    "is_graph": false
-  }
+  "project_root": ".",
+  "output_dir": ""
 }

@@ -1,59 +1,6 @@
 {
-  "name": "图节点_merge",
-  "domain": "graph",
-  "owner": "aok",
-  "version": "1.0.0",
-  "description": "事务 图节点_merge",
-  "tags": [],
-  "docs": {
-    "md_path": "autodokit/affairs/图节点_merge/affair.md"
-  },
-  "runner": {
-    "module": "autodokit.affairs.图节点_merge.affair",
-    "callable": "execute",
-    "pass_mode": "config_path",
-    "kwargs": {}
-  },
-  "interface": {
-    "inputs": [],
-    "outputs": []
-  },
-  "config": {
-    "defaults": {},
-    "required": []
-  },
-  "legacy": {
-    "module_aliases": [
-      "autodokit.affairs.graph_node_merge"
-    ]
-  },
-  "node": {
-    "node_type": "merge",
-    "affair_type": "graph_node_merge_v1",
-    "config": {
-      "merge_strategy": "wait_all_activated",
-      "quorum": 1,
-      "max_wait_retries": null,
-      "on_timeout": "fail"
-    },
-    "payload_defaults": {},
-    "inputs": {
-      "in": {
-        "name": "in",
-        "data_type": "any"
-      }
-    },
-    "outputs": {
-      "out": {
-        "name": "out",
-        "data_type": "any"
-      }
-    },
-    "allow_multi_input_ports": [
-      "in"
-    ],
-    "is_leaf": false,
-    "is_business": false,
-    "is_graph": true
-  }
+  "merge_strategy": "wait_all_activated",
+  "quorum": 1,
+  "max_wait_retries": null,
+  "on_timeout": "fail"
 }

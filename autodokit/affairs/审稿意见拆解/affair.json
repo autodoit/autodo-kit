@@ -1,35 +1,5 @@
 {
-  "name": "审稿意见拆解",
-  "domain": "business",
-  "owner": "aok",
-  "version": "1.0.0",
-  "description": "事务 审稿意见拆解",
-  "docs": {
-    "md_path": "autodokit/affairs/审稿意见拆解/affair.md"
-  },
-  "runner": {
-    "module": "autodokit.affairs.审稿意见拆解.affair",
-    "callable": "execute",
-    "pass_mode": "config_path",
-    "kwargs": {}
-  },
-  "legacy": {
-    "module_aliases": ["autodokit.affairs.审稿意见拆解"]
-  },
-  "node": {
-    "node_type": "transform",
-    "affair_type": "review_response_v1",
-    "config": {
-      "comments": [],
-      "manuscript_title": "",
-      "output_dir": ""
-    },
-    "payload_defaults": {},
-    "inputs": {},
-    "outputs": {},
-    "allow_multi_input_ports": [],
-    "is_leaf": false,
-    "is_business": true,
-    "is_graph": false
-  }
+  "comments": [],
+  "manuscript_title": "",
+  "output_dir": ""
 }

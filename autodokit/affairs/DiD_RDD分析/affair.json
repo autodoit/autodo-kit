@@ -1,36 +1,4 @@
 {
-  "name": "DiD_RDD分析",
-  "domain": "business",
-  "owner": "aok",
-  "version": "1.0.0",
-  "description": "事务 DiD_RDD分析",
-  "docs": {
-    "md_path": "autodokit/affairs/DiD_RDD分析/affair.md"
-  },
-  "runner": {
-    "module": "autodokit.affairs.DiD_RDD分析.affair",
-    "callable": "execute",
-    "pass_mode": "config_path",
-    "kwargs": {}
-  },
-  "legacy": {
-    "module_aliases": [
-      "autodokit.affairs.DiD_RDD分析"
-    ]
-  },
-  "node": {
-    "node_type": "transform",
-    "affair_type": "did_rdd_pipeline_v1",
-    "config": {
-      "panel_rows": [],
-      "output_dir": ""
-    },
-    "payload_defaults": {},
-    "inputs": {},
-    "outputs": {},
-    "allow_multi_input_ports": [],
-    "is_leaf": false,
-    "is_business": true,
-    "is_graph": false
-  }
+  "panel_rows": [],
+  "output_dir": ""
 }

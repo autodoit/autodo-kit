@@ -1,36 +1,6 @@
 {
-  "name": "结果分析解读",
-  "domain": "business",
-  "owner": "aok",
-  "version": "1.0.0",
-  "description": "事务 结果分析解读",
-  "docs": {
-    "md_path": "autodokit/affairs/结果分析解读/affair.md"
-  },
-  "runner": {
-    "module": "autodokit.affairs.结果分析解读.affair",
-    "callable": "execute",
-    "pass_mode": "config_path",
-    "kwargs": {}
-  },
-  "legacy": {
-    "module_aliases": ["autodokit.affairs.结果分析解读"]
-  },
-  "node": {
-    "node_type": "transform",
-    "affair_type": "results_analysis_v1",
-    "config": {
-      "statistical_summary": "",
-      "mechanism_points": [],
-      "significance_notes": [],
-      "output_dir": ""
-    },
-    "payload_defaults": {},
-    "inputs": {},
-    "outputs": {},
-    "allow_multi_input_ports": [],
-    "is_leaf": false,
-    "is_business": true,
-    "is_graph": false
-  }
+  "statistical_summary": "",
+  "mechanism_points": [],
+  "significance_notes": [],
+  "output_dir": ""
 }

@@ -1,58 +1,7 @@
 {
-  "name": "解析与分块",
-  "domain": "business",
-  "owner": "aok",
-  "version": "1.0.0",
-  "description": "事务 解析与分块",
-  "tags": [],
-  "docs": {
-    "md_path": "autodokit/affairs/解析与分块/affair.md"
-  },
-  "runner": {
-    "module": "autodokit.affairs.解析与分块.affair",
-    "callable": "execute",
-    "pass_mode": "config_path",
-    "kwargs": {}
-  },
-  "interface": {
-    "inputs": [],
-    "outputs": []
-  },
-  "config": {
-    "defaults": {},
-    "required": []
-  },
-  "legacy": {
-    "module_aliases": [
-      "autodokit.affairs.解析与分块"
-    ]
-  },
-  "node": {
-    "node_type": "transform",
-    "affair_type": "parse_and_chunk_v1",
-    "config": {
-      "input_docs_jsonl": "workflows/workflow_从PDF提取可检索文本/output/02_pdf_to_docs/docs.jsonl",
-      "output_dir": "workflows/workflow_解析与分块/output/03_chunk",
-      "chunk_size": 1500,
-      "chunk_overlap": 200,
-      "min_chunk_size": 200
-    },
-    "payload_defaults": {},
-    "inputs": {
-      "docs": {
-        "name": "docs",
-        "data_type": "jsonl"
-      }
-    },
-    "outputs": {
-      "chunks": {
-        "name": "chunks",
-        "data_type": "jsonl"
-      }
-    },
-    "allow_multi_input_ports": [],
-    "is_leaf": false,
-    "is_business": true,
-    "is_graph": false
-  }
+  "input_docs_jsonl": "workflows/workflow_从PDF提取可检索文本/output/02_pdf_to_docs/docs.jsonl",
+  "output_dir": "workflows/workflow_解析与分块/output/03_chunk",
+  "chunk_size": 1500,
+  "chunk_overlap": 200,
+  "min_chunk_size": 200
 }

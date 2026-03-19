@@ -1,57 +1,11 @@
 {
-  "name": "PDF文件转md文件",
-  "domain": "business",
-  "owner": "aok",
-  "version": "1.0.0",
-  "description": "事务 PDF文件转md文件",
-  "tags": [],
-  "docs": {
-    "md_path": "autodokit/affairs/PDF文件转md文件/affair.md"
+  "input_pdf_dir": "data/文献原文数据",
+  "output_md_dir": "data/文献原文转md数据",
+  "converter": "babeldoc",
+  "babeldoc": {
+    "enabled": false,
+    "note": "这里放 BabelDOC 需要的参数（占位/透传）"
   },
-  "runner": {
-    "module": "autodokit.affairs.PDF文件转md文件.affair",
-    "callable": "execute",
-    "pass_mode": "config_path",
-    "kwargs": {}
-  },
-  "interface": {
-    "inputs": [],
-    "outputs": []
-  },
-  "config": {
-    "defaults": {},
-    "required": []
-  },
-  "legacy": {
-    "module_aliases": [
-      "autodokit.affairs.PDF文件转md文件"
-    ]
-  },
-  "node": {
-    "node_type": "source",
-    "affair_type": "pdf_to_md_v1",
-    "config": {
-      "input_pdf_dir": "data/文献原文数据",
-      "output_md_dir": "data/文献原文转md数据",
-      "converter": "babeldoc",
-      "babeldoc": {
-        "enabled": false,
-        "note": "这里放 BabelDOC 需要的参数（占位/透传）"
-      },
-      "overwrite": false,
-      "output_log": "workflows/workflow_PDF文件转md文件/data/pdf_to_md_manifest.log"
-    },
-    "payload_defaults": {},
-    "inputs": {},
-    "outputs": {
-      "md_dir": {
-        "name": "md_dir",
-        "data_type": "dir"
-      }
-    },
-    "allow_multi_input_ports": [],
-    "is_leaf": false,
-    "is_business": true,
-    "is_graph": false
-  }
+  "overwrite": false,
+  "output_log": "workflows/workflow_PDF文件转md文件/data/pdf_to_md_manifest.log"
 }

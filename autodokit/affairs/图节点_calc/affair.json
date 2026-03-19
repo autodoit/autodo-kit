@@ -1,57 +1,6 @@
 {
-  "name": "图节点_calc",
-  "domain": "graph",
-  "owner": "aok",
-  "version": "1.0.0",
-  "description": "事务 图节点_calc",
-  "tags": [],
-  "docs": {
-    "md_path": "autodokit/affairs/图节点_calc/affair.md"
-  },
-  "runner": {
-    "module": "autodokit.affairs.图节点_calc.affair",
-    "callable": "execute",
-    "pass_mode": "config_path",
-    "kwargs": {}
-  },
-  "interface": {
-    "inputs": [],
-    "outputs": []
-  },
-  "config": {
-    "defaults": {},
-    "required": []
-  },
-  "legacy": {
-    "module_aliases": [
-      "autodokit.affairs.graph_node_calc"
-    ]
-  },
-  "node": {
-    "node_type": "calc",
-    "affair_type": "graph_node_calc_v1",
-    "config": {
-      "expression": "",
-      "expression_mode": "safe",
-      "allow_unsafe_eval": false,
-      "variables": {}
-    },
-    "payload_defaults": {},
-    "inputs": {
-      "in": {
-        "name": "in",
-        "data_type": "any"
-      }
-    },
-    "outputs": {
-      "result": {
-        "name": "result",
-        "data_type": "any"
-      }
-    },
-    "allow_multi_input_ports": [],
-    "is_leaf": false,
-    "is_business": false,
-    "is_graph": true
-  }
+  "expression": "",
+  "expression_mode": "safe",
+  "allow_unsafe_eval": false,
+  "variables": {}
 }

@@ -1,61 +1,6 @@
 {
-  "name": "图节点_fork",
-  "domain": "graph",
-  "owner": "aok",
-  "version": "1.0.0",
-  "description": "事务 图节点_fork",
-  "tags": [],
-  "docs": {
-    "md_path": "autodokit/affairs/图节点_fork/affair.md"
-  },
-  "runner": {
-    "module": "autodokit.affairs.图节点_fork.affair",
-    "callable": "execute",
-    "pass_mode": "config_path",
-    "kwargs": {}
-  },
-  "interface": {
-    "inputs": [],
-    "outputs": []
-  },
-  "config": {
-    "defaults": {},
-    "required": []
-  },
-  "legacy": {
-    "module_aliases": [
-      "autodokit.affairs.graph_node_fork"
-    ]
-  },
-  "node": {
-    "node_type": "fork",
-    "affair_type": "graph_node_fork_v1",
-    "config": {
-      "branches": [
-        "branch_1",
-        "branch_2"
-      ]
-    },
-    "payload_defaults": {},
-    "inputs": {
-      "in": {
-        "name": "in",
-        "data_type": "any"
-      }
-    },
-    "outputs": {
-      "branch_1": {
-        "name": "branch_1",
-        "data_type": "any"
-      },
-      "branch_2": {
-        "name": "branch_2",
-        "data_type": "any"
-      }
-    },
-    "allow_multi_input_ports": [],
-    "is_leaf": false,
-    "is_business": false,
-    "is_graph": true
-  }
+  "branches": [
+    "branch_1",
+    "branch_2"
+  ]
 }

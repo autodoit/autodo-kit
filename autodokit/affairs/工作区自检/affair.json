@@ -1,40 +1,8 @@
 {
-  "name": "工作区自检",
-  "domain": "business",
-  "owner": "aok",
-  "version": "1.0.0",
-  "description": "事务 工作区自检",
-  "docs": {
-    "md_path": "autodokit/affairs/工作区自检/affair.md"
-  },
-  "runner": {
-    "module": "autodokit.affairs.工作区自检.affair",
-    "callable": "execute",
-    "pass_mode": "config_path",
-    "kwargs": {}
-  },
-  "legacy": {
-    "module_aliases": [
-      "autodokit.affairs.工作区自检"
-    ]
-  },
-  "node": {
-    "node_type": "transform",
-    "affair_type": "workspace_sanity_check_v1",
-    "config": {
-      "project_root": "",
-      "mode": "full",
-      "auto_migrate": false,
-      "write_report": true,
-      "report_dir": "",
-      "output_dir": ""
-    },
-    "payload_defaults": {},
-    "inputs": {},
-    "outputs": {},
-    "allow_multi_input_ports": [],
-    "is_leaf": false,
-    "is_business": true,
-    "is_graph": false
-  }
+  "project_root": "",
+  "mode": "full",
+  "auto_migrate": false,
+  "write_report": true,
+  "report_dir": "",
+  "output_dir": ""
 }

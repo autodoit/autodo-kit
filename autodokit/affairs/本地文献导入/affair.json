@@ -1,47 +1,6 @@
 {
-  "name": "本地文献导入",
-  "domain": "business",
-  "owner": "aok",
-  "version": "1.0.0",
-  "description": "事务 本地文献导入",
-  "tags": [],
-  "docs": {
-    "md_path": "autodokit/affairs/本地文献导入/affair.md"
-  },
-  "runner": {
-    "module": "autodokit.affairs.本地文献导入.affair",
-    "callable": "execute",
-    "pass_mode": "config_path",
-    "kwargs": {}
-  },
-  "interface": {
-    "inputs": [],
-    "outputs": []
-  },
-  "config": {
-    "defaults": {},
-    "required": []
-  },
-  "legacy": {
-    "module_aliases": [
-      "autodokit.affairs.本地文献导入"
-    ]
-  },
-  "node": {
-    "node_type": "transform",
-    "affair_type": "local_reference_ingestion_v1",
-    "config": {
-      "project_root": "",
-      "source_paths": [],
-      "persist": false,
-      "output_dir": ""
-    },
-    "payload_defaults": {},
-    "inputs": {},
-    "outputs": {},
-    "allow_multi_input_ports": [],
-    "is_leaf": false,
-    "is_business": true,
-    "is_graph": false
-  }
+  "project_root": "",
+  "source_paths": [],
+  "persist": false,
+  "output_dir": ""
 }
