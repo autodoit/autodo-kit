@@ -711,12 +711,9 @@ def execute(config_path: Path) -> List[Path]:
         for _uid, row in df.iterrows():
             uid_raw = row.get("uid")
             if pd.notna(uid_raw) and str(uid_raw).strip():
-                try:
-                    uid = int(uid_raw)
-                except Exception:
-                    uid = int(str(uid_raw).strip())
+                uid = str(uid_raw).strip()
             else:
-                uid = int(str(_uid))
+                uid = str(_uid).strip()
 
             year_val = row.get("year")
             try:

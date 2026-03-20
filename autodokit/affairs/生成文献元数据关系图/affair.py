@@ -14,7 +14,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Tuple
 
 import pandas as pd
 
@@ -218,6 +218,48 @@ def _build_bitsets_from_inverted(inv: Dict[str, List[int]], uid_list: List[int])
     return {str(k): [int(x) for x in v] for k, v in inv.items()}
 
 
+def _build_uid_numeric_context(table: pd.DataFrame) -> Tuple[pd.DataFrame, List[int], Dict[int, str]]:
+    """为字符串 uid 构建内部数值映射上下文。
+
+    说明：
+    - 关系图底层工具当前按整数 uid 计算；
+    - 新文献库 uid 可能是哈希字符串；
+    - 因此在事务内临时构建“整数代理 uid”，对外仍保留真实字符串 uid。
+
+    Args:
+        table: 以真实 uid 为索引的主表。
+
+    Returns:
+        (数值索引表, 数值 uid 列表, 数值 uid 到真实 uid 映射字典)。
+    """
+
+    uid_texts = [str(uid).strip() for uid in list(table.index)]
+    uid_numeric_list = list(range(1, len(uid_texts) + 1))
+    numeric_to_text = {num: uid for num, uid in zip(uid_numeric_list, uid_texts)}
+
+    table_numeric = table.copy()
+    table_numeric["uid"] = uid_texts
+    table_numeric.index = uid_numeric_list
+    return table_numeric, uid_numeric_list, numeric_to_text
+
+
+def _inverted_numeric_to_text(inv: Dict[str, List[int]], numeric_to_text: Dict[int, str]) -> Dict[str, List[str]]:
+    """把反向索引中的数值 uid 转回真实字符串 uid。
+
+    Args:
+        inv: 数值 uid 反向索引。
+        numeric_to_text: 数值 uid 到真实 uid 映射。
+
+    Returns:
+        字符串 uid 反向索引。
+    """
+
+    output: Dict[str, List[str]] = {}
+    for key, values in inv.items():
+        output[str(key)] = [numeric_to_text.get(int(value), str(value)) for value in values]
+    return output
+
+
 def _run_and_write_all_outputs(config_path: Path) -> List[Path]:
     """读取配置并生成关系图数据，返回写出的文件路径列表。
 
@@ -258,7 +300,7 @@ def _run_and_write_all_outputs(config_path: Path) -> List[Path]:
     if "uid" in table.columns:
         table.set_index("uid", inplace=True, drop=True)
 
-    uid_list = [int(x) for x in list(table.index)]
+    table_numeric, uid_numeric_list, numeric_to_text = _build_uid_numeric_context(table)
 
     written_files: List[Path] = []
 
@@ -267,15 +309,16 @@ def _run_and_write_all_outputs(config_path: Path) -> List[Path]:
         adj_df.to_csv(path, index=False, encoding="utf-8-sig")
         return path
 
-    def build_and_save_from_inverted(entity_label: str, inv: Dict[str, List[int]]) -> List[Path]:
+    def build_and_save_from_inverted(entity_label: str, inv_numeric: Dict[str, List[int]]) -> List[Path]:
         files: List[Path] = []
 
+        inv_text = _inverted_numeric_to_text(inv_numeric, numeric_to_text)
         inv_path = output_dir / f"{entity_label}_inverted_index.pkl"
-        _save_pickle(inv, inv_path)
+        _save_pickle(inv_text, inv_path)
         files.append(inv_path)
 
         try:
-            csc_mat, _labels = sparse_from_inverted(inv, uid_list)
+            csc_mat, _labels = sparse_from_inverted(inv_numeric, uid_numeric_list)
             csc_path = output_dir / f"{entity_label}_csc.npz"
             saved = _save_csc_matrix(csc_mat, csc_path)
             if saved:
@@ -283,7 +326,7 @@ def _run_and_write_all_outputs(config_path: Path) -> List[Path]:
         except Exception:
             pass
 
-        bitsets = _build_bitsets_from_inverted(inv, uid_list)
+        bitsets = _build_bitsets_from_inverted(inv_numeric, uid_numeric_list)
         bitsets_path = output_dir / f"{entity_label}_bitsets.pkl"
         _save_pickle(bitsets, bitsets_path)
         files.append(bitsets_path)
@@ -291,24 +334,24 @@ def _run_and_write_all_outputs(config_path: Path) -> List[Path]:
         return files
 
     # 关键字二分图
-    kw_inv = build_inverted_index(table, "keywords", split_keywords)
+    kw_inv = build_inverted_index(table_numeric, "keywords", split_keywords)
     kw_entities = list(kw_inv.keys())
 
     def kw_row_to_entities(_uid: int, row: Any) -> List[str]:
         return split_keywords(str(row.get("keywords", "")))
 
-    kw_adj = build_adjacency_matrix_df(table, uid_list, kw_entities, kw_row_to_entities)
+    kw_adj = build_adjacency_matrix_df(table_numeric, uid_numeric_list, kw_entities, kw_row_to_entities)
     written_files.append(save_adjacency("keywords", kw_adj))
     written_files.extend(build_and_save_from_inverted("keywords", kw_inv))
 
     # 作者二分图
-    auth_inv = build_inverted_index(table, "author", split_authors)
+    auth_inv = build_inverted_index(table_numeric, "author", split_authors)
     auth_entities = list(auth_inv.keys())
 
     def auth_row_to_entities(_uid: int, row: Any) -> List[str]:
         return split_authors(str(row.get("author", "")))
 
-    auth_adj = build_adjacency_matrix_df(table, uid_list, auth_entities, auth_row_to_entities)
+    auth_adj = build_adjacency_matrix_df(table_numeric, uid_numeric_list, auth_entities, auth_row_to_entities)
     written_files.append(save_adjacency("authors", auth_adj))
     written_files.extend(build_and_save_from_inverted("authors", auth_inv))
 
@@ -327,10 +370,10 @@ def _run_and_write_all_outputs(config_path: Path) -> List[Path]:
                 hits.append(t)
         return hits
 
-    tag_adj = build_adjacency_matrix_df(table, uid_list, tag_entities, tag_row_to_entities)
+    tag_adj = build_adjacency_matrix_df(table_numeric, uid_numeric_list, tag_entities, tag_row_to_entities)
     written_files.append(save_adjacency("tags", tag_adj))
 
-    tag_inv = build_inverted_from_adjacency(uid_list, tag_adj)
+    tag_inv = build_inverted_from_adjacency(uid_numeric_list, tag_adj)
     written_files.extend(build_and_save_from_inverted("tags", tag_inv))
 
     return written_files

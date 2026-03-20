@@ -48,7 +48,7 @@ class MatrixConfig:
     input_docs_jsonl: str
     output_dir: str
     limit: Optional[int] = 20
-    uids: Optional[List[int]] = None
+    uids: Optional[List[str]] = None
     model: str = "qwen-plus"
     system_prompt: str = "你是一名严谨的学术研究助理。请用中文输出，结构清晰。"
     user_prompt_template: str = (
@@ -72,15 +72,17 @@ def _iter_docs(path: Path) -> List[Dict[str, Any]]:
     return items
 
 
-def _as_int_list(v: Any) -> Optional[List[int]]:
+def _as_uid_list(v: Any) -> Optional[List[str]]:
     if v is None:
         return None
     if isinstance(v, list):
-        out: List[int] = []
+        out: List[str] = []
         for x in v:
             if x is None:
                 continue
-            out.append(int(x))
+            uid_text = str(x).strip()
+            if uid_text:
+                out.append(uid_text)
         return out
     return None
 
@@ -101,7 +103,7 @@ def _run_literature_matrix(*, merged: Dict[str, Any]) -> List[Path]:
         input_docs_jsonl=str(merged.get("input_docs_jsonl") or ""),
         output_dir=str(merged.get("output_dir") or ""),
         limit=int(merged["limit"]) if merged.get("limit") is not None else None,
-        uids=_as_int_list(merged.get("uids")),
+        uids=_as_uid_list(merged.get("uids")),
         model=str(merged.get("model") or "qwen-plus"),
         system_prompt=str(merged.get("system_prompt") or "").strip() or MatrixConfig.system_prompt,
         user_prompt_template=str(merged.get("user_prompt_template") or "").strip() or MatrixConfig.user_prompt_template,
@@ -126,8 +128,8 @@ def _run_literature_matrix(*, merged: Dict[str, Any]) -> List[Path]:
     docs = _iter_docs(docs_path)
 
     if cfg.uids:
-        want = set(int(x) for x in cfg.uids)
-        docs = [d for d in docs if d.get("uid") is not None and int(d.get("uid")) in want]
+        want = set(str(x).strip() for x in cfg.uids)
+        docs = [d for d in docs if d.get("uid") is not None and str(d.get("uid")).strip() in want]
 
     if cfg.limit is not None:
         docs = docs[: int(cfg.limit)]

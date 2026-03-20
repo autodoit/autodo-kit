@@ -79,16 +79,15 @@ class PdfToDocsConfig:
     limit: int | None = None
 
 
-def _iter_uids_from_candidates(path: Path) -> List[int]:
+def _iter_uids_from_candidates(path: Path) -> List[str]:
     df = pd.read_csv(path, encoding="utf-8-sig")
     if "uid" not in df.columns:
         raise ValueError(f"候选清单缺少 uid 列：{path}")
-    out: List[int] = []
+    out: List[str] = []
     for x in df["uid"].tolist():
-        try:
-            out.append(int(x))
-        except Exception:
-            continue
+        uid_text = str(x).strip()
+        if uid_text:
+            out.append(uid_text)
     return out
 
 
@@ -152,7 +151,7 @@ def execute(config_path: Path) -> List[Path]:
     if "uid" in table.columns:
         table = table.set_index("uid", drop=False)
 
-    only_uids: Optional[set[int]] = None
+    only_uids: Optional[set[str]] = None
     if cfg.only_candidates_csv:
         cand_path = Path(cfg.only_candidates_csv)
         if not cand_path.is_absolute():
@@ -175,10 +174,10 @@ def execute(config_path: Path) -> List[Path]:
             if cfg.limit is not None and wrote_docs >= int(cfg.limit):
                 break
 
-            try:
-                uid = int(row.get("uid")) if pd.notna(row.get("uid")) else int(str(_uid))
-            except Exception:
-                uid = int(str(_uid))
+            uid = str(row.get("uid")).strip() if pd.notna(row.get("uid")) and str(row.get("uid")).strip() else str(_uid).strip()
+            if not uid:
+                failures.append({"uid": "", "pdf_path": "", "error_type": "missing_uid", "error_message": "缺少 uid"})
+                continue
 
             if only_uids is not None and uid not in only_uids:
                 continue
