@@ -609,6 +609,133 @@ print(outputs)
 
 ## 7. transform 类事务
 
+### Skill渲染
+
+#### 基本信息
+
+| 字段 | 值 |
+| --- | --- |
+| 事务名 | Skill渲染 |
+| 领域 | infrastructure |
+| 所有者 | aok |
+| 版本 | migrated |
+| 描述 | 渲染 `SKILL.md` 并输出结构化结果 JSON。 |
+| 目录 | autodokit/affairs/Skill渲染 |
+| Runner.module | autodokit.affairs.Skill渲染.affair |
+| Runner.callable | execute |
+| Runner.pass_mode | config_path |
+| 文档源 | autodokit/affairs/Skill渲染/affair.md |
+
+#### 模块说明
+
+Skill 渲染事务。
+
+#### 事务 Markdown 说明摘录
+
+- Skill渲染
+- 用途
+
+该事务用于接收 `SKILL.md` 文件绝对路径与参数字典，调用引擎中的 Skill 渲染器生成最终 Prompt 文本，并输出结构化结果 JSON。
+
+- 运行入口
+
+- module: `autodokit.affairs.Skill渲染.affair`
+- callable: `execute`
+- pass_mode: `config_path`
+
+#### interface.inputs
+
+- 无
+
+#### interface.outputs
+
+- 无
+
+#### node.inputs
+
+- 以事务管理系统数据库为准；本事务目录不再存放 `node_template` 元数据。
+
+#### node.outputs
+
+- 以事务管理系统数据库为准；本事务目录不再存放 `node_template` 元数据。
+
+#### 业务参数表（affair.json）
+
+| 字段 | 必填 | 默认值 | 示例值 |
+| --- | --- | --- | --- |
+| output_dir | 否 | "" | "D:/my_workspace/output/skill_render" |
+| params | 否 | {} | {"topic": "测试"} |
+| skill_path | 是 | "" | "D:/my_workspace/skills/demo/SKILL.md" |
+
+#### 参数约束
+
+- `skill_path` 必须为 `SKILL.md` 的绝对路径；若为空或不是绝对路径，将抛出 `ValueError`。
+- `params` 省略时按 `{}` 处理；若提供则必须为字典，否则抛出 `ValueError`。
+- `output_dir` 若提供，必须在运行前由 tools 层预处理为绝对路径；留空时回退到 `config_path.parent`。
+
+#### 节点默认配置表（node_template.config）
+
+- 以事务管理系统数据库为准；当前事务目录仅保留 `affair.py`、`affair.json`、`affair.md`。
+
+#### node.config JSON 示例
+
+```json
+{}
+```
+
+#### affair.json 业务参数 JSON 示例
+
+```json
+{
+  "skill_path": "D:/my_workspace/skills/demo/SKILL.md",
+  "params": {
+    "topic": "测试"
+  },
+  "output_dir": "D:/my_workspace/output/skill_render"
+}
+```
+
+#### 输出产物
+
+- 输出文件固定为 `skill_render_result.json`。
+- 返回值为单元素 `list[Path]`，列表中的路径指向该 JSON 文件。
+- JSON 结果包含 `status`、`mode`、`prompt`、`meta`、`skill_name`、`skill_path`。
+
+#### 可能异常
+
+- `RuntimeError`：环境中缺少 `SkillRenderer`。
+- `FileNotFoundError`：`skill_path` 指向的 `SKILL.md` 不存在。
+- `ValueError`：`skill_path` 为空/不是绝对路径，或 `params` 不是字典。
+
+#### 推荐调用示例：run_affair
+
+```python
+from pathlib import Path
+import autodokit as aok
+
+workspace_root = Path(r"D:/my_workspace").resolve()
+outputs = aok.run_affair("Skill渲染",
+    config={
+        "skill_path": r"D:/my_workspace/skills/demo/SKILL.md",
+        "params": {"topic": "测试"},
+        "output_dir": r"D:/my_workspace/output/skill_render",
+    },
+    workspace_root=workspace_root,
+)
+print(outputs)
+```
+
+#### 高级调用示例：直接导入模块
+
+```python
+from pathlib import Path
+from autodokit.affairs.Skill渲染.affair import execute
+
+config_path = Path(r"D:/my_workspace/configs/skill_render.json").resolve()
+outputs = execute(config_path)
+print(outputs)
+```
+
 ### CNKI全文下载规划
 
 #### 基本信息

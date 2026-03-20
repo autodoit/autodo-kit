@@ -74,13 +74,51 @@ autodokit.tools 统一导出两类能力：
 
 ## 3. 事务模块契约
 
-每个事务目录通常包含：
+每个事务目录仅保留：
 
 - affair.py：事务执行主体
 - affair.json：纯业务参数模板
 - affair.md：说明文档（用途、场景、参数、输出、示例）
 
 事务目录应保持“业务三件套纯粹化”。事务管理所需 runner/node/governance 等元数据由事务管理系统数据库统一承载。
+
+### 3.1 Skill渲染（`autodokit.affairs.Skill渲染.affair`）
+
+用途：渲染指定 `SKILL.md` 并将结构化结果写入固定 JSON 文件。
+
+公开入口：
+
+- `execute(config_path: Path) -> list[Path]`
+  - 从配置读取 `skill_path`、`params`、`output_dir`。
+  - `params` 缺省时按 `{}` 处理。
+  - 输出文件名固定为 `skill_render_result.json`。
+- `render_skill(skill_path: str | Path, params: dict[str, Any]) -> dict[str, Any]`
+  - 直接调用引擎侧 `SkillRenderer` 渲染单个 Skill 文件。
+  - 返回结果字典包含 `status`、`mode`、`prompt`、`meta`、`skill_name`、`skill_path`。
+
+配置字段：
+
+| 字段 | 类型 | 必填 | 说明 |
+| --- | --- | --- | --- |
+| `skill_path` | `str` | 是 | `SKILL.md` 的绝对路径。 |
+| `params` | `dict[str, Any]` | 否 | 渲染参数字典；缺省按 `{}` 处理。 |
+| `output_dir` | `str` | 否 | 输出目录绝对路径；为空时回退到 `config_path.parent`。 |
+
+异常：
+
+- `RuntimeError`：环境中缺少 `SkillRenderer`。
+- `FileNotFoundError`：`skill_path` 指向的文件不存在。
+- `ValueError`：`skill_path` 为空或不是绝对路径，或 `params` 不是字典，或 `output_dir` 不是绝对路径。
+
+最小示例：
+
+```python
+from pathlib import Path
+from autodokit.affairs.Skill渲染.affair import execute
+
+outputs = execute(Path(r"D:/my_workspace/configs/skill_render.json").resolve())
+print(outputs)
+```
 
 ## 4. 不再由本仓提供的接口
 

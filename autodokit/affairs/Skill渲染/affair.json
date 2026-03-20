@@ -1,28 +1,5 @@
 {
-  "name": "Skill渲染",
-  "description": "由输入 Skill 路径和参数字典，调用引擎渲染器生成 Prompt。",
-  "tags": ["prompt", "AI", "render", "template"],
-  "inputs": {
-    "skill_path": {
-      "type": "string",
-      "description": "SKILL.md 文件的绝对路径",
-      "required": true
-    },
-    "params": {
-      "type": "dict",
-      "description": "渲染所需的所有参数字典（JSON 格式）",
-      "required": true
-    }
-  },
-  "outputs": {
-    "prompt": {
-      "type": "string",
-      "description": "渲染后的最终 prompt 文本"
-    },
-    "meta": {
-      "type": "dict",
-      "description": "Skill 的元数据信息 (YAML frontmatter)"
-    }
-  },
-  "version": "1.0.0"
+  "skill_path": "",
+  "params": {},
+  "output_dir": ""
 }
