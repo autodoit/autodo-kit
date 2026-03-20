@@ -56,6 +56,8 @@ autodokit.tools 统一导出两类能力：
 - `find_match(table, first_author, year, title, top_n=5)`：返回候选匹配列表。
 - `upsert_record(table, bib_entry, source='imported', overwrite=False)`：插入或更新记录。
 - `create_placeholder(table, first_author, year, title, clean_title, source='placeholder', extra=None)`：创建占位引文。
+- `parse_reference_text(reference_text)`：从单条参考文献文本启发式提取 `first_author/year/title/clean_title`。
+- `insert_placeholder_from_reference(table, reference_text, source='placeholder_from_reading', top_n=5, extra=None)`：执行“匹配已存在记录，否则插入占位引文”的一体化流程。
 - `update_pdf_status(table, uid, has_pdf, pdf_path='')`：更新原文状态（`是否有原文`、`pdf_path`）。
 
 字段约定（文献主表）：
@@ -67,6 +69,8 @@ autodokit.tools 统一导出两类能力：
 - 原文：`是否有原文`、`pdf_path`
 
 说明：`导入和预处理文献元数据` 事务会写出上述核心字段，并将 CSV 行索引列命名为 `id`。
+
+补充说明：占位引文与标准引文共享同一套稳定 uid 生成规则。是否为占位引文由 `is_placeholder` 字段标识。
 
 ## 3. 事务模块契约
 

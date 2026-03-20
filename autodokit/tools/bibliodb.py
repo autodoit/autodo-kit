@@ -61,6 +61,25 @@ class MatchCandidate:
     row: Dict[str, Any]
 
 
+@dataclass
+class ReferenceParseResult:
+    """参考文献行文本解析结果。
+
+    Args:
+        reference_text: 原始参考文献行文本。
+        first_author: 解析得到的第一作者。
+        year_int: 解析得到的年份。
+        title: 解析得到的标题原文。
+        clean_title: 标题清洗结果。
+    """
+
+    reference_text: str
+    first_author: str
+    year_int: int | None
+    title: str
+    clean_title: str
+
+
 def normalize_text_for_match(text: str) -> str:
     """将文本规范化为匹配友好的形式。
 
@@ -143,6 +162,61 @@ def extract_first_author(author_raw: Any) -> str:
         if part and part.strip():
             return part.strip()
     return ""
+
+
+def parse_reference_text(reference_text: str) -> ReferenceParseResult:
+    """从参考文献单行文本中提取作者、年份与标题。
+
+    该解析为启发式策略，目标是支持“占位引文插入”流程；
+    对复杂格式的参考文献并不保证百分百准确。
+
+    Args:
+        reference_text: 参考文献原始文本（通常来自论文参考文献列表的一行）。
+
+    Returns:
+        解析结果对象。
+    """
+
+    text = str(reference_text or "").strip()
+    text = re.sub(r"^\s*(?:\[\d+\]|\(\d+\)|\d+[\).、])\s*", "", text)
+    text = " ".join(text.split())
+
+    year_match = re.search(r"(19|20)\d{2}", text)
+    year_int = int(year_match.group(0)) if year_match else None
+
+    if year_match:
+        author_part = text[: year_match.start()].strip(" .,;:()[]")
+        after_year = text[year_match.end() :].strip()
+    else:
+        author_part = re.split(r"\.", text, maxsplit=1)[0].strip(" .,;:()[]")
+        after_year = text
+
+    first_author = extract_first_author(author_part)
+
+    title_candidate = ""
+    quoted_match = re.search(r"[\"“](.+?)[\"”]", after_year)
+    if quoted_match:
+        title_candidate = quoted_match.group(1).strip()
+    else:
+        after_year = re.sub(r"^[\s\)\]\.,;:]+", "", after_year)
+        pieces = re.split(r"\.\s+", after_year, maxsplit=1)
+        title_candidate = pieces[0].strip() if pieces else ""
+
+    if not title_candidate:
+        fallback = text
+        if year_match:
+            fallback = text[year_match.end() :].strip(" .,;:()[]") or text
+        title_candidate = fallback
+
+    title_candidate = " ".join(title_candidate.split())
+    clean_title = clean_title_text(title_candidate)
+    return ReferenceParseResult(
+        reference_text=text,
+        first_author=first_author,
+        year_int=year_int,
+        title=title_candidate,
+        clean_title=clean_title,
+    )
 
 
 def generate_uid(first_author: str | None, year_int: int | None, title_norm: str, prefix: str | None = None) -> str:
@@ -326,7 +400,7 @@ def create_placeholder(table: pd.DataFrame, first_author: str, year: int | None,
 
     year_val = year if isinstance(year, int) else parse_year_int(year)
     title_norm = normalize_text_for_match(title)
-    uid = generate_uid(first_author, year_val, title_norm, prefix="ph")
+    uid = generate_uid(first_author, year_val, title_norm)
     entry: Dict[str, Any] = {
         "uid": uid,
         "entry_type": "placeholder",
@@ -345,6 +419,80 @@ def create_placeholder(table: pd.DataFrame, first_author: str, year: int | None,
     if extra:
         entry.update(extra)
     return upsert_record(table=table, bib_entry=entry, source=source, overwrite=False)
+
+
+def insert_placeholder_from_reference(
+    table: pd.DataFrame,
+    reference_text: str,
+    source: str = "placeholder_from_reading",
+    top_n: int = 5,
+    extra: Dict[str, Any] | None = None,
+) -> Tuple[pd.DataFrame, Dict[str, Any], str]:
+    """从参考文献行文本按需插入占位引文。
+
+    流程：
+    1. 解析参考文献文本获取第一作者、年份与标题；
+    2. 在库中匹配是否已存在（占位或标准条目都参与匹配）；
+    3. 若命中则不插入，返回 `exists`；
+    4. 若未命中则插入占位条目，返回 `inserted` 或 `updated`。
+
+    Args:
+        table: 文献数据库表。
+        reference_text: 参考文献单条文本。
+        source: 写入来源标签。
+        top_n: 匹配候选返回上限。
+        extra: 插入时附加字段。
+
+    Returns:
+        (新表, 记录字典, 动作)。动作为 `exists`、`inserted` 或 `updated`。
+
+    Raises:
+        ValueError: 当参考文献文本为空或无法解析有效标题时抛出。
+    """
+
+    parsed = parse_reference_text(reference_text)
+    if not parsed.reference_text:
+        raise ValueError("reference_text 不能为空")
+    if not parsed.title:
+        raise ValueError("无法从 reference_text 中解析标题")
+
+    matches = find_match(
+        table=table,
+        first_author=parsed.first_author,
+        year=parsed.year_int,
+        title=parsed.title,
+        top_n=top_n,
+    )
+    if matches:
+        return (
+            table,
+            {
+                "action": "exists",
+                "matched": matches[0],
+                "parsed": {
+                    "first_author": parsed.first_author,
+                    "year_int": parsed.year_int,
+                    "title": parsed.title,
+                    "clean_title": parsed.clean_title,
+                    "reference_text": parsed.reference_text,
+                },
+            },
+            "exists",
+        )
+
+    merged_extra: Dict[str, Any] = {"reference_text": parsed.reference_text}
+    if extra:
+        merged_extra.update(extra)
+
+    return create_placeholder(
+        table=table,
+        first_author=parsed.first_author,
+        year=parsed.year_int,
+        title=parsed.title,
+        clean_title=parsed.clean_title,
+        source=source,
+        extra=merged_extra,
+    )
 
 
 def update_pdf_status(table: pd.DataFrame, uid: str, has_pdf: int, pdf_path: str = "") -> Tuple[pd.DataFrame, Dict[str, Any]]:

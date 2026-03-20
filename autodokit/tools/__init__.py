@@ -48,6 +48,7 @@ from autodoengine.utils.dispatch_map import load_dispatch_map
 from autodoengine.utils.runtime_trace import append_flow_trace_event
 from autodokit.tools.affair_result import ensure_absolute_output_dir, write_affair_json_result
 from autodokit.tools.cnki_affair_helpers import build_cnki_result
+from autodokit.tools.bibliodb import parse_reference_text, insert_placeholder_from_reference
 from autodoengine.utils.affair_registry import (
     scan_affairs,
     validate_affair_manifest,
@@ -83,6 +84,8 @@ __all__ = [
     "ensure_absolute_output_dir",
     "write_affair_json_result",
     "build_cnki_result",
+    "parse_reference_text",
+    "insert_placeholder_from_reference",
     "load_dispatch_map",
     "load_json_file",
     "resolve_config_path",
