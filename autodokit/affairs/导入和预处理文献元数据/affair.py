@@ -534,12 +534,21 @@ def split_keywords(raw: str) -> List[str]:
 
 
 from autodokit.tools import load_json_or_py
+from autodokit.tools.bibliodb import (
+    clean_title_text,
+    ensure_id_column,
+    extract_first_author,
+    generate_uid,
+    parse_year_int,
+)
 
 
 def build_main_table(records: List[BibRecord], pdf_matches: List[Tuple[bool, str]]) -> pd.DataFrame:
     """根据解析的记录和 PDF 匹配结果构建主数据表（Pandas DataFrame）。
 
-    生成字段包括原有 Bib 字段、title_norm、abstract_norm、是否有原文、pdf_path 等（不再生成 authors_list、keywords_list、year_int）。
+    生成字段包括原有 Bib 字段、`uid`、`id`（行号）、`clean_title`、`first_author`、
+    `year_int`、`is_placeholder`、`source`、`is_indexed`、`title_norm`、`abstract_norm`、
+    `是否有原文`、`pdf_path`。
 
     Args:
         records: BibRecord 列表。
@@ -549,24 +558,47 @@ def build_main_table(records: List[BibRecord], pdf_matches: List[Tuple[bool, str
         Pandas DataFrame，行表示文献条目，列为若干元数据字段。
     """
     rows: List[Dict[str, Any]] = []
-    # 为每条记录生成顺序 uid（从1开始），不再保留 entry_key，uid 将作为唯一索引
-    for uid, (record, (has_pdf, pdf_path)) in enumerate(zip(records, pdf_matches), start=1):
+    used_uid: set[str] = set()
+    for record, (has_pdf, pdf_path) in zip(records, pdf_matches):
         row: Dict[str, Any] = {}
         row["entry_type"] = record.entry_type
-        # 不再导出 entry_key，改用数值型 uid 作为唯一标识
-        row["uid"] = uid
         for key, value in record.fields.items():
             row[key] = value
-        # 不再在主表生成 authors_list、keywords_list、year_int 三列，保留原始 author/keywords/year 字段
-        row["title_norm"] = normalize_text(str(record.fields.get("title", "")))
+
+        title_text = str(record.fields.get("title", ""))
+        title_norm = normalize_text(title_text)
+        first_author = extract_first_author(record.fields.get("author", ""))
+        year_int = parse_year_int(record.fields.get("year", ""))
+        clean_title = clean_title_text(title_text)
+
+        uid = generate_uid(first_author=first_author, year_int=year_int, title_norm=title_norm)
+        if uid in used_uid:
+            suffix = 2
+            new_uid = f"{uid}-{suffix}"
+            while new_uid in used_uid:
+                suffix += 1
+                new_uid = f"{uid}-{suffix}"
+            uid = new_uid
+        used_uid.add(uid)
+
+        row["uid"] = uid
+        row["clean_title"] = clean_title
+        row["first_author"] = first_author
+        row["year_int"] = year_int
+        row["is_placeholder"] = 0
+        row["source"] = "imported"
+        row["is_indexed"] = 1
+        row["title_norm"] = title_norm
         row["abstract_norm"] = normalize_text(str(record.fields.get("abstract", "")))
-        row["是否有原文"] = bool(has_pdf)
+        row["是否有原文"] = int(bool(has_pdf))
         row["pdf_path"] = pdf_path
         rows.append(row)
+
     df = pd.DataFrame(rows)
-    # 将 uid 设为唯一索引，便于在 CSV/后续处理使用数值型主键
-    if "uid" in df.columns:
-        df.set_index("uid", inplace=True, drop=True)
+    # 统一生成行号列 id，并作为索引列
+    df = ensure_id_column(df)
+    if "id" in df.columns:
+        df.set_index("id", inplace=True, drop=True)
     return df
 
 
@@ -682,7 +714,7 @@ def _run_and_write_all_outputs(config_path: Path) -> List[Path]:
 
     # 写主表
     table_path = output_dir / config.output_table_csv
-    table.to_csv(table_path, index=True, index_label="uid", encoding="utf-8-sig")
+    table.to_csv(table_path, index=True, index_label="id", encoding="utf-8-sig")
     written_files.append(table_path)
 
 

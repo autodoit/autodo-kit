@@ -44,6 +44,30 @@ autodokit.tools 统一导出两类能力：
 - evaluate_expression
 - append_flow_trace_event
 
+## 2.1 文献数据库管理工具（autodokit.tools.bibliodb）
+
+用途：提供文献数据库的基础管理能力，供业务事务直接调用。
+
+核心接口：
+
+- `init_empty_table(columns=None)`：初始化空文献数据库表。
+- `generate_uid(first_author, year_int, title_norm, prefix=None)`：生成文献唯一标识 `uid`。
+- `clean_title_text(title)`：生成 `clean_title`。
+- `find_match(table, first_author, year, title, top_n=5)`：返回候选匹配列表。
+- `upsert_record(table, bib_entry, source='imported', overwrite=False)`：插入或更新记录。
+- `create_placeholder(table, first_author, year, title, clean_title, source='placeholder', extra=None)`：创建占位引文。
+- `update_pdf_status(table, uid, has_pdf, pdf_path='')`：更新原文状态（`是否有原文`、`pdf_path`）。
+
+字段约定（文献主表）：
+
+- 标识：`uid`（唯一标识）、`id`（行号索引）
+- 文本：`title`、`clean_title`、`title_norm`、`abstract_norm`
+- 作者年份：`first_author`、`year`、`year_int`
+- 管理：`is_placeholder`、`source`、`is_indexed`
+- 原文：`是否有原文`、`pdf_path`
+
+说明：`导入和预处理文献元数据` 事务会写出上述核心字段，并将 CSV 行索引列命名为 `id`。
+
 ## 3. 事务模块契约
 
 每个事务目录通常包含：
