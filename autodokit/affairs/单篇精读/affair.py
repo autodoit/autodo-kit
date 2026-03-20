@@ -28,8 +28,11 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
+import pandas as pd
+
 from autodokit.tools.llm_clients import AliyunDashScopeClient, load_aliyun_llm_config
 from autodokit.tools import load_json_or_py
+from autodokit.tools.bibliodb import init_empty_table, insert_placeholder_from_reference
 
 
 @dataclass
@@ -63,6 +66,10 @@ class SinglePaperConfig:
         "正文（可能较长，已截断）：\n{text}\n"
     )
     max_chars: int = 12000
+    use_llm: bool = False
+    bibliography_csv: str = ""
+    insert_placeholders_from_references: bool = True
+    reference_lines: Optional[List[str]] = None
 
 
 def _read_target_doc(docs_jsonl: Path, *, uid: Optional[int], doc_id: Optional[str]) -> Dict[str, Any]:
@@ -95,6 +102,141 @@ def _read_target_doc(docs_jsonl: Path, *, uid: Optional[int], doc_id: Optional[s
     raise ValueError("未在 docs.jsonl 中找到目标文献。请检查 uid/doc_id 配置。")
 
 
+def _extract_reference_lines_from_text(text: str) -> List[str]:
+    """从文献文本中提取“参考文献行”列表。
+
+    策略说明：
+    - 优先识别“References/参考文献”标题后的段落；
+    - 若未命中，则返回空列表（避免误抽正文句子）。
+
+    Args:
+        text: 文献全文文本。
+
+    Returns:
+        参考文献行列表（去重且保持顺序）。
+    """
+
+    raw = str(text or "")
+    if not raw.strip():
+        return []
+
+    lines = [line.strip() for line in raw.splitlines()]
+    start_idx = -1
+    for idx, line in enumerate(lines):
+        lowered = line.lower().strip("# ")
+        if lowered in {"references", "reference", "参考文献"}:
+            start_idx = idx + 1
+            break
+
+    if start_idx < 0:
+        return []
+
+    refs: List[str] = []
+    seen: set[str] = set()
+    for line in lines[start_idx:]:
+        if not line:
+            continue
+        if line.startswith("#"):
+            break
+        if len(line) < 20:
+            continue
+        if line not in seen:
+            seen.add(line)
+            refs.append(line)
+    return refs
+
+
+def _generate_local_reading_note(title: str, year: str, text: str) -> str:
+    """在不调用 LLM 的情况下生成精读笔记草稿。
+
+    Args:
+        title: 标题。
+        year: 年份。
+        text: 文本内容。
+
+    Returns:
+        Markdown 格式的笔记正文。
+    """
+
+    normalized = " ".join(str(text or "").split())
+    sample = normalized[:2000]
+    sentences = [s.strip() for s in sample.replace("\n", " ").split(".") if s.strip()]
+    key_points = sentences[:5]
+
+    bullets = "\n".join([f"- {point}." for point in key_points]) if key_points else "- 未从文本中抽取到可用句子。"
+
+    return "\n".join(
+        [
+            "## 论文信息",
+            f"- 标题：{title}",
+            f"- 年份：{year}",
+            "",
+            "## 核心内容速记（本地规则生成）",
+            bullets,
+            "",
+            "## 阅读建议",
+            "- 补充查看方法与数据部分，确认识别策略是否可复用。",
+            "- 后续可将关键结论映射到研究问题-方法-证据三元结构。",
+        ]
+    )
+
+
+def _load_or_init_bibliography_table(csv_path: Path) -> pd.DataFrame:
+    """加载或初始化文献数据库表。
+
+    Args:
+        csv_path: 文献数据库 CSV 路径。
+
+    Returns:
+        DataFrame 文献表。
+    """
+
+    if csv_path.exists():
+        return pd.read_csv(csv_path)
+    return init_empty_table()
+
+
+def _insert_placeholders_for_references(table: pd.DataFrame, reference_lines: List[str]) -> tuple[pd.DataFrame, Dict[str, Any]]:
+    """根据参考文献行批量插入占位引文。
+
+    Args:
+        table: 当前文献表。
+        reference_lines: 参考文献行文本列表。
+
+    Returns:
+        (更新后的表, 统计信息字典)。
+    """
+
+    working = table.copy()
+    inserted = 0
+    exists = 0
+    skipped = 0
+    details: List[Dict[str, Any]] = []
+
+    for line in reference_lines:
+        try:
+            working, record, action = insert_placeholder_from_reference(working, line)
+            if action == "exists":
+                exists += 1
+            elif action in {"inserted", "updated"}:
+                inserted += 1
+            details.append({"action": action, "record": record})
+        except Exception as exc:
+            skipped += 1
+            details.append({"action": "skipped", "error": str(exc), "reference_text": line})
+
+    return (
+        working,
+        {
+            "total": len(reference_lines),
+            "inserted": inserted,
+            "exists": exists,
+            "skipped": skipped,
+            "details": details,
+        },
+    )
+
+
 def execute(config_path: Path) -> List[Path]:
     raw_cfg = load_json_or_py(config_path)
 
@@ -111,6 +253,10 @@ def execute(config_path: Path) -> List[Path]:
         user_prompt_template=str(merged.get("user_prompt_template") or "").strip()
         or SinglePaperConfig.user_prompt_template,
         max_chars=int(merged.get("max_chars") or 12000),
+        use_llm=bool(merged.get("use_llm", False)),
+        bibliography_csv=str(merged.get("bibliography_csv") or ""),
+        insert_placeholders_from_references=bool(merged.get("insert_placeholders_from_references", True)),
+        reference_lines=list(merged.get("reference_lines") or []),
     )
 
     docs_path = Path(cfg.input_docs_jsonl)
@@ -136,18 +282,44 @@ def execute(config_path: Path) -> List[Path]:
     if cfg.max_chars and len(text) > cfg.max_chars:
         text = text[: cfg.max_chars]
 
-    prompt = cfg.user_prompt_template.format(title=title, year=year, text=text)
+    extracted_reference_lines = _extract_reference_lines_from_text(text)
+    merged_reference_lines = list(cfg.reference_lines or [])
+    for line in extracted_reference_lines:
+        if line not in merged_reference_lines:
+            merged_reference_lines.append(line)
 
-    route_hints: Dict[str, Any] = dict(model_route)
-    route_hints.setdefault("input_chars", len(text))
+    bibliography_stats: Dict[str, Any] = {"total": 0, "inserted": 0, "exists": 0, "skipped": 0, "details": []}
+    written_paths: List[Path] = []
+    if cfg.insert_placeholders_from_references and cfg.bibliography_csv:
+        bib_path = Path(cfg.bibliography_csv)
+        if not bib_path.is_absolute():
+            raise ValueError(
+                "bibliography_csv 必须为绝对路径：请确认主流程已执行统一路径预处理，"
+                f"当前值={cfg.bibliography_csv!r}"
+            )
+        bib_path.parent.mkdir(parents=True, exist_ok=True)
+        bib_table = _load_or_init_bibliography_table(bib_path)
+        bib_table, bibliography_stats = _insert_placeholders_for_references(bib_table, merged_reference_lines)
+        bib_table.to_csv(bib_path, index=False, encoding="utf-8-sig")
+        written_paths.append(bib_path)
 
-    llm_cfg = load_aliyun_llm_config(
-        model=cfg.model,
-        affair_name="单篇精读",
-        route_hints=route_hints,
-    )
-    client = AliyunDashScopeClient(llm_cfg)
-    answer = client.generate_text(prompt=prompt, system=cfg.system_prompt)
+    if cfg.use_llm:
+        prompt = cfg.user_prompt_template.format(title=title, year=year, text=text)
+        route_hints: Dict[str, Any] = dict(model_route)
+        route_hints.setdefault("input_chars", len(text))
+        llm_cfg = load_aliyun_llm_config(
+            model=cfg.model,
+            affair_name="单篇精读",
+            route_hints=route_hints,
+        )
+        client = AliyunDashScopeClient(llm_cfg)
+        answer = client.generate_text(prompt=prompt, system=cfg.system_prompt)
+        model_name = llm_cfg.model
+        backend_name = llm_cfg.sdk_backend
+    else:
+        answer = _generate_local_reading_note(title=title, year=year, text=text)
+        model_name = "local-rule-based"
+        backend_name = "none"
 
     safe_uid = str(cfg.uid) if cfg.uid is not None else (cfg.doc_id or "doc")
     out_path = out_dir / f"single_reading_{safe_uid}.md"
@@ -158,8 +330,12 @@ def execute(config_path: Path) -> List[Path]:
                 "",
                 f"- uid/doc_id: {safe_uid}",
                 f"- year: {year}",
-                f"- model: {llm_cfg.model}",
-                f"- backend: {llm_cfg.sdk_backend}",
+                f"- model: {model_name}",
+                f"- backend: {backend_name}",
+                f"- references_detected: {len(merged_reference_lines)}",
+                f"- placeholder_inserted: {bibliography_stats.get('inserted', 0)}",
+                f"- placeholder_exists: {bibliography_stats.get('exists', 0)}",
+                f"- placeholder_skipped: {bibliography_stats.get('skipped', 0)}",
                 "",
                 "---",
                 "",
@@ -169,6 +345,6 @@ def execute(config_path: Path) -> List[Path]:
         ),
         encoding="utf-8",
     )
-
-    return [out_path]
+    written_paths.insert(0, out_path)
+    return written_paths
 
