@@ -36,6 +36,7 @@
 
 | 事务 | 领域 | 节点类型 | pass_mode | 目录 |
 | --- | --- | --- | --- | --- |
+| Skill渲染 | infrastructure | transform | config_path | autodokit/affairs/Skill渲染 |
 | CAJ文件转PDF | business | process | config_path | autodokit/affairs/CAJ文件转PDF |
 | CNKI全文下载规划 | business | transform | config_path | autodokit/affairs/CNKI全文下载规划 |
 | CNKI单篇详情提取 | business | transform | config_path | autodokit/affairs/CNKI单篇详情提取 |
