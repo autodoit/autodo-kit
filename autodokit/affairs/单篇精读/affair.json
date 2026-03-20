@@ -6,6 +6,7 @@
   "use_llm": false,
   "model": "qwen-plus",
   "system_prompt": "你是一名严谨的学术研究助理。请用中文输出，结构清晰。",
+  "user_prompt_template": "",
   "max_chars": 12000,
   "bibliography_csv": "",
   "insert_placeholders_from_references": true,

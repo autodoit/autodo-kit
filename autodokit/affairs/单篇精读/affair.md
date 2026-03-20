@@ -15,6 +15,7 @@
 - 以 `affair.json.interface.inputs` 与代码实现为准。
 - 关键参数补充：
 	- `use_llm`：是否调用大模型。默认 `false`，用于本地规则精读调试。
+	- `user_prompt_template`：当 `use_llm=true` 时必填，建议由上游 skill 传入 `单篇精读要求.md` 的绝对路径；程序会在运行时读取该文件正文后再注入 `{title}`、`{year}`、`{text}`。
 	- `bibliography_csv`：文献数据库 CSV 绝对路径。配置后可在精读时写入占位引文。
 	- `insert_placeholders_from_references`：是否执行占位引文插入流程。
 	- `reference_lines`：可手工提供参考文献行文本列表（用于无 LLM 场景下的调试）。

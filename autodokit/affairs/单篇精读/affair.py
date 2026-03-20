@@ -1,6 +1,6 @@
-﻿"""单篇精读笔记（P1，占位可运行版）。
+﻿"""单篇精读笔记（占位可运行版）。
 
-本脚本用于对单篇文献生成“精读笔记”。它假设你已经完成 P0：
+本脚本用于对单篇文献生成“精读笔记”。
 - `pdf_to_docs` 产出 `docs.jsonl`
 - `解析与分块` 产出 `chunks.jsonl`
 
@@ -46,25 +46,17 @@ class SinglePaperConfig:
         doc_id: 可选，目标文献 doc_id（若提供则优先使用）。
         model: 大模型名称。
         system_prompt: 可选系统提示词。
-        user_prompt_template: 用户提示词模板（可用 {title}/{year}/{text} 占位）。
+        user_prompt_template: 用户提示词模板正文，或其对应的绝对路径（可用 {title}/{year}/{text} 占位）。
         max_chars: 为避免输入过长，本版按字符截断全文（不是严格 token）。
     """
 
     input_docs_jsonl: str
     output_dir: str
-    uid: Optional[int] = None
+    uid: Optional[str] = None
     doc_id: Optional[str] = None
     model: str = "qwen-plus"
     system_prompt: str = "你是一名严谨的学术研究助理。请用中文输出，结构清晰。"
-    user_prompt_template: str = (
-        "请对下面这篇论文做单篇精读笔记。\n"
-        "要求：\n"
-        "1) 用要点列出研究问题、方法、数据、主要结论、贡献与局限；\n"
-        "2) 给出3-5条可复用的‘引用式表述’（但不要杜撰原文不存在的结论）；\n"
-        "3) 最后给出我进一步阅读时应关注的关键段落线索。\n\n"
-        "论文信息：{title}（{year}）\n\n"
-        "正文（可能较长，已截断）：\n{text}\n"
-    )
+    user_prompt_template: str = ""
     max_chars: int = 12000
     use_llm: bool = False
     bibliography_csv: str = ""
@@ -72,7 +64,33 @@ class SinglePaperConfig:
     reference_lines: Optional[List[str]] = None
 
 
-def _read_target_doc(docs_jsonl: Path, *, uid: Optional[int], doc_id: Optional[str]) -> Dict[str, Any]:
+def _load_prompt_template(template_or_path: str) -> str:
+    """加载用户提示词模板。
+
+    Args:
+        template_or_path: 提示词正文，或提示词文件绝对路径。
+
+    Returns:
+        可直接用于 format 的提示词正文。
+
+    Raises:
+        ValueError: 当提供了不存在的绝对路径时抛出。
+    """
+
+    raw_value = str(template_or_path or "").strip()
+    if not raw_value:
+        raise ValueError("use_llm=true 时必须提供 user_prompt_template 的绝对路径或提示词正文")
+
+    candidate = Path(raw_value)
+    if candidate.is_absolute():
+        if not candidate.exists():
+            raise ValueError(f"user_prompt_template 指向的文件不存在：{candidate}")
+        return candidate.read_text(encoding="utf-8")
+
+    return raw_value
+
+
+def _read_target_doc(docs_jsonl: Path, *, uid: Optional[str], doc_id: Optional[str]) -> Dict[str, Any]:
     """从 docs.jsonl 读取目标文献。
 
     Args:
@@ -96,7 +114,7 @@ def _read_target_doc(docs_jsonl: Path, *, uid: Optional[int], doc_id: Optional[s
 
             if doc_id and str(obj.get("doc_id") or "") == str(doc_id):
                 return obj
-            if uid is not None and obj.get("uid") is not None and int(obj.get("uid")) == int(uid):
+            if uid is not None and obj.get("uid") is not None and str(obj.get("uid")).strip() == str(uid).strip():
                 return obj
 
     raise ValueError("未在 docs.jsonl 中找到目标文献。请检查 uid/doc_id 配置。")
@@ -246,12 +264,11 @@ def execute(config_path: Path) -> List[Path]:
     cfg = SinglePaperConfig(
         input_docs_jsonl=str(merged.get("input_docs_jsonl") or ""),
         output_dir=str(merged.get("output_dir") or ""),
-        uid=int(merged["uid"]) if merged.get("uid") is not None else None,
+        uid=str(merged.get("uid")).strip() if merged.get("uid") is not None else None,
         doc_id=str(merged.get("doc_id")) if merged.get("doc_id") else None,
         model=str(merged.get("model") or "qwen-plus"),
         system_prompt=str(merged.get("system_prompt") or "").strip() or SinglePaperConfig.system_prompt,
-        user_prompt_template=str(merged.get("user_prompt_template") or "").strip()
-        or SinglePaperConfig.user_prompt_template,
+        user_prompt_template=str(merged.get("user_prompt_template") or "").strip(),
         max_chars=int(merged.get("max_chars") or 12000),
         use_llm=bool(merged.get("use_llm", False)),
         bibliography_csv=str(merged.get("bibliography_csv") or ""),
@@ -304,7 +321,8 @@ def execute(config_path: Path) -> List[Path]:
         written_paths.append(bib_path)
 
     if cfg.use_llm:
-        prompt = cfg.user_prompt_template.format(title=title, year=year, text=text)
+        prompt_template = _load_prompt_template(cfg.user_prompt_template)
+        prompt = prompt_template.format(title=title, year=year, text=text)
         route_hints: Dict[str, Any] = dict(model_route)
         route_hints.setdefault("input_chars", len(text))
         llm_cfg = load_aliyun_llm_config(
@@ -321,7 +339,7 @@ def execute(config_path: Path) -> List[Path]:
         model_name = "local-rule-based"
         backend_name = "none"
 
-    safe_uid = str(cfg.uid) if cfg.uid is not None else (cfg.doc_id or "doc")
+    safe_uid = cfg.uid if cfg.uid is not None else (cfg.doc_id or "doc")
     out_path = out_dir / f"single_reading_{safe_uid}.md"
     out_path.write_text(
         "\n".join(
