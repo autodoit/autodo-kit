@@ -44,7 +44,53 @@ autodokit.tools 统一导出两类能力：
 - evaluate_expression
 - append_flow_trace_event
 
-## 2.1 文献数据库管理工具（autodokit.tools.bibliodb）
+## 2.1 公共工具网关（autodokit.tools.gateway）
+
+用途：提供 AOK 公共工具分级清单的统一读取接口，供 CLI、Agent 与 UI 查询。
+
+公开入口：
+
+- `读取公共工具清单(manifest_path=None) -> dict[str, Any]`
+  - 读取 manifest 原始字典。
+- `列出公共工具(exposure=None, kind=None, manifest_path=None) -> list[公共工具条目]`
+  - 按暴露等级或工具类型过滤条目。
+- `获取公共工具(tool_id, manifest_path=None) -> 公共工具条目 | None`
+  - 按唯一标识获取单条工具记录。
+
+Manifest 路径：
+
+- `autodokit/tools/gateway/public_tools_manifest.json`
+
+字段约定（初版）：
+
+- `tool_id`：工具唯一标识
+- `kind`：`python-symbol` 或 `script-entrypoint`
+- `exposure`：`public-read` / `public-safe` / `internal`
+- `module`：模块路径
+- `symbol`：Python 符号名（脚本型可为空）
+- `entrypoint`：脚本入口相对路径（函数型可为空）
+- `summary`：用途说明
+- `side_effect`：副作用说明
+- `audit_mode`：审计方式说明
+
+## 2.2 AOB 迁移入口（scripts/aob_tools）
+
+用途：承接从 AOB 收敛到 AOK 的脚本型工具主入口。
+
+当前主入口：
+
+- `scripts/aob_tools/aoc.py`
+- `scripts/aob_tools/deploy.py`
+- `scripts/aob_tools/library.py`
+- `scripts/aob_tools/regression_opencode_deploy_check.py`
+
+路径解析约定：
+
+- 默认优先使用同级 `autodo-lib` 作为 AOB 仓库根目录；
+- 可通过环境变量 `AOB_REPO_ROOT` 覆盖；
+- 相关脚本支持通过 `--repo-root` 显式传入。
+
+## 2.3 文献数据库管理工具（autodokit.tools.bibliodb）
 
 用途：提供文献数据库的基础管理能力，供业务事务直接调用。
 

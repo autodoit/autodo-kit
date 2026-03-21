@@ -49,6 +49,20 @@ from autodoengine.utils.runtime_trace import append_flow_trace_event
 from autodokit.tools.affair_result import ensure_absolute_output_dir, write_affair_json_result
 from autodokit.tools.cnki_affair_helpers import build_cnki_result
 from autodokit.tools.bibliodb import parse_reference_text, insert_placeholder_from_reference
+from autodokit.tools.gateway import (
+    读取公共工具清单,
+    列出公共工具,
+    获取公共工具,
+    调用公共工具,
+    列出公共能力,
+    获取公共能力,
+)
+from autodokit.tools.public import (
+    invoke_capability,
+    invoke_capability_by_json,
+    list_public_capabilities,
+    get_public_capability,
+)
 from autodoengine.utils.affair_registry import (
     scan_affairs,
     validate_affair_manifest,
@@ -86,6 +100,16 @@ __all__ = [
     "build_cnki_result",
     "parse_reference_text",
     "insert_placeholder_from_reference",
+    "读取公共工具清单",
+    "列出公共工具",
+    "获取公共工具",
+    "调用公共工具",
+    "列出公共能力",
+    "获取公共能力",
+    "invoke_capability",
+    "invoke_capability_by_json",
+    "list_public_capabilities",
+    "get_public_capability",
     "load_dispatch_map",
     "load_json_file",
     "resolve_config_path",

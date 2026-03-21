@@ -30,7 +30,39 @@ autodokit/
   tools/     事务侧工具
 scripts/
   generate_affair_manual.py
+  aob_tools/  承接 AOB 迁移过来的执行入口
 ```
+
+## AOB 迁移承接入口
+
+为收敛 AOB 的执行型入口，AOK 现承接以下脚本型能力：
+
+- `scripts/aob_tools/aoc.py`
+- `scripts/aob_tools/deploy.py`
+- `scripts/aob_tools/library.py`
+- `scripts/aob_tools/regression_opencode_deploy_check.py`
+- `scripts/run_items_sync.py`
+- `scripts/run_external_templates_import.py`
+- `scripts/run_workflow_deploy.py`
+
+说明：
+
+- `autodo-lib/tools/*.py` 与 `autodo-lib/scripts/run_*.py` 已保留为兼容壳；
+- 历史命令仍可继续使用，但新的规范主入口位于 `autodo-kit/scripts/` 与 `autodo-kit/scripts/aob_tools/`。
+
+## 公共工具清单
+
+AOK 已提供公共工具分级清单初版：
+
+- `autodokit/tools/gateway/public_tools_manifest.json`
+
+并提供只读查询入口：
+
+- `autodokit.tools.读取公共工具清单(...)`
+- `autodokit.tools.列出公共工具(...)`
+- `autodokit.tools.获取公共工具(...)`
+
+该清单用于登记 `public-read` / `public-safe` / `internal` 三类工具暴露等级，供后续 CLI、Agent 与 UI 统一消费。
 
 ## 常用操作
 

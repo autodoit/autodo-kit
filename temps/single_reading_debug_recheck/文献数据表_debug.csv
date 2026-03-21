@@ -1,0 +1,4 @@
+﻿id,uid,entry_type,title,clean_title,title_norm,abstract_norm,first_author,year,year_int,is_placeholder,source,is_indexed,是否有原文,pdf_path,reference_text
+1,5850cbdc013f9e17,placeholder,Stabilizing an Unstable Economy.,stabilizing_an_unstable_economy,stabilizing an unstable economy,,Minsky,1986,1986,1,placeholder_from_reading,0,0,,"Minsky, H. P. 1986. Stabilizing an Unstable Economy."
+2,e3840639f94ef0ad,placeholder,Deciphering the Liquidity and Credit Crunch 2007-2008,deciphering_the_liquidity_and_credit_crunch_2007_2008,deciphering the liquidity and credit crunch 2007 2008,,Brunnermeier,2009,2009,1,placeholder_from_reading,0,0,,"Brunnermeier, M. 2009. Deciphering the Liquidity and Credit Crunch 2007-2008. Journal of Economic Perspectives."
+3,a2e066558450977e,placeholder,Financial Contagion,financial_contagion,financial contagion,,Allen,2000,2000,1,placeholder_from_reading,0,0,,"Allen, F., and Gale, D. 2000. Financial Contagion. Journal of Political Economy."

@@ -1,0 +1,14 @@
+{
+  "input_docs_jsonl": "C:\\Users\\Ethan\\CoreFiles\\ProjectsFile\\autodo-kit\\temps\\single_reading_debug_recheck\\docs.jsonl",
+  "output_dir": "C:\\Users\\Ethan\\CoreFiles\\ProjectsFile\\autodo-kit\\temps\\single_reading_debug_recheck\\output",
+  "uid": 2515,
+  "use_llm": false,
+  "max_chars": 12000,
+  "bibliography_csv": "C:\\Users\\Ethan\\CoreFiles\\ProjectsFile\\autodo-kit\\temps\\single_reading_debug_recheck\\文献数据表_debug.csv",
+  "insert_placeholders_from_references": true,
+  "reference_lines": [
+    "Minsky, H. P. 1986. Stabilizing an Unstable Economy.",
+    "Brunnermeier, M. 2009. Deciphering the Liquidity and Credit Crunch 2007-2008. Journal of Economic Perspectives.",
+    "Allen, F., and Gale, D. 2000. Financial Contagion. Journal of Political Economy."
+  ]
+}
