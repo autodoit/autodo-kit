@@ -29,51 +29,48 @@ autodo-kit 对外公开的是“事务内容 + 事务工具 + 少量桥接入口
 
 ## 2. autodokit.tools 导出
 
-autodokit.tools 统一导出两类能力：
+`autodokit.tools` 采用“按函数直接调用”的公开方式，并按对象分为用户 API 与开发者 API。
 
-- 事务本仓实现：如 pandoc_tex_word_converter、task_docs、obsidian_exporter、metadata_dedup
-- 引擎侧通用能力桥接：如 load_json_or_py、resolve_paths_to_absolute、build_registry、evaluate_expression
+### 2.1 面向用户 API
 
-常用导出示例：
+用途：提供可直接导入的稳定工具函数，便于 IDE 自动补全与形参提示。
 
-- load_json_or_py
-- resolve_paths_to_absolute
-- write_affair_json_result
-- build_cnki_result
-- load_dispatch_map
-- evaluate_expression
-- append_flow_trace_event
+推荐入口：
 
-## 2.1 公共工具网关（autodokit.tools.gateway）
+- `from autodokit.tools import <tool_name>`
+- `list_user_tools() -> list[str]`：列出用户公开工具。
 
-用途：提供 AOK 公共工具分级清单的统一读取接口，供 CLI、Agent 与 UI 查询。
+当前典型工具：
 
-公开入口：
+- `parse_reference_text(reference_text)`
+- `insert_placeholder_from_reference(table, reference_text, ...)`
+- `build_cnki_result(...)`
+- `ensure_absolute_output_dir(...)`
+- `write_affair_json_result(...)`
 
-- `读取公共工具清单(manifest_path=None) -> dict[str, Any]`
-  - 读取 manifest 原始字典。
-- `列出公共工具(exposure=None, kind=None, manifest_path=None) -> list[公共工具条目]`
-  - 按暴露等级或工具类型过滤条目。
-- `获取公共工具(tool_id, manifest_path=None) -> 公共工具条目 | None`
-  - 按唯一标识获取单条工具记录。
+### 2.2 面向开发者 API
 
-Manifest 路径：
+用途：提供事务实现、调度桥接与运行期辅助能力，不作为普通用户主入口。
 
-- `autodokit/tools/gateway/public_tools_manifest.json`
+入口：
 
-字段约定（初版）：
+- `list_developer_tools() -> list[str]`：列出开发者工具。
+- `get_tool(tool_name, scope='user'|'developer'|'all')`：按名称获取可调用对象。
 
-- `tool_id`：工具唯一标识
-- `kind`：`python-symbol` 或 `script-entrypoint`
-- `exposure`：`public-read` / `public-safe` / `internal`
-- `module`：模块路径
-- `symbol`：Python 符号名（脚本型可为空）
-- `entrypoint`：脚本入口相对路径（函数型可为空）
-- `summary`：用途说明
-- `side_effect`：副作用说明
-- `audit_mode`：审计方式说明
+开发侧常用能力示例：
 
-## 2.2 AOB 迁移入口（scripts/aob_tools）
+- `load_json_or_py`
+- `resolve_paths_to_absolute`
+- `evaluate_expression`
+- `append_flow_trace_event`
+- `build_registry`
+
+说明：
+
+- 用户与开发者统一通过 `autodokit.tools` 的函数导出清单调用工具。
+- 工具参数与返回保持函数自然签名，不强制统一 payload 结构。
+
+## 2.3 AOB 迁移入口（scripts/aob_tools）
 
 用途：承接从 AOB 收敛到 AOK 的脚本型工具主入口。
 
@@ -90,7 +87,7 @@ Manifest 路径：
 - 可通过环境变量 `AOB_REPO_ROOT` 覆盖；
 - 相关脚本支持通过 `--repo-root` 显式传入。
 
-## 2.3 文献数据库管理工具（autodokit.tools.bibliodb）
+## 2.4 文献数据库管理工具（autodokit.tools.bibliodb）
 
 用途：提供文献数据库的基础管理能力，供业务事务直接调用。
 
@@ -174,3 +171,9 @@ print(outputs)
 - 任务创建与推进
 - taskdb / 决策 / 审计视图
 - CLI 子命令
+
+## 5. demos 工具直调用例
+
+- `demos/scripts/demo_tool_user_import_call.py`：用户公开工具直接导入调用。
+- `demos/scripts/demo_tool_developer_get_tool_call.py`：开发者工具按名称读取并调用。
+- `demos/scripts/demo_tool_cli_call.py`：通过 `python -m autodokit.tools.adapters.cli` 调用工具。

@@ -31,6 +31,14 @@ aok.run_affair(
 )
 ```
 
+## 通过 Python 直调工具
+
+```powershell
+~/CoreFiles/ProjectsFile/autodo-kit/.venv/Scripts/python.exe demos/scripts/demo_tool_user_import_call.py
+~/CoreFiles/ProjectsFile/autodo-kit/.venv/Scripts/python.exe demos/scripts/demo_tool_developer_get_tool_call.py
+~/CoreFiles/ProjectsFile/autodo-kit/.venv/Scripts/python.exe demos/scripts/demo_tool_cli_call.py
+```
+
 ## 构建 Sphinx HTML
 
 ```powershell

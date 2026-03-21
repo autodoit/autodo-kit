@@ -50,19 +50,19 @@ scripts/
 - `autodo-lib/tools/*.py` 与 `autodo-lib/scripts/run_*.py` 已保留为兼容壳；
 - 历史命令仍可继续使用，但新的规范主入口位于 `autodo-kit/scripts/` 与 `autodo-kit/scripts/aob_tools/`。
 
-## 公共工具清单
+## 工具导出管理
 
-AOK 已提供公共工具分级清单初版：
+AOK 工具采用“函数直调 + 集中导出”方式：
 
-- `autodokit/tools/gateway/public_tools_manifest.json`
+- 用户公开工具：`from autodokit.tools import <tool_name>`
+- 用户工具清单：`autodokit.tools.list_user_tools()`
+- 开发者工具清单：`autodokit.tools.list_developer_tools()`
+- 按名称取工具：`autodokit.tools.get_tool(name, scope='user'|'developer'|'all')`
 
-并提供只读查询入口：
+说明：
 
-- `autodokit.tools.读取公共工具清单(...)`
-- `autodokit.tools.列出公共工具(...)`
-- `autodokit.tools.获取公共工具(...)`
-
-该清单用于登记 `public-read` / `public-safe` / `internal` 三类工具暴露等级，供后续 CLI、Agent 与 UI 统一消费。
+- 公开/非公开由 `autodokit/tools/__init__.py` 的分组清单统一管理。
+- 工具参数与返回保持自然函数签名，便于 IDE 形参提示与自动补全。
 
 ## 常用操作
 
@@ -84,6 +84,23 @@ outputs = aok.run_affair(
     workspace_root=Path.cwd(),
 )
 print(outputs)
+```
+
+直调工具（示例）：
+
+```python
+from autodokit.tools import parse_reference_text
+
+result = parse_reference_text("Smith, 2024. Example Title.")
+print(result)
+```
+
+demos 脚本（可直接运行）：
+
+```powershell
+python demos/scripts/demo_tool_user_import_call.py
+python demos/scripts/demo_tool_developer_get_tool_call.py
+python demos/scripts/demo_tool_cli_call.py
 ```
 
 ## 边界说明

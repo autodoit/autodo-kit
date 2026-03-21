@@ -29,7 +29,7 @@ include = ["autodokit*"]
 exclude = ["demos*", "docs*", "config*", "flowgraphs*", "nodes*"]
 
 [tool.setuptools.package-data]
-"autodokit" = ["affairs/**/affair.json", "affairs/**/affair.md", "tools/gateway/*.json"]
+"autodokit" = ["affairs/**/affair.json", "affairs/**/affair.md"]
 
 
 [[tool.uv.index]]

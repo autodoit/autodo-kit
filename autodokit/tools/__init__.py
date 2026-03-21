@@ -1,14 +1,15 @@
-"""tools 子包的轻量导出。
+"""AOK 工具统一导出入口。
 
-说明：
-- 本项目中多个事务会使用 `from autodokit.tools import ...` 的方式导入工具函数。
-- 当你将实现文件移动到 tools 子包后，需要在此处统一导出公共符号，以保持导入路径稳定。
+本模块采用“直调函数优先”的设计：
 
-注意：
-- 这里仅做符号再导出，不改变工具函数行为。
+1. 用户侧直接 `from autodokit.tools import 某工具` 后调用函数；
+2. 开发侧通过开发者清单了解内部辅助工具；
+3. 公开调用入口保持为“函数直调 + 分组导出”。
 """
 
 from __future__ import annotations
+
+from typing import Any, Callable
 
 # 关键：统一从新目录再导出，保持外部导入路径稳定。
 from autodoengine.utils.path_tools import (
@@ -49,20 +50,6 @@ from autodoengine.utils.runtime_trace import append_flow_trace_event
 from autodokit.tools.affair_result import ensure_absolute_output_dir, write_affair_json_result
 from autodokit.tools.cnki_affair_helpers import build_cnki_result
 from autodokit.tools.bibliodb import parse_reference_text, insert_placeholder_from_reference
-from autodokit.tools.gateway import (
-    读取公共工具清单,
-    列出公共工具,
-    获取公共工具,
-    调用公共工具,
-    列出公共能力,
-    获取公共能力,
-)
-from autodokit.tools.public import (
-    invoke_capability,
-    invoke_capability_by_json,
-    list_public_capabilities,
-    get_public_capability,
-)
 from autodoengine.utils.affair_registry import (
     scan_affairs,
     validate_affair_manifest,
@@ -74,7 +61,16 @@ from autodoengine.utils.affair_registry import (
     lint_affairs,
 )
 
-__all__ = [
+
+_用户公开工具 = [
+    "parse_reference_text",
+    "insert_placeholder_from_reference",
+    "build_cnki_result",
+    "ensure_absolute_output_dir",
+    "write_affair_json_result",
+]
+
+_开发者工具 = [
     "load_json_or_py",
     "find_repo_root",
     "resolve_path_from_base",
@@ -100,16 +96,6 @@ __all__ = [
     "build_cnki_result",
     "parse_reference_text",
     "insert_placeholder_from_reference",
-    "读取公共工具清单",
-    "列出公共工具",
-    "获取公共工具",
-    "调用公共工具",
-    "列出公共能力",
-    "获取公共能力",
-    "invoke_capability",
-    "invoke_capability_by_json",
-    "list_public_capabilities",
-    "get_public_capability",
     "load_dispatch_map",
     "load_json_file",
     "resolve_config_path",
@@ -124,3 +110,72 @@ __all__ = [
     "get_affair_docs",
     "lint_affairs",
 ]
+
+
+def list_user_tools() -> list[str]:
+    """返回面向用户公开的工具名列表。
+
+    Returns:
+        list[str]: 用户可直接导入与调用的工具函数名。
+
+    Examples:
+        >>> "parse_reference_text" in list_user_tools()
+        True
+    """
+
+    return list(_用户公开工具)
+
+
+def list_developer_tools() -> list[str]:
+    """返回面向开发者的工具名列表。
+
+    Returns:
+        list[str]: 开发者可使用的工具函数名。
+
+    Examples:
+        >>> "load_json_or_py" in list_developer_tools()
+        True
+    """
+
+    return list(_开发者工具)
+
+
+def get_tool(tool_name: str, *, scope: str = "user") -> Callable[..., Any]:
+    """按名称读取工具函数。
+
+    Args:
+        tool_name: 工具函数名。
+        scope: 工具范围，支持 `user`、`developer`、`all`。
+
+    Returns:
+        Callable[..., Any]: 工具函数对象。
+
+    Raises:
+        KeyError: 工具不存在或不在指定范围内时抛出。
+
+    Examples:
+        >>> fn = get_tool("parse_reference_text")
+        >>> callable(fn)
+        True
+    """
+
+    target = str(tool_name or "").strip()
+    if not target:
+        raise KeyError("tool_name 不能为空")
+
+    if scope == "user":
+        allowed = set(_用户公开工具)
+    elif scope == "developer":
+        allowed = set(_开发者工具)
+    else:
+        allowed = set(_用户公开工具) | set(_开发者工具)
+
+    if target not in allowed or target not in globals():
+        raise KeyError(f"工具不存在或未在范围[{scope}]内公开：{target}")
+    symbol = globals()[target]
+    if not callable(symbol):
+        raise KeyError(f"目标不是可调用工具：{target}")
+    return symbol
+
+
+__all__ = list(_用户公开工具)
