@@ -466,6 +466,15 @@ from autodokit.tools.aok_pdf_aliyun_multimodal_parse import (
 from autodokit.tools.aok_pdf_aliyun_multimodal_batch_manage import (
     batch_manage_pdf_with_aliyun_multimodal,
 )
+def run_online_retrieval_router(payload: dict[str, Any]) -> dict[str, Any]:
+    """延迟加载在线检索路由器并执行路由调用。
+
+    这样做可以避免在模块导入时触发内部实现文件的顶级导入，从而
+    将 `run_online_retrieval_router` 作为用户可用的安全入口。
+    """
+    module = importlib.import_module("autodokit.tools.online_retrieval_literatures.online_retrieval_router")
+    route = getattr(module, "route")
+    return route(payload)
 
 
 _用户公开工具 = [
@@ -775,6 +784,7 @@ _开发者工具 = [
     "build_aliyun_multimodal_chunks",
     "parse_pdf_with_aliyun_multimodal",
     "batch_manage_pdf_with_aliyun_multimodal",
+    "run_online_retrieval_router",
 ]
 
 
