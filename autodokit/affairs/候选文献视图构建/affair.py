@@ -555,7 +555,7 @@ def _render_standard_note_body(
     if reference_lines:
         placeholder_refs.extend([f"- {item}" for item in reference_lines])
     else:
-        placeholder_refs.append("- 待 A06 扫描后回填")
+        placeholder_refs.append("- 待 A070 扫描后回填")
     batch_lines = ["- 待补充批次"]
     if batch_rows:
         batch_lines = [
@@ -573,22 +573,22 @@ def _render_standard_note_body(
             "- 当前综述回链：[[" + (_stringify(row.get("cite_key")) or _stringify(row.get("uid_literature"))) + "]]",
             "",
             "## 研究问题",
-            "- 待 A06 填充",
+            "- 待 A070 填充",
             "",
             "## 研究方法与证据",
-            "- 待 A06 填充",
+            "- 待 A070 填充",
             "",
             "## 核心发现",
-            "- 待 A06 填充",
+            "- 待 A070 填充",
             "",
             "## 阅读批次",
             *batch_lines,
             "",
             "## 共识与争议",
-            "- 待 A06 填充",
+            "- 待 A070 填充",
             "",
             "## 未来方向",
-            "- 待 A06 填充",
+            "- 待 A070 填充",
             "",
             "## 摘要摘录",
             abstract or "- 待补充",
@@ -610,13 +610,13 @@ def _render_composite_note(title: str, summary: str) -> str:
             f"> {summary}",
             "",
             "## 输入综述",
-            "- 待 A06 回填 `[[cite_key]]` 列表",
+            "- 待 A070 回填 `[[cite_key]]` 列表",
             "",
             "## 结构化提要",
-            "- 待 A06 填充",
+            "- 待 A070 填充",
             "",
             "## 证据回链",
-            "- 待 A06 填充 `[[cite_key]]`",
+            "- 待 A070 填充 `[[cite_key]]`",
         ]
     )
 
@@ -627,7 +627,7 @@ def _write_standard_note_references(note_path: Path, reference_entries: List[str
     text = note_path.read_text(encoding="utf-8") if note_path.exists() else ""
     marker = "## 参考文献列表"
     prefix, _, _ = text.partition(marker)
-    entries = reference_entries or ["- 待 A06 扫描后回填"]
+    entries = reference_entries or ["- 待 A070 扫描后回填"]
     new_text = prefix.rstrip() + "\n\n" + marker + "\n" + "\n".join(entries) + "\n"
     note_path.write_text(new_text, encoding="utf-8")
 
