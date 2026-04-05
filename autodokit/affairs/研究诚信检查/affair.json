@@ -1,0 +1,14 @@
+{
+  "project_root": "",
+  "strict": false,
+  "include_extensions": [
+    ".py",
+    ".md",
+    ".json",
+    ".yaml",
+    ".yml",
+    ".toml",
+    ".txt"
+  ],
+  "output_dir": ""
+}

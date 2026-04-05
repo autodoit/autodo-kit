@@ -1,0 +1,10 @@
+{
+  "input_chunk_manifest_json": "workflows/workflow_解析与分块/output/03_chunk/chunk_manifest.json",
+  "output_dir": "workflows/workflow_向量化与索引构建/output/04_vector_index",
+  "vectorizer_type": "tfidf",
+  "max_features": 20000,
+  "ngram_range": [
+    1,
+    2
+  ]
+}

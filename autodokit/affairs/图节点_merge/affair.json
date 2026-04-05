@@ -1,0 +1,6 @@
+{
+  "merge_strategy": "wait_all_activated",
+  "quorum": 1,
+  "max_wait_retries": null,
+  "on_timeout": "fail"
+}

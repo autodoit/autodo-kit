@@ -1,0 +1,11 @@
+{
+  "input_pdf_dir": "data/文献原文数据",
+  "output_md_dir": "data/文献原文转md数据",
+  "converter": "babeldoc",
+  "babeldoc": {
+    "enabled": false,
+    "note": "这里放 BabelDOC 需要的参数（占位/透传）"
+  },
+  "overwrite": false,
+  "output_log": "workflows/workflow_PDF文件转md文件/data/pdf_to_md_manifest.log"
+}

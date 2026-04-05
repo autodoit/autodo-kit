@@ -1,0 +1,5 @@
+{
+  "input_documents_dir": "data/文献原文数据",
+  "unit_db_dir": "data/文档单元数据库",
+  "output_dir": "workflows/workflow_管理文档单元数据库/data/01_unit_db"
+}

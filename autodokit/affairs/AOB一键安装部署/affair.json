@@ -1,0 +1,16 @@
+{
+  "workflow": "academic",
+  "engine_ids": [
+    "opencode"
+  ],
+  "target_dir": "",
+  "project_name": "",
+  "tags": "",
+  "on_conflict": "skip",
+  "skip_health_check": false,
+  "extras": "none",
+  "git_init_mode": "auto",
+  "dry_run": true,
+  "repo_root": "",
+  "output_dir": ""
+}

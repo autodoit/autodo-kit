@@ -1,0 +1,17 @@
+{
+  "content_db": "",
+  "input_keywords": "workflows/workflow_生成关键词集合/data/01_keyword_set",
+  "output_dir": "workflows/workflow_语义预筛选/data/01_prescreen",
+  "include_if_has_pdf": true,
+  "include_domains": [
+    "房地产",
+    "银行系统性风险"
+  ],
+  "exclude_domains": [
+    "DSGE模型"
+  ],
+  "year_range": null,
+  "top_k": 80,
+  "semantic_enable": false,
+  "semantic_queries": []
+}

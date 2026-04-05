@@ -1,0 +1,16 @@
+{
+  "input_matrix_jsonl": "output/matrix/matrix.jsonl",
+  "input_structured_dir": null,
+  "content_db": null,
+  "output_dir": "output/review",
+  "title": "综述草稿",
+  "outline": null,
+  "model": "auto",
+  "model_route": {
+    "task_type": "long_text",
+    "quality_tier": "high",
+    "budget_tier": "balanced",
+    "latency_tier": "medium"
+  },
+  "max_items": 30
+}

@@ -1,0 +1,11 @@
+{
+  "container_name": "container",
+  "expression_mode": "safe",
+  "allow_unsafe_eval": false,
+  "variables": {},
+  "loop": {
+    "enabled": false,
+    "max_iterations": 1,
+    "stop_condition": ""
+  }
+}

@@ -1,0 +1,39 @@
+[project]
+name = "autodo-kit"
+version = "0.1.0"
+description = "工具包：适配通用任务事务工作流系统的通用事务集合与各领域预置的事务集合及其相关内部工具集。"
+authors = [
+    { name = "Ethan Lin", email = "ElementsPhoenix@outlook.com" },
+]
+requires-python = ">=3.13"
+dependencies = [
+    "bibtexparser>=1.4.0",
+    "pandas>=3.0.1",
+    "dashscope>=1.20.0",
+    "openai>=1.40.0",
+    "simpleeval>=0.9.13",
+    "playwright>=1.58.0",
+    "pymupdf>=1.26.4",
+    "pdfminer.six>=20250506",
+    "rapidocr-onnxruntime>=1.4.4",
+]
+
+[build-system]
+requires = ["setuptools>=61", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools]
+include-package-data = true
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["autodokit*"]
+exclude = ["demos*", "docs*", "config*", "flowgraphs*", "nodes*"]
+
+[tool.setuptools.package-data]
+"autodokit" = ["affairs/**/affair.json", "affairs/**/affair.md"]
+
+
+[[tool.uv.index]]
+url = "https://pypi.tuna.tsinghua.edu.cn/simple"
+default = true

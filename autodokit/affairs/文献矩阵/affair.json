@@ -1,0 +1,15 @@
+{
+  "input_structured_dir": "",
+  "content_db": "",
+  "output_dir": "output/matrix",
+  "limit": 20,
+  "uids": null,
+  "model": "auto",
+  "model_route": {
+    "task_type": "long_text",
+    "quality_tier": "high",
+    "budget_tier": "balanced",
+    "latency_tier": "medium"
+  },
+  "max_chars": 8000
+}

@@ -1,0 +1,16 @@
+{
+  "switch_value": "A",
+  "route_expression": "",
+  "expression_mode": "safe",
+  "allow_unsafe_eval": false,
+  "variables": {},
+  "cases": {
+    "case_a": [
+      "A"
+    ],
+    "case_b": [
+      "B"
+    ]
+  },
+  "default_label": "default"
+}

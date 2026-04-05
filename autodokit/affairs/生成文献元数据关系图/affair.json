@@ -1,0 +1,15 @@
+{
+	"content_db": "",
+	"output_dir": "",
+	"tag_list": [
+		"graph",
+		"risk",
+		"bank",
+		"systemic"
+	],
+	"tag_match_fields": [
+		"title",
+		"abstract",
+		"keywords"
+	]
+}

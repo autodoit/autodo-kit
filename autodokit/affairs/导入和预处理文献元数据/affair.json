@@ -1,0 +1,30 @@
+{
+  "bibtex_path": "workspace/references/bib/library.bib",
+  "pdf_dir": "workspace/references/attachments",
+  "output_dir": "workspace/steps/A02_import_and_preprocess",
+  "output_table_csv": "文献数据表.csv",
+  "storage_backend": "sqlite",
+  "sqlite_db_path": "workspace/database/references/references.db",
+  "has_pdf_enable": true,
+  "pdf_match_mode": "title",
+  "tag_list": [
+    "房地产价格波动",
+    "银行系统性风险"
+  ],
+  "tag_match_fields": [
+    "title",
+    "abstract",
+    "keywords"
+  ],
+  "outputs": {
+    "literature_relations_csv": "literature_relations.csv",
+    "tags_to_literatures_csv": "tags_to_literatures.csv",
+    "attachments_to_literatures_csv": "attachments_to_literatures.csv",
+    "tags_inverted_index_pkl": "tags_inverted_index.pkl",
+    "tags_csc_npz": "tags_csc.npz",
+    "tags_entity_index_csv": "tags_entity_index.csv",
+    "attachments_inverted_index_pkl": "attachments_inverted_index.pkl",
+    "attachments_csc_npz": "attachments_csc.npz",
+    "attachments_entity_index_csv": "attachments_entity_index.csv"
+  }
+}

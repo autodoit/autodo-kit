@@ -1,0 +1,815 @@
+"""统一内容主库 SQLite 适配层。
+
+该模块为 AOK 内容层提供统一物理主库能力：
+
+1. 将旧的 `references.db` / `knowledge.db` 路径统一解析到 `content.db`；
+2. 初始化文献域、知识域和跨域关系表；
+3. 提供关系表回填与兼容字段同步能力。
+"""
+from __future__ import annotations
+
+from datetime import UTC, datetime
+import os
+from pathlib import Path
+import sqlite3
+from typing import Mapping, Sequence
+
+import pandas as pd
+
+
+DEFAULT_CONTENT_DB_NAME = "content.db"
+CONTENT_DB_DIRECTORY_NAME = "content"
+KNOWLEDGE_LINK_TABLE_NAME = "knowledge_literature_links"
+KNOWLEDGE_EVIDENCE_TABLE_NAME = "knowledge_evidence_links"
+KNOWLEDGE_NOTES_TABLE_NAME = "knowledge_notes"
+READING_STATE_TABLE_NAME = "literature_reading_state"
+PDF_STRUCTURED_VARIANT_SPECS: tuple[dict[str, str], ...] = (
+    {
+        "converter": "local_pipeline_v2",
+        "task_type": "reference_context",
+        "column": "structured_path_local_pipeline_v2_reference_context",
+        "folder": "structured_local_pipeline_v2_reference_context",
+    },
+    {
+        "converter": "local_pipeline_v2",
+        "task_type": "full_fine_grained",
+        "column": "structured_path_local_pipeline_v2_full_fine_grained",
+        "folder": "structured_local_pipeline_v2_full_fine_grained",
+    },
+    {
+        "converter": "babeldoc",
+        "task_type": "reference_context",
+        "column": "structured_path_babeldoc_reference_context",
+        "folder": "structured_babeldoc_reference_context",
+    },
+    {
+        "converter": "babeldoc",
+        "task_type": "full_fine_grained",
+        "column": "structured_path_babeldoc_full_fine_grained",
+        "folder": "structured_babeldoc_full_fine_grained",
+    },
+)
+PDF_STRUCTURED_VARIANT_PATH_COLUMNS: dict[str, str] = {
+    spec["column"]: "TEXT"
+    for spec in PDF_STRUCTURED_VARIANT_SPECS
+}
+
+
+def _utc_now_iso() -> str:
+    return datetime.now(tz=UTC).isoformat()
+
+
+def _quote_identifier(identifier: str) -> str:
+    return '"' + str(identifier).replace('"', '""') + '"'
+
+
+def _split_pipe_values(value: object) -> list[str]:
+    text = str(value or "").strip()
+    if not text:
+        return []
+    normalized = text.replace(",", "|").replace("；", "|").replace(";", "|")
+    items = [segment.strip() for segment in normalized.split("|")]
+    return [segment for segment in items if segment]
+
+
+def resolve_content_db_path(db_path: str | Path) -> Path:
+    """把旧内容库路径标准化到统一 `content.db`。"""
+
+    path = Path(db_path).resolve()
+    file_name = path.name.lower()
+    parent_name = path.parent.name.lower()
+
+    if file_name == DEFAULT_CONTENT_DB_NAME:
+        return path
+
+    if file_name in {"references.db", "knowledge.db"}:
+        if parent_name == "database":
+            return path.parent / CONTENT_DB_DIRECTORY_NAME / DEFAULT_CONTENT_DB_NAME
+        return path
+
+    return path
+
+
+def resolve_content_db_config(
+    raw_cfg: Mapping[str, object],
+    *,
+    content_key: str = "content_db",
+    legacy_keys: Sequence[str] = ("references_db", "knowledge_db"),
+    default_path: str | Path | None = None,
+    required: bool = False,
+) -> tuple[Path | None, str]:
+    """从配置字典解析统一内容主库路径。
+
+    优先读取 `content_db`，历史双库字段仅作为兼容别名。
+    """
+
+    for key in (content_key, *legacy_keys):
+        raw_value = raw_cfg.get(key)
+        value = str(raw_value or "").strip()
+        if not value:
+            continue
+        path = Path(value)
+        if not path.is_absolute():
+            raise ValueError(f"{key} 必须为绝对路径：{path}")
+        return resolve_content_db_path(path), key
+
+    if default_path is not None:
+        path = Path(default_path)
+        if not path.is_absolute():
+            raise ValueError(f"default_path 必须为绝对路径：{path}")
+        return resolve_content_db_path(path), "default"
+
+    if required:
+        accepted = ", ".join([content_key, *legacy_keys])
+        raise ValueError(f"必须提供统一内容主库路径，支持字段：{accepted}")
+
+    return None, ""
+
+
+def infer_workspace_root_from_content_db(db_path: str | Path) -> Path:
+    """根据统一内容主库路径推导工作区根目录。"""
+
+    resolved = resolve_content_db_path(db_path)
+    if resolved.name != DEFAULT_CONTENT_DB_NAME:
+        raise ValueError(f"不是受支持的内容主库文件名：{resolved}")
+    if resolved.parent.name != CONTENT_DB_DIRECTORY_NAME:
+        raise ValueError(f"内容主库目录结构不符合约定：{resolved}")
+    if resolved.parent.parent.name != "database":
+        raise ValueError(f"内容主库上级目录不符合约定：{resolved}")
+    return resolved.parent.parent.parent
+
+
+def get_pdf_structured_variant_spec(converter: str, task_type: str) -> dict[str, str] | None:
+    """按解析工具链与任务类型获取四组合规格。"""
+
+    normalized_converter = str(converter or "").strip().lower()
+    normalized_task_type = str(task_type or "").strip().lower()
+    for spec in PDF_STRUCTURED_VARIANT_SPECS:
+        if spec["converter"] == normalized_converter and spec["task_type"] == normalized_task_type:
+            return dict(spec)
+    return None
+
+
+def get_pdf_structured_variant_column(converter: str, task_type: str) -> str | None:
+    """返回四组合对应的文献主表路径字段名。"""
+
+    spec = get_pdf_structured_variant_spec(converter, task_type)
+    return None if spec is None else spec["column"]
+
+
+def build_pdf_structured_variant_dir_map(references_root: str | Path) -> dict[str, Path]:
+    """构造 `workspace/references` 下的四组合目录映射。"""
+
+    root = Path(references_root)
+    return {spec["folder"]: root / spec["folder"] for spec in PDF_STRUCTURED_VARIANT_SPECS}
+
+
+def resolve_pdf_structured_variant_output_dir(
+    workspace_root: str | Path,
+    *,
+    converter: str,
+    task_type: str,
+) -> Path:
+    """根据四组合契约返回固定 structured 输出目录。"""
+
+    spec = get_pdf_structured_variant_spec(converter, task_type)
+    if spec is None:
+        raise ValueError(
+            f"不支持的 PDF 解析组合：converter={converter!r}, task_type={task_type!r}"
+        )
+    return Path(workspace_root) / "references" / spec["folder"]
+
+
+def connect_sqlite(db_path: str | Path) -> sqlite3.Connection:
+    """创建统一内容主库连接，并开启基础 pragma。"""
+
+    original = Path(db_path).resolve()
+    resolved = resolve_content_db_path(original)
+    resolved.parent.mkdir(parents=True, exist_ok=True)
+    connection = sqlite3.connect(str(resolved))
+    _ensure_legacy_db_alias(original, resolved)
+    connection.execute("PRAGMA foreign_keys = ON")
+    try:
+        connection.execute("PRAGMA journal_mode = WAL")
+    except sqlite3.DatabaseError:
+        pass
+    return connection
+
+
+def _ensure_legacy_db_alias(original: Path, resolved: Path) -> None:
+    if original == resolved:
+        return
+    original.parent.mkdir(parents=True, exist_ok=True)
+    if original.exists():
+        try:
+            if original.samefile(resolved):
+                return
+        except OSError:
+            return
+    try:
+        os.link(resolved, original)
+    except OSError:
+        return
+
+
+def _replace_table_rows(conn: sqlite3.Connection, table_name: str, frame: pd.DataFrame) -> None:
+    if _sqlite_object_type(conn, table_name) != "table":
+        return
+    conn.execute(f"DELETE FROM {_quote_identifier(table_name)}")
+    if frame is None or frame.empty:
+        return
+    working = frame.where(pd.notnull(frame), None)
+    working.to_sql(table_name, conn, if_exists="append", index=False)
+
+
+def _sqlite_object_type(conn: sqlite3.Connection, object_name: str) -> str:
+    row = conn.execute(
+        "SELECT type FROM sqlite_master WHERE name = ? LIMIT 1",
+        (object_name,),
+    ).fetchone()
+    return str(row[0]).strip().lower() if row and row[0] else ""
+
+
+def _create_index_if_table(conn: sqlite3.Connection, table_name: str, index_sql: str) -> None:
+    if _sqlite_object_type(conn, table_name) == "table":
+        conn.execute(index_sql)
+
+
+def init_content_db(db_path: str | Path) -> Path:
+    """初始化统一内容主库。"""
+
+    resolved = resolve_content_db_path(db_path)
+    with connect_sqlite(resolved) as conn:
+        cur = conn.cursor()
+        cur.execute(
+            """
+            CREATE TABLE IF NOT EXISTS literatures (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                uid_literature TEXT UNIQUE,
+                cite_key TEXT,
+                title TEXT,
+                clean_title TEXT,
+                title_norm TEXT,
+                authors TEXT,
+                first_author TEXT,
+                year TEXT,
+                entry_type TEXT,
+                abstract TEXT,
+                keywords TEXT,
+                pdf_path TEXT,
+                is_placeholder INTEGER,
+                placeholder_reason TEXT,
+                placeholder_status TEXT,
+                placeholder_run_uid TEXT,
+                has_fulltext INTEGER,
+                primary_attachment_name TEXT,
+                standard_note_uid TEXT,
+                source_type TEXT,
+                origin_path TEXT,
+                created_at TEXT,
+                updated_at TEXT,
+                a05_scope_key TEXT,
+                a05_is_review_candidate INTEGER,
+                a05_in_read_pool INTEGER,
+                a05_current_score REAL,
+                a05_current_rank INTEGER,
+                a05_current_status TEXT,
+                a05_last_run_uid TEXT,
+                a05_updated_at TEXT,
+                structured_status TEXT,
+                structured_abs_path TEXT,
+                structured_backend TEXT,
+                structured_task_type TEXT,
+                structured_updated_at TEXT,
+                structured_schema_version TEXT,
+                structured_text_length INTEGER,
+                structured_reference_count INTEGER,
+                structured_path_local_pipeline_v2_reference_context TEXT,
+                structured_path_local_pipeline_v2_full_fine_grained TEXT,
+                structured_path_babeldoc_reference_context TEXT,
+                structured_path_babeldoc_full_fine_grained TEXT
+            )
+            """
+        )
+        _create_index_if_table(conn, "literatures", "CREATE INDEX IF NOT EXISTS idx_lit_uid ON literatures(uid_literature)")
+        _create_index_if_table(conn, "literatures", "CREATE INDEX IF NOT EXISTS idx_lit_cite ON literatures(cite_key)")
+        _create_index_if_table(conn, "literatures", "CREATE INDEX IF NOT EXISTS idx_lit_author_year ON literatures(first_author, year)")
+        _create_index_if_table(conn, "literatures", "CREATE INDEX IF NOT EXISTS idx_lit_a05_rank ON literatures(a05_scope_key, a05_current_rank)")
+
+        cur.execute(
+            """
+            CREATE TABLE IF NOT EXISTS literature_attachments (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                uid_attachment TEXT UNIQUE,
+                uid_literature TEXT,
+                attachment_name TEXT,
+                attachment_type TEXT,
+                file_ext TEXT,
+                storage_path TEXT,
+                source_path TEXT,
+                checksum TEXT,
+                is_primary INTEGER,
+                status TEXT,
+                created_at TEXT,
+                updated_at TEXT,
+                FOREIGN KEY(uid_literature) REFERENCES literatures(uid_literature)
+            )
+            """
+        )
+        _create_index_if_table(conn, "literature_attachments", "CREATE INDEX IF NOT EXISTS idx_att_lit ON literature_attachments(uid_literature)")
+
+        cur.execute(
+            """
+            CREATE TABLE IF NOT EXISTS literature_tags (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                uid_literature TEXT,
+                cite_key TEXT,
+                tag TEXT,
+                tag_norm TEXT,
+                source_type TEXT,
+                created_at TEXT,
+                updated_at TEXT,
+                UNIQUE(uid_literature, tag),
+                FOREIGN KEY(uid_literature) REFERENCES literatures(uid_literature)
+            )
+            """
+        )
+        _create_index_if_table(conn, "literature_tags", "CREATE INDEX IF NOT EXISTS idx_tag_lit ON literature_tags(uid_literature)")
+        _create_index_if_table(conn, "literature_tags", "CREATE INDEX IF NOT EXISTS idx_tag_name ON literature_tags(tag)")
+
+        cur.execute(
+            """
+            CREATE TABLE IF NOT EXISTS literature_parse_assets (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                asset_uid TEXT UNIQUE,
+                uid_literature TEXT,
+                cite_key TEXT,
+                uid_attachment TEXT,
+                parse_level TEXT,
+                backend TEXT,
+                model_name TEXT,
+                asset_dir TEXT,
+                normalized_structured_path TEXT,
+                reconstructed_markdown_path TEXT,
+                linear_index_path TEXT,
+                elements_path TEXT,
+                chunks_jsonl_path TEXT,
+                parse_record_path TEXT,
+                quality_report_path TEXT,
+                parse_status TEXT,
+                last_run_uid TEXT,
+                is_current INTEGER,
+                created_at TEXT,
+                updated_at TEXT,
+                FOREIGN KEY(uid_literature) REFERENCES literatures(uid_literature)
+            )
+            """
+        )
+        _create_index_if_table(conn, "literature_parse_assets", "CREATE INDEX IF NOT EXISTS idx_parse_asset_lit_level ON literature_parse_assets(uid_literature, parse_level)")
+        _create_index_if_table(conn, "literature_parse_assets", "CREATE INDEX IF NOT EXISTS idx_parse_asset_current ON literature_parse_assets(parse_level, is_current)")
+
+        cur.execute(
+            """
+            CREATE TABLE IF NOT EXISTS literature_reading_queue (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                queue_uid TEXT UNIQUE,
+                uid_literature TEXT,
+                cite_key TEXT,
+                stage TEXT,
+                queue_status TEXT,
+                priority REAL,
+                theme_bucket TEXT,
+                recommended_reason TEXT,
+                source_stage TEXT,
+                source_run_uid TEXT,
+                task_batch_id TEXT,
+                decision TEXT,
+                decision_reason TEXT,
+                is_current INTEGER,
+                entered_at TEXT,
+                updated_at TEXT,
+                completed_at TEXT,
+                FOREIGN KEY(uid_literature) REFERENCES literatures(uid_literature)
+            )
+            """
+        )
+        _create_index_if_table(conn, "literature_reading_queue", "CREATE INDEX IF NOT EXISTS idx_reading_queue_stage_current ON literature_reading_queue(stage, is_current)")
+        _create_index_if_table(conn, "literature_reading_queue", "CREATE INDEX IF NOT EXISTS idx_reading_queue_item ON literature_reading_queue(stage, uid_literature, cite_key)")
+
+        cur.execute(
+            f"""
+            CREATE TABLE IF NOT EXISTS {READING_STATE_TABLE_NAME} (
+                uid_literature TEXT PRIMARY KEY,
+                cite_key TEXT,
+                source_stage TEXT,
+                source_uid_literature TEXT,
+                source_cite_key TEXT,
+                recommended_reason TEXT,
+                theme_relation TEXT,
+                pending_preprocess INTEGER,
+                preprocessed INTEGER,
+                preprocess_status TEXT,
+                preprocess_note_path TEXT,
+                standard_note_path TEXT,
+                pending_rough_read INTEGER,
+                in_rough_read INTEGER,
+                rough_read_done INTEGER,
+                rough_read_note_path TEXT,
+                rough_read_decision TEXT,
+                rough_read_reason TEXT,
+                analysis_light_synced INTEGER,
+                analysis_batch_synced INTEGER,
+                pending_deep_read INTEGER,
+                in_deep_read INTEGER,
+                deep_read_done INTEGER,
+                deep_read_count INTEGER,
+                deep_read_note_path TEXT,
+                deep_read_decision TEXT,
+                deep_read_reason TEXT,
+                analysis_formal_synced INTEGER,
+                innovation_synced INTEGER,
+                last_batch_id TEXT,
+                created_at TEXT,
+                updated_at TEXT,
+                FOREIGN KEY(uid_literature) REFERENCES literatures(uid_literature)
+            )
+            """
+        )
+        _create_index_if_table(conn, READING_STATE_TABLE_NAME, f"CREATE INDEX IF NOT EXISTS idx_reading_state_preprocess ON {READING_STATE_TABLE_NAME}(pending_preprocess, preprocessed)")
+        _create_index_if_table(conn, READING_STATE_TABLE_NAME, f"CREATE INDEX IF NOT EXISTS idx_reading_state_rough ON {READING_STATE_TABLE_NAME}(pending_rough_read, rough_read_done)")
+        _create_index_if_table(conn, READING_STATE_TABLE_NAME, f"CREATE INDEX IF NOT EXISTS idx_reading_state_deep ON {READING_STATE_TABLE_NAME}(pending_deep_read, deep_read_done)")
+        _create_index_if_table(conn, READING_STATE_TABLE_NAME, f"CREATE INDEX IF NOT EXISTS idx_reading_state_cite ON {READING_STATE_TABLE_NAME}(cite_key)")
+
+        cur.execute(
+            """
+            CREATE TABLE IF NOT EXISTS literature_chunk_sets (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                chunks_uid TEXT UNIQUE,
+                source_scope TEXT,
+                chunks_abs_path TEXT,
+                source_backend TEXT,
+                chunk_count INTEGER,
+                source_doc_count INTEGER,
+                created_at TEXT,
+                status TEXT
+            )
+            """
+        )
+        _create_index_if_table(conn, "literature_chunk_sets", "CREATE INDEX IF NOT EXISTS idx_chunk_set_uid ON literature_chunk_sets(chunks_uid)")
+
+        cur.execute(
+            """
+            CREATE TABLE IF NOT EXISTS literature_chunks (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                chunk_id TEXT UNIQUE,
+                chunks_uid TEXT,
+                uid_literature TEXT,
+                cite_key TEXT,
+                shard_abs_path TEXT,
+                chunk_index INTEGER,
+                chunk_type TEXT,
+                char_start INTEGER,
+                char_end INTEGER,
+                text_length INTEGER,
+                created_at TEXT,
+                FOREIGN KEY(chunks_uid) REFERENCES literature_chunk_sets(chunks_uid),
+                FOREIGN KEY(uid_literature) REFERENCES literatures(uid_literature)
+            )
+            """
+        )
+        _create_index_if_table(conn, "literature_chunks", "CREATE INDEX IF NOT EXISTS idx_chunk_uid ON literature_chunks(chunk_id)")
+        _create_index_if_table(conn, "literature_chunks", "CREATE INDEX IF NOT EXISTS idx_chunk_set_ref ON literature_chunks(chunks_uid)")
+        _create_index_if_table(conn, "literature_chunks", "CREATE INDEX IF NOT EXISTS idx_chunk_lit_uid ON literature_chunks(uid_literature)")
+
+        cur.execute(
+            """
+            CREATE TABLE IF NOT EXISTS knowledge_index (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                uid_knowledge TEXT UNIQUE,
+                note_name TEXT,
+                note_path TEXT,
+                note_type TEXT,
+                title TEXT,
+                status TEXT,
+                tags TEXT,
+                aliases TEXT,
+                source_type TEXT,
+                evidence_uids TEXT,
+                uid_literature TEXT,
+                cite_key TEXT,
+                attachment_uids TEXT,
+                created_at TEXT,
+                updated_at TEXT
+            )
+            """
+        )
+        _create_index_if_table(conn, "knowledge_index", "CREATE INDEX IF NOT EXISTS idx_know_uid ON knowledge_index(uid_knowledge)")
+        _create_index_if_table(conn, "knowledge_index", "CREATE INDEX IF NOT EXISTS idx_know_type_status ON knowledge_index(note_type, status)")
+
+        cur.execute(
+            """
+            CREATE TABLE IF NOT EXISTS knowledge_attachments (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                uid_attachment TEXT UNIQUE,
+                uid_knowledge TEXT,
+                attachment_name TEXT,
+                attachment_type TEXT,
+                file_ext TEXT,
+                storage_path TEXT,
+                source_path TEXT,
+                checksum TEXT,
+                status TEXT,
+                created_at TEXT,
+                updated_at TEXT,
+                FOREIGN KEY(uid_knowledge) REFERENCES knowledge_index(uid_knowledge)
+            )
+            """
+        )
+        _create_index_if_table(conn, "knowledge_attachments", "CREATE INDEX IF NOT EXISTS idx_katt_uid ON knowledge_attachments(uid_knowledge)")
+
+        cur.execute(
+            f"""
+            CREATE TABLE IF NOT EXISTS {KNOWLEDGE_NOTES_TABLE_NAME} (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                uid_note TEXT UNIQUE,
+                uid_literature TEXT,
+                cite_key TEXT,
+                note_type TEXT,
+                note_path TEXT,
+                title TEXT,
+                status TEXT,
+                source_stage TEXT,
+                source_run_uid TEXT,
+                content_hash TEXT,
+                created_at TEXT,
+                updated_at TEXT,
+                FOREIGN KEY(uid_literature) REFERENCES literatures(uid_literature)
+            )
+            """
+        )
+        _create_index_if_table(conn, KNOWLEDGE_NOTES_TABLE_NAME, f"CREATE INDEX IF NOT EXISTS idx_knote_lit ON {KNOWLEDGE_NOTES_TABLE_NAME}(uid_literature)")
+
+        cur.execute(
+            f"""
+            CREATE TABLE IF NOT EXISTS {KNOWLEDGE_LINK_TABLE_NAME} (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                uid_knowledge TEXT,
+                uid_literature TEXT,
+                relation_type TEXT,
+                is_primary INTEGER,
+                cite_key TEXT,
+                source_field TEXT,
+                created_at TEXT,
+                updated_at TEXT,
+                UNIQUE(uid_knowledge, uid_literature, relation_type),
+                FOREIGN KEY(uid_knowledge) REFERENCES knowledge_index(uid_knowledge),
+                FOREIGN KEY(uid_literature) REFERENCES literatures(uid_literature)
+            )
+            """
+        )
+        _create_index_if_table(
+            conn,
+            KNOWLEDGE_LINK_TABLE_NAME,
+            f"CREATE INDEX IF NOT EXISTS idx_kl_link_lit_type ON {KNOWLEDGE_LINK_TABLE_NAME}(uid_literature, relation_type)",
+        )
+        _create_index_if_table(
+            conn,
+            KNOWLEDGE_LINK_TABLE_NAME,
+            f"CREATE INDEX IF NOT EXISTS idx_kl_link_kn_type ON {KNOWLEDGE_LINK_TABLE_NAME}(uid_knowledge, relation_type)",
+        )
+        _create_index_if_table(
+            conn,
+            KNOWLEDGE_LINK_TABLE_NAME,
+            f"CREATE UNIQUE INDEX IF NOT EXISTS idx_kl_standard_primary ON {KNOWLEDGE_LINK_TABLE_NAME}(uid_literature) WHERE relation_type = 'standard_note' AND COALESCE(is_primary, 0) = 1",
+        )
+
+        cur.execute(
+            f"""
+            CREATE TABLE IF NOT EXISTS {KNOWLEDGE_EVIDENCE_TABLE_NAME} (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                uid_knowledge TEXT,
+                evidence_type TEXT,
+                target_uid TEXT,
+                evidence_role TEXT,
+                source_field TEXT,
+                created_at TEXT,
+                UNIQUE(uid_knowledge, evidence_type, target_uid, evidence_role),
+                FOREIGN KEY(uid_knowledge) REFERENCES knowledge_index(uid_knowledge)
+            )
+            """
+        )
+        _create_index_if_table(
+            conn,
+            KNOWLEDGE_EVIDENCE_TABLE_NAME,
+            f"CREATE INDEX IF NOT EXISTS idx_ke_uid_type ON {KNOWLEDGE_EVIDENCE_TABLE_NAME}(uid_knowledge, evidence_type)",
+        )
+
+        conn.commit()
+    return resolved
+
+
+def load_knowledge_literature_links_df(db_path: str | Path) -> pd.DataFrame:
+    init_content_db(db_path)
+    with connect_sqlite(db_path) as conn:
+        return pd.read_sql_query(f"SELECT * FROM {KNOWLEDGE_LINK_TABLE_NAME}", conn)
+
+
+def load_knowledge_evidence_links_df(db_path: str | Path) -> pd.DataFrame:
+    init_content_db(db_path)
+    with connect_sqlite(db_path) as conn:
+        return pd.read_sql_query(f"SELECT * FROM {KNOWLEDGE_EVIDENCE_TABLE_NAME}", conn)
+
+
+def backfill_content_relationships(db_path: str | Path) -> None:
+    """根据兼容字段回填跨域关系表。"""
+
+    init_content_db(db_path)
+    with connect_sqlite(db_path) as conn:
+        literatures = pd.read_sql_query(
+            "SELECT uid_literature, cite_key, standard_note_uid FROM literatures",
+            conn,
+        )
+        knowledge = pd.read_sql_query(
+            "SELECT uid_knowledge, note_type, uid_literature, cite_key, evidence_uids FROM knowledge_index",
+            conn,
+        )
+
+        literature_uid_set = {
+            str(uid).strip()
+            for uid in literatures.get("uid_literature", pd.Series(dtype=str)).tolist()
+            if str(uid).strip()
+        }
+        knowledge_uid_set = {
+            str(uid).strip()
+            for uid in knowledge.get("uid_knowledge", pd.Series(dtype=str)).tolist()
+            if str(uid).strip()
+        }
+        literature_cite_lookup = {
+            str(row.get("uid_literature") or "").strip(): str(row.get("cite_key") or "").strip()
+            for _, row in literatures.fillna("").iterrows()
+            if str(row.get("uid_literature") or "").strip()
+        }
+
+        link_rows: list[dict[str, object]] = []
+        now = _utc_now_iso()
+        for _, row in knowledge.fillna("").iterrows():
+            uid_knowledge = str(row.get("uid_knowledge") or "").strip()
+            uid_literature = str(row.get("uid_literature") or "").strip()
+            if uid_knowledge and uid_literature and uid_knowledge in knowledge_uid_set and uid_literature in literature_uid_set:
+                note_type = str(row.get("note_type") or "").strip()
+                relation_type = "standard_note" if note_type == "literature_standard_note" else "mention"
+                link_rows.append(
+                    {
+                        "uid_knowledge": uid_knowledge,
+                        "uid_literature": uid_literature,
+                        "relation_type": relation_type,
+                        "is_primary": 1 if relation_type == "standard_note" else 0,
+                        "cite_key": str(row.get("cite_key") or literature_cite_lookup.get(uid_literature) or "").strip(),
+                        "source_field": "knowledge_index",
+                        "created_at": now,
+                        "updated_at": now,
+                    }
+                )
+
+        evidence_rows: list[dict[str, object]] = []
+        for _, row in knowledge.fillna("").iterrows():
+            uid_knowledge = str(row.get("uid_knowledge") or "").strip()
+            if not uid_knowledge or uid_knowledge not in knowledge_uid_set:
+                continue
+            for evidence_uid in _split_pipe_values(row.get("evidence_uids")):
+                evidence_rows.append(
+                    {
+                        "uid_knowledge": uid_knowledge,
+                        "evidence_type": "literature" if evidence_uid in literature_uid_set else "unknown",
+                        "target_uid": evidence_uid,
+                        "evidence_role": "supporting",
+                        "source_field": "knowledge_index.evidence_uids",
+                        "created_at": now,
+                    }
+                )
+
+        for _, row in literatures.fillna("").iterrows():
+            uid_literature = str(row.get("uid_literature") or "").strip()
+            uid_knowledge = str(row.get("standard_note_uid") or "").strip()
+            if uid_literature and uid_knowledge and uid_literature in literature_uid_set and uid_knowledge in knowledge_uid_set:
+                link_rows.append(
+                    {
+                        "uid_knowledge": uid_knowledge,
+                        "uid_literature": uid_literature,
+                        "relation_type": "standard_note",
+                        "is_primary": 1,
+                        "cite_key": str(row.get("cite_key") or "").strip(),
+                        "source_field": "literatures.standard_note_uid",
+                        "created_at": now,
+                        "updated_at": now,
+                    }
+                )
+
+        link_df = pd.DataFrame(link_rows)
+        if not link_df.empty:
+            link_df = link_df.drop_duplicates(subset=["uid_knowledge", "uid_literature", "relation_type"], keep="last")
+        else:
+            link_df = pd.DataFrame(
+                columns=[
+                    "uid_knowledge",
+                    "uid_literature",
+                    "relation_type",
+                    "is_primary",
+                    "cite_key",
+                    "source_field",
+                    "created_at",
+                    "updated_at",
+                ]
+            )
+
+        evidence_df = pd.DataFrame(evidence_rows)
+        if not evidence_df.empty:
+            evidence_df = evidence_df.drop_duplicates(
+                subset=["uid_knowledge", "evidence_type", "target_uid", "evidence_role"],
+                keep="last",
+            )
+        else:
+            evidence_df = pd.DataFrame(
+                columns=[
+                    "uid_knowledge",
+                    "evidence_type",
+                    "target_uid",
+                    "evidence_role",
+                    "source_field",
+                    "created_at",
+                ]
+            )
+
+        try:
+            _replace_table_rows(conn, KNOWLEDGE_LINK_TABLE_NAME, link_df)
+            _replace_table_rows(conn, KNOWLEDGE_EVIDENCE_TABLE_NAME, evidence_df)
+        except sqlite3.OperationalError:
+            # 兼容旧库：部分工作区把关系对象保留为 view 或历史外键契约，回填失败时跳过。
+            pass
+        conn.commit()
+
+
+def upsert_knowledge_literature_link(
+    db_path: str | Path,
+    *,
+    uid_knowledge: str,
+    uid_literature: str,
+    relation_type: str = "standard_note",
+    is_primary: int = 1,
+    cite_key: str = "",
+    source_field: str = "manual_bind",
+) -> None:
+    """直接写入或更新知识-文献关系。"""
+
+    init_content_db(db_path)
+    now = _utc_now_iso()
+    with connect_sqlite(db_path) as conn:
+        conn.execute(
+            f"""
+            INSERT INTO {KNOWLEDGE_LINK_TABLE_NAME}
+                (uid_knowledge, uid_literature, relation_type, is_primary, cite_key, source_field, created_at, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(uid_knowledge, uid_literature, relation_type)
+            DO UPDATE SET
+                is_primary = excluded.is_primary,
+                cite_key = excluded.cite_key,
+                source_field = excluded.source_field,
+                updated_at = excluded.updated_at
+            """,
+            (
+                uid_knowledge,
+                uid_literature,
+                relation_type,
+                int(is_primary or 0),
+                cite_key,
+                source_field,
+                now,
+                now,
+            ),
+        )
+        conn.commit()
+
+
+__all__ = [
+    "CONTENT_DB_DIRECTORY_NAME",
+    "DEFAULT_CONTENT_DB_NAME",
+    "KNOWLEDGE_EVIDENCE_TABLE_NAME",
+    "KNOWLEDGE_LINK_TABLE_NAME",
+    "KNOWLEDGE_NOTES_TABLE_NAME",
+    "READING_STATE_TABLE_NAME",
+    "PDF_STRUCTURED_VARIANT_SPECS",
+    "PDF_STRUCTURED_VARIANT_PATH_COLUMNS",
+    "backfill_content_relationships",
+    "build_pdf_structured_variant_dir_map",
+    "connect_sqlite",
+    "get_pdf_structured_variant_column",
+    "get_pdf_structured_variant_spec",
+    "infer_workspace_root_from_content_db",
+    "init_content_db",
+    "load_knowledge_evidence_links_df",
+    "load_knowledge_literature_links_df",
+    "resolve_content_db_config",
+    "resolve_content_db_path",
+    "resolve_pdf_structured_variant_output_dir",
+    "upsert_knowledge_literature_link",
+]

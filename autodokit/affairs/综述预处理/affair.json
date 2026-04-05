@@ -1,0 +1,16 @@
+{
+  "workspace_root": "",
+  "content_db": "",
+  "output_dir": "",
+  "structured_converter": "aliyun_multimodal",
+  "structured_task_type": "review_deep",
+  "structured_reuse_any_variant": false,
+  "structured_overwrite": true,
+  "structured_generation_required": true,
+  "structured_extractors": {
+    "enable_images": false
+  },
+  "strict_structured_only": true,
+  "api_key_file": "",
+  "parse_model": "auto"
+}

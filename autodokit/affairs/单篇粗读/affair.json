@@ -1,0 +1,11 @@
+{
+  "content_db": "",
+  "input_structured_json": "",
+  "input_structured_dir": "",
+  "output_dir": "workflows/workflow_单篇粗读/output/05_single_rough_reading",
+  "uid": 1,
+  "doc_id": null,
+  "insert_placeholders_from_references": true,
+  "reference_lines": [],
+  "max_preview_chars": 4000
+}

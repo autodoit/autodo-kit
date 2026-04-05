@@ -1,0 +1,37 @@
+{
+  "input_csv": "",
+  "content_db": "",
+  "candidates": [],
+  "output_dir": "",
+  "source_round": "round_01",
+  "source_affair": "review_candidate_views",
+  "min_score": 0.0,
+  "top_k": 200,
+  "batch_size": 10,
+  "research_topic": "",
+  "topic_terms": [],
+  "topic_keyword_groups": [],
+  "required_topic_group_indices": [],
+  "min_topic_group_matches": 1,
+  "recent_years": 5,
+  "review_detection_fields": [
+    "title",
+    "keywords",
+    "entry_type"
+  ],
+  "relevance_text_fields": [
+    "title",
+    "keywords",
+    "abstract"
+  ],
+  "enable_reference_block_llm": false,
+  "reference_block_model": "qwen-flash",
+  "structured_converter": "aliyun_multimodal",
+  "structured_task_type": "review_deep",
+  "structured_reuse_any_variant": true,
+  "structured_overwrite": false,
+  "structured_generation_required": true,
+  "structured_extractors": {
+    "enable_images": false
+  }
+}

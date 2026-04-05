@@ -1,0 +1,21 @@
+{
+  "task_type": "general",
+  "quality_tier": "standard",
+  "budget_level": "medium",
+  "latency_level": "medium",
+  "risk_level": "medium",
+  "region": "cn-beijing",
+  "input_chars": 0,
+  "model": "",
+  "mainland_only": true,
+  "run_inference": false,
+  "prompt": "",
+  "system_prompt": "",
+  "max_tokens": 1024,
+  "temperature": 0.2,
+  "env_api_key_name": "DASHSCOPE_API_KEY",
+  "api_key_file": "",
+  "config_path": "",
+  "workspace_root": "",
+  "output_dir": ""
+}

@@ -1,0 +1,7 @@
+{
+  "content_db": "workflows/workspace/database/content/content.db",
+  "output_dir": "workflows/workflow_解析与分块/output/03_chunk",
+  "chunk_size": 1500,
+  "min_chunk_size": 200,
+  "chunk_shard_size": 200
+}

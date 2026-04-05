@@ -1,0 +1,7 @@
+{
+  "project_root": "",
+  "require_r": true,
+  "require_stata": false,
+  "python_baseline": "3.13",
+  "output_dir": ""
+}

@@ -1,0 +1,7 @@
+{
+  "key_file": "",
+  "model": "auto",
+  "endpoint": "https://dashscope.aliyuncs.com/compatible-mode/v1",
+  "workspace_root": "",
+  "output_dir": ""
+}
