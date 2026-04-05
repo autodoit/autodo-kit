@@ -27,7 +27,7 @@ REPO_ROOT = _discover_repo_root(Path(__file__).resolve().parent)
 
 
 def _load_cnki_debug_module() -> Any:
-    return importlib.import_module("online_retrieval_literatures.cnki_paged_retrieval")
+    return importlib.import_module(__package__ + ".cnki_paged_retrieval")
 
 
 CNKI_DEBUG = _load_cnki_debug_module()
