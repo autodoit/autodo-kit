@@ -22,6 +22,7 @@ from autodokit.tools.contentdb_sqlite import CONTENT_DB_DIRECTORY_NAME, DEFAULT_
 from autodokit.tools.pdf_parse_asset_manager import ensure_multimodal_parse_asset
 from autodokit.tools.reading_state_tools import build_standard_note_body
 from autodokit.tools.storage_backend import load_knowledge_tables, load_reference_tables, persist_knowledge_tables, persist_reference_tables
+from autodokit.tools.atomic.task_aok.post_affair_git_commit import affair_auto_git_commit
 
 
 OUTPUT_INDEX = "a080_preprocess_index.csv"
@@ -100,6 +101,7 @@ def _resolve_pdf_path(literature_row: pd.Series, attachments_df: pd.DataFrame) -
     return _stringify(literature_row.get("pdf_path"))
 
 
+@affair_auto_git_commit("A080")
 def execute(config_path: Path) -> List[Path]:
     raw_cfg = load_json_or_py(config_path)
     workspace_root = _resolve_workspace_root(config_path, raw_cfg)
@@ -248,10 +250,14 @@ def execute(config_path: Path) -> List[Path]:
         append_aok_log_event(
             event_type="A080_PREPROCESS_COMPLETED",
             project_root=workspace_root,
+            affair_code="A080",
             handler_name="非综述候选与预处理编排",
             agent_names=["ar_A080_非综述候选与预处理编排事务智能体_v6"],
             skill_names=["ar_非综述候选文献视图构建_v5"],
             reasoning_summary="消费 literature_reading_state.pending_preprocess=1，并把成功条目推进到 pending_rough_read=1。",
+            gate_review=gate_review,
+            gate_review_path=gate_path,
+            artifact_paths=[index_path, gate_path],
             payload={"preprocessed_count": len(result_df), "seeded_from_legacy_queue": seeded_count, "failure_count": len(failures)},
         )
     except Exception:

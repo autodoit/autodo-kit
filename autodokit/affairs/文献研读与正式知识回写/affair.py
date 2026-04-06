@@ -15,6 +15,7 @@ from autodokit.tools.pdf_parse_asset_manager import ensure_multimodal_parse_asse
 from autodokit.tools.pdf_structured_data_tools import load_single_document_record
 from autodokit.tools.reading_state_tools import ANALYSIS_NOTE_SPECS, append_markdown_section, build_followup_candidate_state_row, ensure_markdown_note, resolve_analysis_note_paths
 from autodokit.tools.storage_backend import load_knowledge_tables, load_reference_tables, persist_knowledge_tables, persist_reference_tables
+from autodokit.tools.atomic.task_aok.post_affair_git_commit import affair_auto_git_commit
 
 
 OUTPUT_INDEX = "a100_deep_reading_index.csv"
@@ -97,6 +98,7 @@ def _extract_reference_lines(text: str) -> List[str]:
     return results[:12]
 
 
+@affair_auto_git_commit("A100")
 def execute(config_path: Path) -> List[Path]:
     raw_cfg = load_json_or_py(config_path)
     workspace_root = _resolve_workspace_root(config_path, raw_cfg)
@@ -301,10 +303,14 @@ def execute(config_path: Path) -> List[Path]:
         append_aok_log_event(
             event_type="A100_DEEP_READING_COMPLETED",
             project_root=workspace_root,
+            affair_code="A100",
             handler_name="文献研读与正式知识回写",
             agent_names=["ar_A100_文献研读与正式知识回写事务智能体_v6"],
             skill_names=[],
             reasoning_summary="消费 literature_reading_state.pending_deep_read=1，完成正式深读、分析笔记修订与创新点补写。",
+            gate_review=gate_review,
+            gate_review_path=gate_path,
+            artifact_paths=[path for path in [index_path, gate_path, innovation_note_path] if path is not None],
             payload={"deep_read_count": len(result_rows), "failure_count": len(failures)},
         )
     except Exception:

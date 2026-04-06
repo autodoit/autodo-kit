@@ -20,6 +20,7 @@ from autodokit.tools.storage_backend import (
     persist_knowledge_tables,
     persist_reference_tables,
 )
+from autodokit.tools.atomic.task_aok.post_affair_git_commit import affair_auto_git_commit
 
 
 NOTE_DIR_NAME = "rough_read_notes"
@@ -228,6 +229,7 @@ def _build_discovered_rows_from_mappings(
     return discovered_rows
 
 
+@affair_auto_git_commit("A090")
 def execute(config_path: Path) -> List[Path]:
     raw_cfg = load_json_or_py(config_path)
     workspace_root = _resolve_workspace_root(config_path, raw_cfg)
@@ -520,10 +522,14 @@ def execute(config_path: Path) -> List[Path]:
         append_aok_log_event(
             event_type="A090_ROUGH_READING_BUILT",
             project_root=workspace_root,
+            affair_code="A090",
             handler_name="文献泛读与粗读",
             agent_names=["ar_A090_文献泛读与轻量分析事务智能体_v6"],
             skill_names=["ar_文献泛读与粗读_v5", "ar_单篇文献粗读_v2"],
             reasoning_summary="消费 literature_reading_state.pending_rough_read=1，生成粗读笔记并对五类分析笔记做轻量补写。",
+            gate_review=gate_review,
+            gate_review_path=gate_path,
+            artifact_paths=written_paths,
             payload={
                 "rough_read_count": len(index_df),
                 "reference_total_count": quality_summary.get("total_reference_count", 0),

@@ -749,6 +749,9 @@ def parse_pdf_with_aliyun_multimodal(
         "llm_enabled": True,
         "llm_model": str(llm_cfg.model),
         "llm_backend": str(llm_cfg.sdk_backend),
+        "llm_region": str(llm_cfg.region),
+        "llm_base_url": str(llm_cfg.base_url or ""),
+        "routing_info": dict(llm_cfg.routing_info or {}),
         "embedded_image_extractor_enabled": bool(embedded_image_status_enabled),
         "embedded_image_extractor_disabled_reason": embedded_image_disabled_reason,
         "page_results": [

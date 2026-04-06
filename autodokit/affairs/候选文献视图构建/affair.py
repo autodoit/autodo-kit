@@ -43,6 +43,7 @@ from autodokit.tools.storage_backend import (
     persist_reference_main_table,
     persist_review_candidate_views,
 )
+from autodokit.tools.atomic.task_aok.post_affair_git_commit import affair_auto_git_commit
 from autodokit.tools.pdf_structured_data_tools import (
     extract_reference_lines_from_structured_data,
     load_structured_data,
@@ -1077,6 +1078,7 @@ def _load_candidate_records(raw_cfg: Dict[str, Any]) -> List[Dict[str, Any]]:
     return []
 
 
+@affair_auto_git_commit("A050")
 def execute(config_path: Path) -> List[Path]:
     """事务执行入口。"""
 
@@ -1342,10 +1344,25 @@ def execute(config_path: Path) -> List[Path]:
         event_type="A050_REVIEW_CANDIDATE_VIEWS_BUILT",
         project_root=workspace_root,
         enabled=logging_enabled,
+        affair_code="A050",
         handler_name="候选文献视图构建",
         agent_names=["ar_A050_综述候选文献视图构建事务智能体_v5"],
         skill_names=["ar_A050_综述候选文献视图构建_v5", "m_ObsidianMarkdown_v1"],
         reasoning_summary="生成综述候选视图，并为 A060 预处理与 A070 研读准备输入资产。",
+        gate_review=gate_review,
+        gate_review_path=gate_path,
+        artifact_paths=[
+            index_path,
+            readable_path,
+            review_path,
+            queue_seed_path,
+            read_pool_path,
+            exit_view_path,
+            batch_path,
+            canonical_index_path,
+            canonical_readable_path,
+            gate_path,
+        ],
         payload={
             "review_candidate_count": len(review_candidate_pool_index),
             "read_pool_count": len(review_read_pool),

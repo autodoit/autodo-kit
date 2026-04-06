@@ -9,6 +9,7 @@ from typing import Any, Dict, List
 import pandas as pd
 
 from autodokit.tools import build_gate_review, innovation_pool_upsert, init_empty_innovation_pool_table, load_json_or_py
+from autodokit.tools.atomic.task_aok.post_affair_git_commit import affair_auto_git_commit
 
 
 NOVELTY_METHODS = {
@@ -47,6 +48,7 @@ def _generate_innovation_items(raw_cfg: Dict[str, Any]) -> List[Dict[str, Any]]:
     return items
 
 
+@affair_auto_git_commit("A140")
 def execute(config_path: Path) -> List[Path]:
     """事务执行入口。"""
 

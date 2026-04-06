@@ -57,10 +57,13 @@ from autodokit.tools.review_synthesis_tools import extract_review_state_from_str
 from autodokit.tools.review_synthesis_tools import (
     build_note_wikilink,
     build_pdf_wikilink,
+    generate_evidence_constrained_summary_lines,
+    normalize_review_state_field_limits,
     sanitize_note_sentence,
     sentence_to_academic_statement,
 )
 from autodokit.tools.task_docs import split_frontmatter
+from autodokit.tools.atomic.task_aok.post_affair_git_commit import affair_auto_git_commit
 
 
 DEFAULT_TOPIC = "未指定研究主题"
@@ -112,6 +115,14 @@ CONSENSUS_THEME_DEFS: Tuple[Tuple[str, Tuple[str, ...]], ...] = (
     ("关键传导机制", ("机制", "路径", "传导", "中介")),
     ("治理与响应含义", ("防范", "治理", "应对", "建议")),
 )
+
+DEFAULT_EVIDENCE_CONSTRAINED_LINE_TARGETS: Dict[str, int] = {
+    "trajectory_seed.md": 5,
+    "core_findings.md": 5,
+    "future_directions_notes.md": 5,
+    "knowledge_framework.md": 4,
+    "innovation_seed.md": 6,
+}
 
 PLACEHOLDER_HINTS: Tuple[str, ...] = (
     "待 A070",
@@ -450,11 +461,15 @@ def _derive_review_dimensions(review_state: Dict[str, Any]) -> Dict[str, List[Di
     future = list(review_state.get("future_directions") or [])
     problem = list(review_state.get("research_problem") or [])
     method = list(review_state.get("research_method") or [])
+    mechanism = list(review_state.get("mechanism_paths") or [])
+    controversy = list(review_state.get("controversy_points") or [])
+    limitation = list(review_state.get("limitation_points") or [])
+    supporting = list(review_state.get("supporting_evidence") or [])
 
-    trajectory_points = _pick_sentences(sentences, ("演进", "阶段", "以来", "脉络", "路径"), limit=4) or problem[:4]
-    consensus_candidates = _pick_sentences(core or sentences, ("表明", "稳定", "普遍", "一致", "共识"), limit=4) or core[:4]
-    controversy_candidates = _pick_sentences(sentences, ("争议", "差异", "分歧", "异质", "边界"), limit=4)
-    knowledge_framework_points = _pick_sentences(sentences, ("机制", "路径", "变量", "框架", "关系"), limit=5) or (core[:4] + method[:2])
+    trajectory_points = _pick_sentences(sentences, ("演进", "阶段", "以来", "脉络", "路径"), limit=6) or (problem[:4] + mechanism[:2])
+    consensus_candidates = _pick_sentences(supporting or core or sentences, ("表明", "稳定", "普遍", "一致", "共识"), limit=6) or core[:6]
+    controversy_candidates = controversy or _pick_sentences(sentences, ("争议", "差异", "分歧", "异质", "边界"), limit=6)
+    knowledge_framework_points = mechanism or _pick_sentences(sentences, ("机制", "路径", "变量", "框架", "关系"), limit=8) or (core[:5] + method[:3])
 
     return {
         "trajectory_points": trajectory_points,
@@ -463,7 +478,21 @@ def _derive_review_dimensions(review_state: Dict[str, Any]) -> Dict[str, List[Di
         "controversy_candidates": controversy_candidates,
         "future_directions": future,
         "knowledge_framework_points": knowledge_framework_points,
+        "limitation_points": limitation,
+        "supporting_evidence": supporting,
     }
+
+
+def _resolve_evidence_constrained_line_targets(raw_cfg: Dict[str, Any]) -> Dict[str, int]:
+    targets = dict(DEFAULT_EVIDENCE_CONSTRAINED_LINE_TARGETS)
+    for note_name, raw_value in dict(raw_cfg or {}).items():
+        if note_name not in targets:
+            continue
+        try:
+            targets[note_name] = max(2, int(raw_value))
+        except Exception:
+            continue
+    return targets
 
 
 def _section_lines_from_sentences(cite_key: str, sentence_objs: Sequence[Dict[str, Any]], *, fallback: str) -> List[str]:
@@ -1385,6 +1414,7 @@ def _update_standard_note(
     return updated_index, note_uid, True
 
 
+@affair_auto_git_commit("A070")
 def execute(config_path: Path) -> List[Path]:
     raw_cfg = load_json_or_py(config_path)
     workspace_root = _resolve_workspace_root(config_path, raw_cfg)
@@ -1402,6 +1432,15 @@ def execute(config_path: Path) -> List[Path]:
     review_state_model = _stringify(raw_cfg.get("review_state_model") or raw_cfg.get("single_document_model"))
     review_state_max_chars = int(raw_cfg.get("review_state_max_chars") or 24000)
     analysis_note_cfg = dict(raw_cfg.get("analysis_note_generation") or {})
+    single_review_cfg = dict(raw_cfg.get("single_review_materialization") or {})
+    review_state_field_limits = normalize_review_state_field_limits(single_review_cfg.get("field_limits") or {})
+    evidence_writing_cfg = dict(raw_cfg.get("evidence_constrained_writing") or {})
+    evidence_writing_enabled = bool(evidence_writing_cfg.get("enabled", False))
+    evidence_writer_model = _stringify(evidence_writing_cfg.get("writer_model") or analysis_note_cfg.get("writer_model") or raw_cfg.get("synthesis_model")) or None
+    evidence_line_targets = _resolve_evidence_constrained_line_targets(evidence_writing_cfg.get("line_targets") or {})
+    max_evidence_per_review = int(evidence_writing_cfg.get("max_evidence_per_review") or 3)
+    provide_research_topic = bool(analysis_note_cfg.get("provide_research_topic", False))
+    synthesis_research_topic = _stringify(raw_cfg.get("research_topic") or raw_cfg.get("topic")) if provide_research_topic else ""
 
     review_read_pool = _load_review_read_pool(raw_cfg, workspace_root, content_db_path)
     literature_table, attachment_table, _ = load_reference_tables(db_path=content_db_path)
@@ -1453,10 +1492,13 @@ def execute(config_path: Path) -> List[Path]:
                     cleaned_sentences = _split_sentences(clean_body)
                     review_state["full_text"] = clean_body
                     review_state["sentences"] = cleaned_sentences
-                    review_state["research_problem"] = _pick_sentences(cleaned_sentences, SENTENCE_GROUP_KEYWORDS["research_problem"], limit=4)
-                    review_state["research_method"] = _pick_sentences(cleaned_sentences, SENTENCE_GROUP_KEYWORDS["research_method"], limit=4)
-                    review_state["core_findings"] = _pick_sentences(cleaned_sentences, SENTENCE_GROUP_KEYWORDS["core_findings"], limit=6)
-                    review_state["future_directions"] = _pick_sentences(cleaned_sentences, SENTENCE_GROUP_KEYWORDS["future_directions"], limit=4, tail_bias=True)
+                    for field_name, limit in review_state_field_limits.items():
+                        review_state[field_name] = _pick_sentences(
+                            cleaned_sentences,
+                            SENTENCE_GROUP_KEYWORDS.get(field_name, ()),
+                            limit=limit,
+                            tail_bias=(field_name == "future_directions"),
+                        )
                 packet_refs = list(reading_packet.get("references") or [])
                 if packet_refs:
                     review_state["reference_lines"] = packet_refs
@@ -1475,6 +1517,7 @@ def execute(config_path: Path) -> List[Path]:
                 title=_stringify(literature_record.get("title")) or cite_key,
                 year=_stringify(literature_record.get("year")),
                 sentence_group_keywords=SENTENCE_GROUP_KEYWORDS,
+                field_limits=review_state_field_limits,
             )
 
         if not structured_abs_path and pdf_path is None:
@@ -1493,9 +1536,11 @@ def execute(config_path: Path) -> List[Path]:
                 global_config_path=global_config_path,
                 model=review_state_model or None,
                 max_chars=review_state_max_chars,
+                field_limits=review_state_field_limits,
                 print_to_stdout=False,
             )
 
+        original_sentence_count = len(review_state.get("sentences") or [])
         sentences = list(review_state.get("sentences") or [])
         if not sentences:
             missing_text.append(f"{cite_key}: 未切出有效句子")
@@ -1512,8 +1557,10 @@ def execute(config_path: Path) -> List[Path]:
             "structured_path": structured_abs_path,
             "pdf_path": str(pdf_path) if pdf_path else "",
             "full_text_chars": len(full_text),
+            "original_sentence_count": original_sentence_count,
             "sentence_count": len(sentences),
             "reference_line_count": len(reference_lines),
+            "review_state_field_limits": review_state_field_limits,
             "review_state_parse_method": _stringify((review_state.get("llm_review_state") or {}).get("parse_method") or review_state.get("extract_method")),
             "review_state_model_name": _stringify((review_state.get("llm_review_state") or {}).get("model_name")),
         }
@@ -1765,14 +1812,54 @@ def execute(config_path: Path) -> List[Path]:
         if sanitize_note_sentence(_stringify(item.get("view_note")))
     ] or ["- 本轮未形成可回填的研究脉络条目。"]
 
+    llm_generated_note_count = 0
+
+    def _maybe_generate_summary_lines(note_name: str, fallback_lines: List[str]) -> List[str]:
+        nonlocal llm_generated_note_count
+        if not evidence_writing_enabled:
+            return fallback_lines
+        generated_lines = generate_evidence_constrained_summary_lines(
+            note_name,
+            review_states,
+            research_topic=synthesis_research_topic,
+            workspace_root=workspace_root,
+            global_config_path=global_config_path,
+            model=evidence_writer_model,
+            line_target=evidence_line_targets.get(note_name, 5),
+            max_evidence_per_review=max_evidence_per_review,
+            print_to_stdout=False,
+        )
+        if generated_lines:
+            llm_generated_note_count += 1
+            return generated_lines
+        return fallback_lines
+
+    trajectory_summary_lines = _maybe_generate_summary_lines("trajectory_seed.md", trajectory_summary_lines)
+    core_summary_lines = _maybe_generate_summary_lines(
+        "core_findings.md",
+        _composite_evidence_lines(review_states, "core_findings"),
+    )
+    future_summary_lines = _maybe_generate_summary_lines(
+        "future_directions_notes.md",
+        _future_summary_lines(future_df),
+    )
+    framework_summary_lines = _maybe_generate_summary_lines(
+        "knowledge_framework.md",
+        _framework_summary_lines(consensus_df, future_df),
+    )
+    innovation_summary_lines = _maybe_generate_summary_lines(
+        "innovation_seed.md",
+        _innovation_summary_lines(review_states, future_df),
+    )
+
     composite_updates = [
         (asset_paths["trajectory_seed"], trajectory_summary_lines, _composite_evidence_lines(review_states, "research_problem")),
-        (asset_paths["core_findings"], _composite_evidence_lines(review_states, "core_findings"), evidence_links),
+        (asset_paths["core_findings"], core_summary_lines, evidence_links),
         (asset_paths["consensus_notes"], _consensus_summary_lines(consensus_df), _parse_evidence_column(consensus_df["evidence_notes"]) if not consensus_df.empty else ["- 本轮未形成满足阈值的综述共识证据。"]),
         (asset_paths["controversy_notes"], _controversy_summary_lines(controversy_df), _parse_evidence_column(controversy_df["evidence_notes"]) if not controversy_df.empty else ["- 本轮未形成稳定综述争议证据。"]),
-        (asset_paths["future_directions_notes"], _future_summary_lines(future_df), _composite_evidence_lines(review_states, "future_directions", limit_per_review=2)),
-        (asset_paths["knowledge_framework"], _framework_summary_lines(consensus_df, future_df), evidence_links),
-        (asset_paths["innovation_seed"], _innovation_summary_lines(review_states, future_df), _composite_evidence_lines(review_states, "future_directions", limit_per_review=1) or evidence_links),
+        (asset_paths["future_directions_notes"], future_summary_lines, _composite_evidence_lines(review_states, "future_directions", limit_per_review=2)),
+        (asset_paths["knowledge_framework"], framework_summary_lines, evidence_links),
+        (asset_paths["innovation_seed"], innovation_summary_lines, _composite_evidence_lines(review_states, "future_directions", limit_per_review=1) or evidence_links),
     ]
     for note_path, summary_lines, evidence_lines in composite_updates:
         knowledge_index, updated = _update_composite_note(
@@ -1871,6 +1958,14 @@ def execute(config_path: Path) -> List[Path]:
             replace_tags_for_namespace(content_db_path, namespace="queue/a090", tag_rows=a090_tag_rows, source_type="a070_downstream")
 
     issues = missing_attachments + missing_text + missing_assets
+    evidence_unit_count = sum(
+        len(list(state.get("supporting_evidence") or []))
+        + len(list(state.get("mechanism_paths") or []))
+        + len(list(state.get("controversy_points") or []))
+        + len(list(state.get("limitation_points") or []))
+        for state in review_states
+    )
+    analysis_layer_ready = bool(review_states) and (llm_generated_note_count > 0 or bool(evidence_writing_enabled))
     score = max(40.0, 95.0 - len(issues) * 6.0)
     gate_review = build_gate_review(
         node_uid="A070",
@@ -1888,6 +1983,9 @@ def execute(config_path: Path) -> List[Path]:
             {"name": "controversy_count", "value": len(controversy_df)},
             {"name": "future_direction_count", "value": len(future_df)},
             {"name": "must_read_count", "value": len(must_read_df)},
+            {"name": "evidence_unit_count", "value": evidence_unit_count},
+            {"name": "analysis_note_llm_generated_count", "value": llm_generated_note_count},
+            {"name": "analysis_layer_ready", "value": int(analysis_layer_ready)},
         ],
         artifacts=[str(path) for path in artifacts],
         recommendation="pass" if len(review_states) > 0 and not missing_attachments and not missing_text else "retry_current",
@@ -1900,7 +1998,9 @@ def execute(config_path: Path) -> List[Path]:
             "db_input_key": db_input_key,
             "processed_review_cite_keys": [state["cite_key"] for state in review_states],
             "review_processing_details": [state.get("processing_diagnostics") or {} for state in review_states],
+            "single_review_materialization": single_review_cfg,
             "analysis_note_generation": analysis_note_cfg,
+            "evidence_constrained_writing": evidence_writing_cfg,
             "trajectory": trajectory,
             "quality_summary": quality_summary,
         },
@@ -1912,10 +2012,14 @@ def execute(config_path: Path) -> List[Path]:
         append_aok_log_event(
             event_type="A070_REVIEW_SYNTHESIS_BUILT",
             project_root=workspace_root,
+            affair_code="A070",
             handler_name="综述研读与研究地图生成",
             agent_names=["ar_综述研读与研究脉络事务智能体_v5"],
             skill_names=["ar_综述精读与研究脉络梳理_v5"],
             reasoning_summary="严格复用 A050/A060 综述资产执行局部回填，并更新 G070 审计。",
+            gate_review=gate_review,
+            gate_review_path=gate_path,
+            artifact_paths=[*artifacts, gate_path],
             payload={
                 "review_processed_count": len(review_states),
                 "consensus_count": len(consensus_df),

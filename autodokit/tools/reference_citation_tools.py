@@ -20,7 +20,7 @@ from typing import Any, Dict, List, Tuple
 import pandas as pd
 
 from autodokit.tools.atomic.log_aok import append_aok_log_event, resolve_aok_log_db_path
-from autodokit.tools.llm_clients import AliyunLLMClient, load_aliyun_llm_config
+from autodokit.tools.llm_clients import AliyunLLMClient, build_aliyun_llm_runtime_payload, load_aliyun_llm_config
 from autodokit.tools.llm_parsing import parse_json_object_from_text
 from autodokit.tools.old.bibliodb_csv_compat import (
     build_cite_key,
@@ -536,6 +536,8 @@ def repair_reference_text_with_llm(
         "repair_failed": 0,
         "repair_failure_reason": "",
         "model_name": "",
+        "llm_backend": "",
+        "routing_info": {},
     }
     if not raw_text:
         return result
@@ -553,6 +555,7 @@ def repair_reference_text_with_llm(
             },
         )
         client = AliyunLLMClient(llm_config)
+        runtime_payload = build_aliyun_llm_runtime_payload(llm_config)
         prompt = "\n".join(
             [
                 "请修复下面单条参考文献原文中的 OCR 断词、断行、乱码片段。",
@@ -580,6 +583,8 @@ def repair_reference_text_with_llm(
             result["repair_failed"] = 1
             result["repair_failure_reason"] = "LLM 未返回有效 reference_text，保留原文。"
             result["model_name"] = client.model
+        result["llm_backend"] = _stringify(runtime_payload.get("llm_backend"))
+        result["routing_info"] = dict(runtime_payload.get("routing_info") or {})
     except Exception as exc:
         result["repair_failed"] = 1
         result["repair_failure_reason"] = str(exc)
@@ -591,6 +596,8 @@ def repair_reference_text_with_llm(
         "repair_failure_reason": _stringify(result.get("repair_failure_reason")),
         "input_chars": len(raw_text),
         "output_chars": len(_stringify(result.get("repaired_text"))),
+        "llm_backend": _stringify(result.get("llm_backend")),
+        "routing_info": result.get("routing_info") or {},
     }
     append_aok_log_event(
         event_type="REFERENCE_TEXT_REPAIR",
@@ -654,6 +661,8 @@ def parse_reference_text_with_llm(
         "recognized_fields": {},
         "recognized_text": "",
         "model_name": "",
+        "llm_backend": "",
+        "routing_info": {},
     }
 
     llm_error = ""
@@ -665,6 +674,7 @@ def parse_reference_text_with_llm(
             route_hints={"budget_tier": "cheap", "input_chars": len(reference_text)},
         )
         client = AliyunLLMClient(llm_config)
+        runtime_payload = build_aliyun_llm_runtime_payload(llm_config)
         prompt = "\n".join(
             [
                 "请解析下面这一条参考文献原文，只返回 JSON 对象。",
@@ -696,6 +706,8 @@ def parse_reference_text_with_llm(
         result["parse_failed"] = 0 if result["is_reasonable"] else 1
         result["parse_failure_reason"] = failure_reason
         result["model_name"] = client.model
+        result["llm_backend"] = _stringify(runtime_payload.get("llm_backend"))
+        result["routing_info"] = dict(runtime_payload.get("routing_info") or {})
     except Exception as exc:
         llm_error = str(exc)
         fallback = parse_reference_text(reference_text)
@@ -722,6 +734,8 @@ def parse_reference_text_with_llm(
         "parse_method": result["parse_method"],
         "parse_failed": result["parse_failed"],
         "parse_failure_reason": result["parse_failure_reason"],
+        "llm_backend": _stringify(result.get("llm_backend")),
+        "routing_info": result.get("routing_info") or {},
     }
     append_aok_log_event(
         event_type="REFERENCE_LLM_PARSE",
@@ -800,6 +814,8 @@ def refine_reference_lines_with_llm(
         "parse_failed": 0,
         "parse_failure_reason": "",
         "model_name": "",
+        "llm_backend": "",
+        "routing_info": {},
     }
     if not cleaned_input:
         return result
@@ -817,6 +833,7 @@ def refine_reference_lines_with_llm(
             },
         )
         client = AliyunLLMClient(llm_config)
+        runtime_payload = build_aliyun_llm_runtime_payload(llm_config)
         prompt = "\n".join(
             [
                 "请把下面同一篇论文提取出的参考文献原文列表整理为标准化的单条列表。",
@@ -855,6 +872,8 @@ def refine_reference_lines_with_llm(
             result["parse_failed"] = 1
             result["parse_failure_reason"] = "LLM 未返回有效 reference_lines，保留原始抽取结果。"
             result["model_name"] = client.model
+        result["llm_backend"] = _stringify(runtime_payload.get("llm_backend"))
+        result["routing_info"] = dict(runtime_payload.get("routing_info") or {})
     except Exception as exc:
         result["llm_invoked"] = 1
         result["parse_failed"] = 1
@@ -869,6 +888,8 @@ def refine_reference_lines_with_llm(
         "parse_method": result["parse_method"],
         "parse_failed": result["parse_failed"],
         "parse_failure_reason": result["parse_failure_reason"],
+        "llm_backend": _stringify(result.get("llm_backend")),
+        "routing_info": result.get("routing_info") or {},
     }
     append_aok_log_event(
         event_type="REFERENCE_BLOCK_CLEANUP",
@@ -1346,6 +1367,8 @@ def process_reference_citation(
             "repair_applied": int(repair_result.get("repair_applied") or 0),
             "repair_failed": int(repair_result.get("repair_failed") or 0),
             "repair_failure_reason": _stringify(repair_result.get("repair_failure_reason")),
+            "llm_backend": _stringify(parse_result.get("llm_backend")),
+            "routing_info": parse_result.get("routing_info") or {},
             "placeholder_reason": _stringify(record.get("placeholder_reason")),
             "placeholder_status": _stringify(record.get("placeholder_status")),
             "placeholder_run_uid": _stringify(record.get("placeholder_run_uid")) or _stringify(placeholder_run_uid),

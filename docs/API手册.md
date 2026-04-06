@@ -98,6 +98,52 @@ autodo-kit 对外公开的是“事务内容 + 事务工具 + 本地运行时 AP
 
 用途：按 `graph_uid` 从本地图注册表加载图配置，或直接按 `graph_path` 读取。
 
+### 1.8 autodokit.tools.workspace_path_migration.migrate_workspace_paths(...)
+
+用途：在工作区迁移到新设备或新目录后，统一扫描并重写旧绝对路径。
+
+典型参数：
+
+- `workspace_root`：目标工作区根目录。
+- `mappings`：路径映射列表，元素为 `PathMapping(old_root, new_root)`。
+- `dry_run`：是否只预览不写入。
+- `inventory_only`：是否仅扫描并输出命中清单。
+- `scan_dirs`：需要扫描的工作区目录（默认包括 `config`、`steps`、`knowledge`、`views`、`batches`）。
+- `sqlite_rel_paths`：需要处理的 SQLite 相对路径（默认包括 `database/content/content.db`、`database/logs/aok_log.db`、`database/tasks/tasks.db`）。
+- `excluded_prefixes`：默认排除前缀之外的额外排除项。
+
+相关结构：
+
+- `PathMapping(old_root, new_root)`：路径映射配置。
+
+行为说明：
+
+- `inventory_only=True` 时只输出命中路径清单，不做写入。
+- 默认会排除 `.copilot`、`C:/Windows`、`C:/Program Files` 以及外部盘前缀，减少误改风险。
+- 工具会遍历 JSON、CSV、文本文件以及 SQLite 的文本列，匹配命中的旧绝对路径并按映射替换。
+- 对于不在映射前缀内的外部路径，默认保持不变。
+
+推荐调用示例：
+
+```python
+from autodokit.tools import PathMapping, migrate_workspace_paths
+
+result = migrate_workspace_paths(
+  workspace_root=r"D:/Research/workspace",
+  mappings=[
+    PathMapping(
+      old_root=r"C:/Users/Ethan/CoreFiles/ProjectsFile/AcademicResearch-auto-workflow/workspace",
+      new_root=r"D:/Research/workspace",
+    ),
+    PathMapping(
+      old_root=r"C:/Users/Ethan/CoreFiles/ProjectsFile/AcademicResearch-auto-workflow",
+      new_root=r"D:/Research",
+    ),
+  ],
+  inventory_only=True,
+)
+```
+
 ## 2. autodokit.tools 导出
 
 `autodokit.tools` 采用“按函数直接调用”的公开方式，并按对象分为用户 API 与开发者 API。

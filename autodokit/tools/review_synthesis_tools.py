@@ -17,7 +17,7 @@ from typing import Any, Dict, Iterable, List, Sequence, Tuple
 import pandas as pd
 
 from autodokit.tools.atomic.log_aok import append_aok_log_event, resolve_aok_log_db_path
-from autodokit.tools.llm_clients import AliyunLLMClient, load_aliyun_llm_config
+from autodokit.tools.llm_clients import AliyunLLMClient, build_aliyun_llm_runtime_payload, load_aliyun_llm_config
 from autodokit.tools.llm_parsing import parse_json_object_from_text
 from autodokit.tools.pdf_structured_data_tools import (
     extract_reference_lines_from_structured_data,
@@ -33,6 +33,29 @@ DEFAULT_SENTENCE_GROUP_KEYWORDS: Dict[str, Tuple[str, ...]] = {
     "research_method": ("梳理", "总结", "评述", "分析", "模型", "基于", "角度", "文献"),
     "core_findings": ("影响", "作用", "机制", "路径", "关系", "表明", "发现", "结果"),
     "future_directions": ("建议", "需要", "防范", "提高", "稳定", "至关重要", "应当", "未来"),
+    "mechanism_paths": ("机制", "路径", "传导", "渠道", "中介", "联动", "反馈", "链条"),
+    "controversy_points": ("争议", "差异", "分歧", "异质", "边界", "不一致", "不同"),
+    "limitation_points": ("不足", "局限", "缺乏", "仍需", "尚未", "难以", "受限"),
+    "supporting_evidence": ("表明", "发现", "结果", "显示", "证据", "实证", "研究发现"),
+}
+
+DEFAULT_REVIEW_STATE_FIELD_LIMITS: Dict[str, int] = {
+    "research_problem": 6,
+    "research_method": 6,
+    "core_findings": 10,
+    "future_directions": 8,
+    "mechanism_paths": 8,
+    "controversy_points": 6,
+    "limitation_points": 6,
+    "supporting_evidence": 10,
+}
+
+DEFAULT_EVIDENCE_CONSTRAINED_LINE_TARGETS: Dict[str, int] = {
+    "trajectory_seed.md": 5,
+    "core_findings.md": 5,
+    "future_directions_notes.md": 5,
+    "knowledge_framework.md": 4,
+    "innovation_seed.md": 6,
 }
 
 DEFAULT_CONSENSUS_THEME_DEFS: Tuple[Tuple[str, Tuple[str, ...]], ...] = (
@@ -58,6 +81,195 @@ CONTROVERSY_COLUMNS: List[str] = ["controversy_uid", "topic", "controversy", "ev
 FUTURE_COLUMNS: List[str] = ["direction_uid", "topic", "direction", "source_notes", "priority"]
 MUST_READ_COLUMNS: List[str] = ["uid_literature", "cite_key", "title", "reason", "status"]
 GENERAL_READING_COLUMNS: List[str] = ["uid_literature", "cite_key", "title", "source_review", "status"]
+
+
+def normalize_review_state_field_limits(raw_limits: Dict[str, Any] | None = None) -> Dict[str, int]:
+    """规范化综述提炼字段配额。"""
+
+    limits = dict(DEFAULT_REVIEW_STATE_FIELD_LIMITS)
+    for field_name, raw_value in dict(raw_limits or {}).items():
+        if field_name not in limits:
+            continue
+        try:
+            parsed = int(raw_value)
+        except Exception:
+            continue
+        limits[field_name] = max(1, parsed)
+    return limits
+
+
+def _build_review_state_from_sentences(
+    sentences: Sequence[Dict[str, Any]],
+    *,
+    keyword_map: Dict[str, Tuple[str, ...]] | None = None,
+    field_limits: Dict[str, Any] | None = None,
+) -> Dict[str, List[Dict[str, Any]]]:
+    """基于句子集合构造可供后续综合分析使用的 review_state 字段。"""
+
+    keyword_cfg = keyword_map or DEFAULT_SENTENCE_GROUP_KEYWORDS
+    limits = normalize_review_state_field_limits(field_limits)
+    output: Dict[str, List[Dict[str, Any]]] = {}
+    for field_name, limit in limits.items():
+        keywords = keyword_cfg.get(field_name) or ()
+        output[field_name] = pick_review_sentences(
+            list(sentences),
+            keywords,
+            limit=limit,
+            tail_bias=(field_name == "future_directions"),
+        )
+    return output
+
+
+def _note_type_to_evidence_fields(note_name: str) -> List[str]:
+    mapping = {
+        "trajectory_seed.md": ["research_problem", "mechanism_paths", "core_findings"],
+        "core_findings.md": ["core_findings", "supporting_evidence", "mechanism_paths"],
+        "future_directions_notes.md": ["future_directions", "limitation_points", "controversy_points"],
+        "knowledge_framework.md": ["mechanism_paths", "core_findings", "research_method"],
+        "innovation_seed.md": ["future_directions", "limitation_points", "controversy_points", "mechanism_paths"],
+    }
+    return mapping.get(note_name, ["core_findings", "supporting_evidence"])
+
+
+def generate_evidence_constrained_summary_lines(
+    note_name: str,
+    review_states: Sequence[Dict[str, Any]],
+    *,
+    research_topic: str = "",
+    workspace_root: str | Path,
+    global_config_path: str | Path | None = None,
+    api_key_file: str | Path | None = None,
+    model: str | None = None,
+    line_target: int = 5,
+    max_evidence_per_review: int = 3,
+    print_to_stdout: bool = False,
+) -> List[str]:
+    """基于证据包生成综合分析摘要行。
+
+    输出以 bullet lines 形式返回，供 A070 分析笔记回填使用。
+    """
+
+    if not review_states:
+        return []
+
+    workspace_root_path = Path(workspace_root)
+    llm_settings = _load_global_llm_settings(
+        workspace_root_path,
+        config_path=Path(global_config_path) if global_config_path else None,
+    )
+    resolved_api_key_file = _stringify(api_key_file) or _stringify(llm_settings.get("aliyun_api_key_file"))
+    resolved_model = _stringify(model) or _stringify(llm_settings.get("synthesis_model")) or "auto"
+    evidence_fields = _note_type_to_evidence_fields(note_name)
+    target_count = max(2, int(line_target or 0))
+    per_review_limit = max(1, int(max_evidence_per_review or 0))
+
+    evidence_blocks: List[str] = []
+    for state in review_states:
+        cite_key = _stringify(state.get("cite_key"))
+        title = _stringify(state.get("title"))
+        year = _stringify(state.get("year"))
+        snippets: List[str] = []
+        for field_name in evidence_fields:
+            sentence_objs = list(state.get(field_name) or [])[:per_review_limit]
+            for item in sentence_objs:
+                sentence = sentence_to_academic_statement(_stringify(item.get("sentence")))
+                if not sentence:
+                    continue
+                snippets.append(f"- [{field_name}] {sentence} 见 {build_note_wikilink(cite_key)}。")
+        if not snippets:
+            continue
+        evidence_blocks.extend(
+            [
+                f"文献：{build_note_wikilink(cite_key)} | 标题：{title or cite_key} | 年份：{year or '未知'}",
+                *snippets,
+            ]
+        )
+
+    if not evidence_blocks:
+        return []
+
+    try:
+        llm_config = load_aliyun_llm_config(
+            model=resolved_model,
+            api_key_file=resolved_api_key_file or None,
+            affair_name="review_evidence_constrained_summary",
+            config_path=Path(global_config_path) if global_config_path else None,
+            route_hints={
+                "task_type": "reasoning",
+                "budget_tier": "premium",
+                "input_chars": sum(len(line) for line in evidence_blocks),
+            },
+        )
+        client = AliyunLLMClient(llm_config)
+        runtime_payload = build_aliyun_llm_runtime_payload(llm_config)
+        prompt = "\n".join(
+            [
+                f"你正在为 {note_name} 生成受证据约束的综合分析摘要。",
+                f"当前研究主题：{_stringify(research_topic) or DEFAULT_TOPIC}",
+                "只返回 JSON 对象，格式必须为：",
+                "{",
+                '  "summary_lines": ["- ..."]',
+                "}",
+                "要求：",
+                f"1. 只基于下方证据包生成 {target_count} 条左右摘要行；证据明显不足时可少于该数量。",
+                "2. 每条必须以 '- ' 开头。",
+                "3. 每条必须体现比较、归纳、排序、抽象中的至少一种分析动作，不要简单改写单句原文。",
+                "4. 每条必须至少保留一个来自证据包的 wikilink 引文，不得编造包外引用。",
+                "5. 若证据不足，不要瞎编，应明确写出‘当前综述证据不足以形成稳定判断’。",
+                "证据包：",
+                *evidence_blocks,
+            ]
+        )
+        raw_output = client.generate_text(
+            prompt=prompt,
+            system="你是受证据约束的综述综合写作助手，只输出 JSON。",
+            temperature=0.2,
+            max_tokens=4096,
+        )
+        parsed_obj, _debug = parse_json_object_from_text(raw_output)
+        summary_lines = parsed_obj.get("summary_lines")
+        if not isinstance(summary_lines, list):
+            return []
+        cleaned: List[str] = []
+        seen: set[str] = set()
+        for raw_line in summary_lines:
+            line = _stringify(raw_line)
+            if not line:
+                continue
+            if not line.startswith("- "):
+                line = f"- {line.lstrip('- ').strip()}"
+            if line in seen:
+                continue
+            seen.add(line)
+            cleaned.append(line)
+        payload = {
+            "note_name": note_name,
+            "research_topic": _stringify(research_topic),
+            "line_target": target_count,
+            "generated_line_count": len(cleaned),
+            "evidence_block_count": len(evidence_blocks),
+            "llm_backend": _stringify(runtime_payload.get("llm_backend")),
+            "routing_info": runtime_payload.get("routing_info") or {},
+        }
+        append_aok_log_event(
+            event_type="REVIEW_EVIDENCE_CONSTRAINED_SUMMARY",
+            project_root=workspace_root_path,
+            log_db_path=resolve_aok_log_db_path(
+                workspace_root_path,
+                config_path=Path(global_config_path) if global_config_path else None,
+            ),
+            handler_kind="llm_native",
+            handler_name="generate_evidence_constrained_summary_lines",
+            model_name=client.model,
+            skill_names=["ar_综述精读与研究脉络梳理_v5"],
+            reasoning_summary="基于单篇综述证据单元生成受证据约束的综合摘要行。",
+            payload=payload,
+        )
+        if print_to_stdout:
+            print(json.dumps(payload, ensure_ascii=False, indent=2))
+        return cleaned
+    except Exception:
+        return []
 
 
 def _stringify(value: Any) -> str:
@@ -287,11 +499,13 @@ def _build_review_state_from_payload(
     reference_lines: Sequence[str],
     reference_line_details: Sequence[Dict[str, Any]],
     pending_reason: str = "",
+    field_limits: Dict[str, Any] | None = None,
 ) -> Dict[str, Any]:
     """构造统一的综述 review state。"""
 
     full_text = _stringify(payload.get("full_text"))
     sentences = split_review_sentences(full_text)
+    state_fields = _build_review_state_from_sentences(sentences, keyword_map=keyword_map, field_limits=field_limits)
     return {
         "uid_literature": uid_literature,
         "cite_key": cite_key,
@@ -303,10 +517,7 @@ def _build_review_state_from_payload(
         "extract_method": extract_method,
         "full_text": full_text,
         "sentences": sentences,
-        "research_problem": pick_review_sentences(sentences, keyword_map["research_problem"], limit=4),
-        "research_method": pick_review_sentences(sentences, keyword_map["research_method"], limit=4),
-        "core_findings": pick_review_sentences(sentences, keyword_map["core_findings"], limit=6),
-        "future_directions": pick_review_sentences(sentences, keyword_map["future_directions"], limit=4, tail_bias=True),
+        **state_fields,
         "reference_lines": list(reference_lines),
         "reference_line_details": list(reference_line_details),
         "pending_reason": pending_reason,
@@ -322,6 +533,7 @@ def extract_review_state_from_attachment(
     title: str,
     year: str = "",
     sentence_group_keywords: Dict[str, Tuple[str, ...]] | None = None,
+    field_limits: Dict[str, Any] | None = None,
 ) -> Dict[str, Any]:
     """从附件构造单篇综述研读状态。
 
@@ -358,6 +570,7 @@ def extract_review_state_from_attachment(
         reference_lines=list(extraction.get("reference_lines") or []),
         reference_line_details=list(extraction.get("reference_line_details") or []),
         pending_reason=_stringify(extraction.get("pending_reason")),
+        field_limits=field_limits,
     )
 
 
@@ -446,6 +659,7 @@ def refine_review_state_with_llm(
     api_key_file: str | Path | None = None,
     model: str | None = None,
     max_chars: int = 24000,
+    field_limits: Dict[str, Any] | None = None,
     print_to_stdout: bool = False,
 ) -> Dict[str, Any]:
     """使用单次独立 LLM 请求提炼单篇综述的 review_state。"""
@@ -467,6 +681,7 @@ def refine_review_state_with_llm(
     )
     truncated_text = full_text[: max(int(max_chars or 0), 1000)]
     original_sentences = list(review_state.get("sentences") or split_review_sentences(truncated_text))
+    normalized_limits = normalize_review_state_field_limits(field_limits)
 
     result = dict(review_state)
     result["llm_review_state"] = {
@@ -475,6 +690,8 @@ def refine_review_state_with_llm(
         "parse_failed": 0,
         "parse_failure_reason": "",
         "model_name": "",
+        "llm_backend": "",
+        "routing_info": {},
     }
 
     try:
@@ -490,6 +707,7 @@ def refine_review_state_with_llm(
             },
         )
         client = AliyunLLMClient(llm_config)
+        runtime_payload = build_aliyun_llm_runtime_payload(llm_config)
         prompt = "\n".join(
             [
                 "请基于下面单篇综述/述评/研究进展全文，提炼结构化阅读结果。",
@@ -498,12 +716,21 @@ def refine_review_state_with_llm(
                 '  "research_problem": ["..."],',
                 '  "research_method": ["..."],',
                 '  "core_findings": ["..."],',
-                '  "future_directions": ["..."]',
+                '  "future_directions": ["..."],',
+                '  "mechanism_paths": ["..."],',
+                '  "controversy_points": ["..."],',
+                '  "limitation_points": ["..."],',
+                '  "supporting_evidence": ["..."]',
                 "}",
                 "要求：",
-                "1. 每个字段返回 2-5 条句子；若原文信息明显不足，可少于 2 条。",
-                "2. 尽量复用原文句子，不要编造文中没有的信息。",
-                "3. 若某字段没有足够内容，返回空列表。",
+                "1. 每个字段尽量返回足够供后续综合分析使用的句子；若原文信息不足，可以少于上限。",
+                "2. 尽量复用原文句子或紧贴原文做最小必要改写，不要编造文中没有的信息。",
+                "3. `mechanism_paths` 用于保留机制链条、传导路径、中介或反馈表述。",
+                "4. `controversy_points` 用于保留争议、差异、异质性、边界不一致等表述。",
+                "5. `limitation_points` 用于保留不足、局限、未覆盖或需后续补充的表述。",
+                "6. `supporting_evidence` 用于保留最适合支撑后续综合分析的结果句、证据句和关键判断句。",
+                f"7. 配额上限：{json.dumps(normalized_limits, ensure_ascii=False)}。",
+                "8. 若某字段没有足够内容，返回空列表。",
                 f"标题：{_stringify(review_state.get('title')) or 'unknown'}",
                 f"年份：{_stringify(review_state.get('year')) or 'unknown'}",
                 f"cite_key：{_stringify(review_state.get('cite_key')) or 'unknown'}",
@@ -518,7 +745,7 @@ def refine_review_state_with_llm(
             max_tokens=4096,
         )
         parsed_obj, _debug = parse_json_object_from_text(raw_output)
-        for field_name in ["research_problem", "research_method", "core_findings", "future_directions"]:
+        for field_name in normalized_limits:
             llm_sentences = parsed_obj.get(field_name)
             if isinstance(llm_sentences, list):
                 result[field_name] = _coerce_sentence_objects(original_sentences, llm_sentences)
@@ -529,6 +756,8 @@ def refine_review_state_with_llm(
             "parse_failed": 0,
             "parse_failure_reason": "",
             "model_name": client.model,
+            "llm_backend": _stringify(runtime_payload.get("llm_backend")),
+            "routing_info": runtime_payload.get("routing_info") or {},
         }
     except Exception as exc:
         result["llm_review_state"] = {
@@ -537,7 +766,18 @@ def refine_review_state_with_llm(
             "parse_failed": 1,
             "parse_failure_reason": str(exc),
             "model_name": resolved_model,
+            "llm_backend": "",
+            "routing_info": {},
         }
+
+    fallback_fields = _build_review_state_from_sentences(
+        original_sentences,
+        keyword_map=DEFAULT_SENTENCE_GROUP_KEYWORDS,
+        field_limits=normalized_limits,
+    )
+    for field_name, sentence_objs in fallback_fields.items():
+        if not isinstance(result.get(field_name), list) or not result.get(field_name):
+            result[field_name] = sentence_objs
 
     payload = {
         "cite_key": _stringify(result.get("cite_key")),
@@ -548,6 +788,9 @@ def refine_review_state_with_llm(
         "input_chars": len(truncated_text),
         "sentence_count": len(original_sentences),
         "reference_line_count": len(result.get("reference_lines") or []),
+        "field_limits": normalized_limits,
+        "llm_backend": _stringify((result.get("llm_review_state") or {}).get("llm_backend")),
+        "routing_info": (result.get("llm_review_state") or {}).get("routing_info") or {},
     }
     append_aok_log_event(
         event_type="REVIEW_STATE_SINGLE_DOCUMENT",

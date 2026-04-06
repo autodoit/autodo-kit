@@ -21,6 +21,7 @@ from autodokit.affairs.候选文献视图构建.affair import (
     _resolve_workspace_root,
 )
 from autodokit.tools import append_aok_log_event, build_gate_review, load_json_or_py
+from autodokit.tools.atomic.task_aok.post_affair_git_commit import affair_auto_git_commit
 from autodokit.tools.bibliodb_sqlite import load_reading_queue_df, upsert_reading_queue_rows
 from autodokit.tools.storage_backend import load_reference_main_table
 
@@ -96,6 +97,7 @@ def _build_a065_queue_rows(
     return rows
 
 
+@affair_auto_git_commit("A060")
 def execute(config_path: Path) -> List[Path]:
     """执行 A060 综述结构化解析资产准备。
 
@@ -247,10 +249,14 @@ def execute(config_path: Path) -> List[Path]:
         event_type="A060_REVIEW_PREPROCESSING_COMPLETED",
         project_root=workspace_root,
         enabled=logging_enabled,
+        affair_code="A060",
         handler_name="综述预处理",
         agent_names=["ar_A060_综述预处理事务智能体_v5"],
         skill_names=["ar_A060_综述预处理_v5", "m_ObsidianMarkdown_v1"],
         reasoning_summary="承接 A050 阅读池，完成 parse asset 预热并推进到 A065。",
+        gate_review=gate_review,
+        gate_review_path=gate_path,
+        artifact_paths=[parse_status_path, gate_path],
         payload={
             "review_read_pool_count": len(review_read_pool),
             "batch_count": int(review_reading_batches['batch_id'].nunique()) if not review_reading_batches.empty and 'batch_id' in review_reading_batches.columns else 0,

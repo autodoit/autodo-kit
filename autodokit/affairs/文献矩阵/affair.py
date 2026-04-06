@@ -33,6 +33,7 @@ except ModuleNotFoundError:  # pragma: no cover - 联调环境兼容回退
 from autodokit.tools.contentdb_sqlite import resolve_content_db_config
 from autodokit.tools.llm_clients import AliyunDashScopeClient, load_aliyun_llm_config
 from autodokit.tools.pdf_structured_data_tools import load_document_records_from_structured_source
+from autodokit.tools.atomic.task_aok.post_affair_git_commit import affair_auto_git_commit
 
 
 @dataclass
@@ -224,6 +225,7 @@ class LiteratureMatrixTemplateAffair(TemplateAffairBase):
         return _run_literature_matrix(merged=dict(config))
 
 
+@affair_auto_git_commit("A110")
 def execute(config_path: Path, workspace_root: Path | None = None) -> List[Path]:
     """事务入口：执行文献矩阵。
 

@@ -466,6 +466,10 @@ from autodokit.tools.aok_pdf_aliyun_multimodal_parse import (
 from autodokit.tools.aok_pdf_aliyun_multimodal_batch_manage import (
     batch_manage_pdf_with_aliyun_multimodal,
 )
+from autodokit.tools.workspace_path_migration import (
+    PathMapping,
+    migrate_workspace_paths,
+)
 def run_online_retrieval_router(payload: dict[str, Any]) -> dict[str, Any]:
     """延迟加载在线检索路由器并执行路由调用。
 
@@ -561,6 +565,8 @@ _用户公开工具 = [
     "build_aliyun_multimodal_chunks",
     "parse_pdf_with_aliyun_multimodal",
     "batch_manage_pdf_with_aliyun_multimodal",
+    "PathMapping",
+    "migrate_workspace_paths",
     "build_structured_data_payload",
     "load_structured_data",
     "extract_reference_lines_from_structured_data",
@@ -662,6 +668,8 @@ _开发者工具 = [
     "run_aob_items_sync",
     "run_aob_external_templates_import",
     "run_aob_workspace_convert",
+    "PathMapping",
+    "migrate_workspace_paths",
     "parse_reference_text",
     "insert_placeholder_from_reference",
     "literature_upsert",
