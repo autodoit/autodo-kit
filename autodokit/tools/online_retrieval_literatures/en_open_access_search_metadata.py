@@ -37,10 +37,13 @@ def build_config(args: argparse.Namespace) -> dict[str, Any]:
 
 
 def search_metadata(config: dict[str, Any]) -> dict[str, Any]:
-    result = run_english_pipeline(config)
+    run_config = dict(config)
+    run_config["download_policy"] = "metadata-only"
+    run_config["max_downloads"] = 0
+    result = run_english_pipeline(run_config)
     return {
         "status": result.get("status", "BLOCKED"),
-        "query": result.get("query", config.get("query", "")),
+        "query": result.get("query", run_config.get("query", "")),
         "record_count": int(result.get("record_count") or 0),
         "source_runs": result.get("source_runs", []),
         "metadata_paths": result.get("metadata_paths", {}),

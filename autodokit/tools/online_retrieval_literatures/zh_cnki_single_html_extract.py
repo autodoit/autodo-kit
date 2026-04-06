@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import Any
 
 from .cnki_html_reader_probe import _build_probe_config, run_probe
+from .retrieval_policy import evaluate_policy
 
 
 def build_config(args: argparse.Namespace) -> dict[str, Any]:
@@ -25,6 +26,26 @@ def build_config(args: argparse.Namespace) -> dict[str, Any]:
 
 def extract_single(config: dict[str, Any]) -> dict[str, Any]:
     """执行单篇 HTML 阅读抽取。"""
+
+    rules = dict(config.get("retrieval_rules") or {})
+    pre_record = {
+        "title": str(config.get("query") or ""),
+        "detail_url": str(config.get("detail_url") or ""),
+        "database": str(config.get("prefer_database_tokens") or ""),
+    }
+    pre_decision = evaluate_policy(pre_record, rules, channel="html_extract", source="zh_cnki")
+    if pre_decision.skip:
+        return {
+            "status": "SKIPPED",
+            "query": str(config.get("query") or ""),
+            "selected_result": {},
+            "detail_record_bundle": {},
+            "article_package": {},
+            "artifacts": {},
+            "manual_events": [],
+            "reason": pre_decision.reason,
+            "matched_tokens": pre_decision.matched_tokens,
+        }
 
     result = run_probe(config)
     return {

@@ -7,6 +7,8 @@ import json
 from pathlib import Path
 from typing import Any
 
+from .retrieval_policy import evaluate_policy
+from .zh_cnki_single_html_extract import build_config as build_single_config
 from .zh_cnki_single_html_extract import extract_single
 
 
@@ -46,25 +48,47 @@ def extract_batch(config: dict[str, Any], entries: list[dict[str, Any]]) -> dict
 
     results: list[dict[str, Any]] = []
     skipped = 0
+    skipped_by_policy: list[dict[str, Any]] = []
+    rules = dict(config.get("retrieval_rules") or {})
     for index, entry in enumerate(entries, start=1):
         if not bool(entry.get("enabled", True)):
             skipped += 1
             continue
-        run_config = dict(config)
-        run_config.update(
-            {
-                "detail_url": str(entry.get("detail_url") or "").strip(),
-                "query": str(entry.get("title") or f"cnki_html_{index}").strip(),
-                "output_root": output_dir / f"item_{index:04d}",
-            }
+        decision = evaluate_policy(entry, rules, channel="html_extract", source="zh_cnki")
+        if decision.skip:
+            skipped += 1
+            skipped_by_policy.append(
+                {
+                    "index": index,
+                    "title": str(entry.get("title") or ""),
+                    "detail_url": str(entry.get("detail_url") or ""),
+                    "reason": decision.reason,
+                    "matched_tokens": decision.matched_tokens,
+                }
+            )
+            continue
+        run_args = argparse.Namespace(
+            query=str(entry.get("title") or f"cnki_html_{index}").strip(),
+            detail_url=str(entry.get("detail_url") or "").strip(),
+            result_index=int(config.get("result_index") or 0),
+            prefer_database_tokens=str(config.get("prefer_database_tokens") or "学术期刊,中国学术期刊,学位论文"),
+            output_dir=str(output_dir / f"item_{index:04d}"),
+            entry_url=str(config.get("entry_url") or ""),
+            cdp_url=str(config.get("cdp_url") or ""),
+            cdp_port=int(config.get("cdp_port") or 9222),
+            timeout_ms=int(config.get("timeout_ms") or 15000),
+            skip_launch=bool(config.get("skip_launch", False)),
+            keep_browser_open=bool(config.get("keep_browser_open", True)),
         )
-        results.append(extract_single(run_config))
+        results.append(extract_single(build_single_config(run_args)))
 
     summary = {
         "status": "PASS",
         "total_entries": len(entries),
         "executed_entries": len(results),
         "skipped_entries": skipped,
+        "policy_skipped_entries": len(skipped_by_policy),
+        "policy_skipped": skipped_by_policy,
         "pass_count": sum(1 for item in results if str(item.get("status") or "") == "PASS"),
         "results": results,
     }

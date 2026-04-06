@@ -90,6 +90,7 @@ def run_pipeline(config: dict[str, Any]) -> dict[str, Any]:
     blocked_count = 0
     if download_policy != "metadata-only" and records:
         download_dir = output_dir / "downloads"
+        download_dir.mkdir(parents=True, exist_ok=True)
         limit = max_downloads if max_downloads > 0 else len(records)
         for index, record in enumerate(records[:limit], start=1):
             result = download_record(

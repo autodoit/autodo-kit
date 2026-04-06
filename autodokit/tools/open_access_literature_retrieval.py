@@ -13,6 +13,7 @@ from __future__ import annotations
 import csv
 import hashlib
 import json
+import random
 import re
 import time
 import urllib.error
@@ -145,6 +146,16 @@ def _request_json(url: str, *, sleep_seconds: float = 0.0) -> dict[str, Any]:
     return json.loads(body.decode("utf-8"))
 
 
+def _sample_delay(min_seconds: float, max_seconds: float) -> float:
+    """生成一个随机等待时长。"""
+
+    lower = max(float(min_seconds), 0.0)
+    upper = max(float(max_seconds), lower)
+    if upper == lower:
+        return lower
+    return random.uniform(lower, upper)
+
+
 def _normalize_text(value: Any) -> str:
     """清洗文本。"""
 
@@ -204,13 +215,23 @@ def _record_to_bibtex(record: RetrievalRecord) -> str:
     return "\n".join(lines)
 
 
+def _normalize_url_candidate(value: str) -> str:
+    """清理来源元数据中的 URL 噪声。"""
+
+    normalized = _normalize_text(value).strip("<>'\" ")
+    normalized = re.sub(r"[>\]\),.;:]+$", "", normalized)
+    normalized = normalized.replace("http://dx.doi.org/", "https://doi.org/")
+    normalized = normalized.replace("https://dx.doi.org/", "https://doi.org/")
+    return normalized
+
+
 def _collect_pdf_candidates(urls: list[str], doi: str) -> list[str]:
     """合并并去重下载候选 URL。"""
 
     merged: list[str] = []
     seen: set[str] = set()
     for item in urls:
-        normalized = _normalize_text(item)
+        normalized = _normalize_url_candidate(str(item or ""))
         if not normalized or normalized in seen:
             continue
         seen.add(normalized)
@@ -673,6 +694,8 @@ def download_record(
     request_timeout: int = DOWNLOAD_REQUEST_TIMEOUT,
     max_attempts: int = DOWNLOAD_HTML_EXPANSION_LIMIT,
     enable_barrier_analysis: bool = True,
+    min_request_delay_seconds: float = 0.35,
+    max_request_delay_seconds: float = 1.6,
 ) -> dict[str, Any]:
     """尝试下载单条记录的公开 PDF。
 
@@ -699,15 +722,23 @@ def download_record(
         if candidate in visited:
             continue
         visited.add(candidate)
+        request_delay_seconds = round(_sample_delay(min_request_delay_seconds, max_request_delay_seconds), 3)
         try:
             body, headers, final_url = _request(
                 candidate,
                 accept="application/pdf,text/html,application/xhtml+xml",
-                sleep_seconds=0.15,
+                sleep_seconds=request_delay_seconds,
                 timeout=request_timeout,
             )
         except Exception as exc:  # noqa: BLE001
-            attempts.append({"url": candidate, "status": "ERROR", "message": str(exc)})
+            attempts.append(
+                {
+                    "url": candidate,
+                    "status": "ERROR",
+                    "message": str(exc),
+                    "request_delay_seconds": request_delay_seconds,
+                }
+            )
             continue
 
         content_type = headers.get("content-type", "")
@@ -715,6 +746,15 @@ def download_record(
             filename = _safe_filename(record.bibtex_key or record.title, ".pdf")
             output_path = download_dir / filename
             output_path.write_bytes(body)
+            attempts.append(
+                {
+                    "url": candidate,
+                    "status": "PASS",
+                    "message": "已下载 PDF",
+                    "final_url": final_url,
+                    "request_delay_seconds": request_delay_seconds,
+                }
+            )
             return {
                 "status": "PASS",
                 "title": record.title,
@@ -737,6 +777,7 @@ def download_record(
                     "evidence": barrier[1],
                     "final_url": final_url,
                     "attempts": attempts,
+                    "request_delay_seconds": request_delay_seconds,
                 }
                 if bailian_api_key_file and enable_barrier_analysis:
                     try:
@@ -749,10 +790,26 @@ def download_record(
                 if next_candidate not in visited:
                     queue.append(next_candidate)
             queue = _prioritize_pdf_candidates(queue, record.doi)
-            attempts.append({"url": candidate, "status": "HTML", "message": "已解析 HTML 并继续寻找 PDF"})
+            attempts.append(
+                {
+                    "url": candidate,
+                    "status": "HTML",
+                    "message": "已解析 HTML 并继续寻找 PDF",
+                    "final_url": final_url,
+                    "request_delay_seconds": request_delay_seconds,
+                }
+            )
             continue
 
-        attempts.append({"url": candidate, "status": "SKIPPED", "message": f"未识别的内容类型: {content_type}"})
+        attempts.append(
+            {
+                "url": candidate,
+                "status": "SKIPPED",
+                "message": f"未识别的内容类型: {content_type}",
+                "final_url": final_url,
+                "request_delay_seconds": request_delay_seconds,
+            }
+        )
 
     return {
         "status": "NO_OPEN_PDF",
