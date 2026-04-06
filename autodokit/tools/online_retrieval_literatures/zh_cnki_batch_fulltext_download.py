@@ -7,6 +7,7 @@ import json
 from pathlib import Path
 from typing import Any
 
+from .retrieval_policy import evaluate_policy
 from .zh_cnki_single_fulltext_download import download_single
 
 
@@ -48,9 +49,24 @@ def download_batch(config: dict[str, Any], entries: list[dict[str, Any]]) -> dic
 
     results: list[dict[str, Any]] = []
     skipped = 0
+    skipped_by_policy: list[dict[str, Any]] = []
+    rules = dict(config.get("retrieval_rules") or {})
     for index, entry in enumerate(entries, start=1):
         if not bool(entry.get("enabled", True)):
             skipped += 1
+            continue
+        decision = evaluate_policy(entry, rules, channel="download", source="zh_cnki")
+        if decision.skip:
+            skipped += 1
+            skipped_by_policy.append(
+                {
+                    "index": index,
+                    "title": str(entry.get("title") or ""),
+                    "detail_url": str(entry.get("detail_url") or ""),
+                    "reason": decision.reason,
+                    "matched_tokens": decision.matched_tokens,
+                }
+            )
             continue
         run_config = dict(config)
         run_config.update(
@@ -69,6 +85,8 @@ def download_batch(config: dict[str, Any], entries: list[dict[str, Any]]) -> dic
         "total_entries": len(entries),
         "executed_entries": len(results),
         "skipped_entries": skipped,
+        "policy_skipped_entries": len(skipped_by_policy),
+        "policy_skipped": skipped_by_policy,
         "pass_count": sum(1 for item in results if str(item.get("download", {}).get("status") or "") == "PASS"),
         "results": results,
     }

@@ -9,6 +9,8 @@ import sys
 from pathlib import Path
 from typing import Any
 
+from .retrieval_policy import evaluate_policy
+
 
 def _discover_repo_root(start_path: Path) -> Path:
     for candidate in [start_path, *start_path.parents]:
@@ -105,6 +107,20 @@ def _load_record(args: argparse.Namespace) -> RetrievalRecord:
 
 
 def download_single(config: dict[str, Any], record: RetrievalRecord) -> dict[str, Any]:
+    rules = dict(config.get("retrieval_rules") or {})
+    decision = evaluate_policy(record.to_dict(), rules, channel="download", source="en_open_access")
+    if decision.skip:
+        return {
+            "status": "SKIPPED",
+            "record": record.to_dict(),
+            "result": {
+                "status": "SKIPPED",
+                "reason": decision.reason,
+                "matched_tokens": decision.matched_tokens,
+            },
+            "output_path": "",
+        }
+
     output_dir = _resolve_repo_path(config.get("output_dir"), "sandbox/online_retrieval_debug/outputs/en_open_access/single")
     download_dir = output_dir / "downloads"
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -117,6 +133,8 @@ def download_single(config: dict[str, Any], record: RetrievalRecord) -> dict[str
         request_timeout=int(config.get("download_request_timeout") or 12),
         max_attempts=int(config.get("per_record_max_attempts") or 6),
         enable_barrier_analysis=bool(config.get("enable_barrier_analysis", False)),
+        min_request_delay_seconds=float(config.get("min_request_delay_seconds") or 0.35),
+        max_request_delay_seconds=float(config.get("max_request_delay_seconds") or 1.6),
     )
 
     payload = {
@@ -152,6 +170,8 @@ def _build_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument("--bailian-api-key-file", default="", help="百炼 API key 文件路径")
     parser.add_argument("--download-request-timeout", type=int, default=12, help="下载超时秒数")
     parser.add_argument("--per-record-max-attempts", type=int, default=6, help="单条最大尝试次数")
+    parser.add_argument("--min-request-delay-seconds", type=float, default=0.35, help="单条内部请求最小随机等待秒数")
+    parser.add_argument("--max-request-delay-seconds", type=float, default=1.6, help="单条内部请求最大随机等待秒数")
     parser.add_argument("--enable-barrier-analysis", action="store_true", help="启用阻断页分析")
     return parser
 
@@ -164,6 +184,8 @@ def main() -> None:
         "bailian_api_key_file": args.bailian_api_key_file,
         "download_request_timeout": args.download_request_timeout,
         "per_record_max_attempts": args.per_record_max_attempts,
+        "min_request_delay_seconds": args.min_request_delay_seconds,
+        "max_request_delay_seconds": args.max_request_delay_seconds,
         "enable_barrier_analysis": args.enable_barrier_analysis,
     }
     result = download_single(config, record)

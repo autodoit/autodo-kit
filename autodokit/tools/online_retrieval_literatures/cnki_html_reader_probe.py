@@ -58,20 +58,24 @@ def _build_probe_config(args: argparse.Namespace) -> dict[str, Any]:
     defaults = _load_debug_inputs()
     browser_config = dict(defaults.get("cnki_browser_config") or {})
     return {
-        "query": str(args.query or defaults.get("zh_query") or "系统性风险"),
-        "detail_url": str(args.detail_url or "").strip(),
-        "result_index": int(args.result_index or 0),
+        "query": str(getattr(args, "query", "") or defaults.get("zh_query") or "系统性风险"),
+        "detail_url": str(getattr(args, "detail_url", "") or "").strip(),
+        "result_index": int(getattr(args, "result_index", 0) or 0),
         "prefer_database_tokens": [
-            token.strip() for token in str(args.prefer_database_tokens or "学术期刊,中国学术期刊,学位论文").split(",") if token.strip()
+            token.strip()
+            for token in str(getattr(args, "prefer_database_tokens", "") or "学术期刊,中国学术期刊,学位论文").split(",")
+            if token.strip()
         ],
-        "entry_url": str(args.entry_url or defaults.get("cnki_entry_url") or "https://kns.cnki.net/kns8s/search"),
-        "cdp_url": str(args.cdp_url or defaults.get("cnki_cdp_url") or f"http://127.0.0.1:{int(defaults.get('cnki_cdp_port') or 9222)}"),
-        "cdp_port": int(args.cdp_port or defaults.get("cnki_cdp_port") or 9222),
-        "skip_launch": bool(args.skip_launch),
-        "keep_browser_open": bool(args.keep_browser_open),
-        "timeout_ms": int(args.timeout_ms or browser_config.get("timeout_ms") or 15000),
+        "entry_url": str(getattr(args, "entry_url", "") or defaults.get("cnki_entry_url") or "https://kns.cnki.net/kns8s/search"),
+        "cdp_url": str(
+            getattr(args, "cdp_url", "") or defaults.get("cnki_cdp_url") or f"http://127.0.0.1:{int(defaults.get('cnki_cdp_port') or 9222)}"
+        ),
+        "cdp_port": int(getattr(args, "cdp_port", 0) or defaults.get("cnki_cdp_port") or 9222),
+        "skip_launch": bool(getattr(args, "skip_launch", False)),
+        "keep_browser_open": bool(getattr(args, "keep_browser_open", False)),
+        "timeout_ms": int(getattr(args, "timeout_ms", 0) or browser_config.get("timeout_ms") or 15000),
         "user_data_dir": _resolve_repo_path(browser_config.get("user_data_dir"), "sandbox/runtime/web_brower_profiles/cnki_debug"),
-        "output_root": _resolve_repo_path(args.output_dir, "sandbox/online_retrieval_debug/outputs/cnki_reader_probe"),
+        "output_root": _resolve_repo_path(getattr(args, "output_dir", ""), "sandbox/online_retrieval_debug/outputs/cnki_reader_probe"),
     }
 
 
@@ -135,10 +139,14 @@ def _ensure_detail_page(page: Page, config: dict[str, Any]) -> dict[str, Any]:
         page.goto(str(config["detail_url"]), wait_until="domcontentloaded")
         CNKI_DEBUG._human_pause(page)
         manual_events.extend(CNKI_DEBUG._wait_for_human_if_needed(page, "", True))
-        detail = page.evaluate(CNKI_DEBUG._build_paper_detail_script())
+        try:
+            detail = page.evaluate(CNKI_DEBUG._build_paper_detail_script())
+        except Exception as exc:  # noqa: BLE001
+            detail = {"error_type": exc.__class__.__name__, "error": str(exc)}
         return {
             "selected_result": {},
             "detail": detail,
+            "detail_error": detail if isinstance(detail, dict) and detail.get("error") else {},
             "manual_events": manual_events,
         }
 
@@ -152,11 +160,15 @@ def _ensure_detail_page(page: Page, config: dict[str, Any]) -> dict[str, Any]:
     page.goto(str(selected.get("href") or ""), wait_until="domcontentloaded")
     CNKI_DEBUG._human_pause(page)
     manual_events.extend(CNKI_DEBUG._wait_for_human_if_needed(page, "", True))
-    detail = page.evaluate(CNKI_DEBUG._build_paper_detail_script())
+    try:
+        detail = page.evaluate(CNKI_DEBUG._build_paper_detail_script())
+    except Exception as exc:  # noqa: BLE001
+        detail = {"error_type": exc.__class__.__name__, "error": str(exc)}
     return {
         "search_page": parsed,
         "selected_result": selected,
         "detail": detail,
+        "detail_error": detail if isinstance(detail, dict) and detail.get("error") else {},
         "manual_events": manual_events,
     }
 
@@ -1328,10 +1340,11 @@ def run_probe_in_context(context: BrowserContext, config: dict[str, Any], output
         article_package = _export_article_package(run_dir, context, reader_api_content, reader_semantic, reader_media)
 
     result = {
-        "status": str(reader_attempt.get("status") or "PASS"),
+        "status": "BLOCKED" if detail_bundle.get("detail_error") else str(reader_attempt.get("status") or "PASS"),
         "query": config["query"],
         "selected_result": selected_result,
         "detail": detail_bundle.get("detail") or {},
+        "detail_error": detail_bundle.get("detail_error") or {},
         "detail_record_bundle": record_bundle,
         "manual_events": detail_bundle.get("manual_events") or [],
         "detail_context": detail_context,

@@ -10,6 +10,7 @@ from pathlib import Path
 from typing import Any
 
 from . import cnki_paged_retrieval as cnki
+from .retrieval_policy import evaluate_policy
 from playwright.sync_api import BrowserContext, Page, Playwright
 
 
@@ -42,6 +43,27 @@ def _prepare_item(config: dict[str, Any], page: Page) -> dict[str, Any]:
 
 def download_single(config: dict[str, Any]) -> dict[str, Any]:
     """下载单篇中文 CNKI 原文。"""
+
+    rules = dict(config.get("retrieval_rules") or {})
+    pre_record = {
+        "title": str(config.get("title") or ""),
+        "journal": str(config.get("journal") or ""),
+        "date": str(config.get("date") or ""),
+        "detail_url": str(config.get("detail_url") or ""),
+    }
+    pre_decision = evaluate_policy(pre_record, rules, channel="download", source="zh_cnki")
+    if pre_decision.skip:
+        return {
+            "status": "SKIPPED",
+            "reason": pre_decision.reason,
+            "matched_tokens": pre_decision.matched_tokens,
+            "query": str(config.get("zh_query") or ""),
+            "search_item": pre_record,
+            "record": {},
+            "download": {},
+            "output_paths": {},
+            "manual_events": [],
+        }
 
     project_root = cnki._resolve_project_root(config)
     output_dir = cnki._resolve_repo_path(

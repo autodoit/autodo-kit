@@ -7,6 +7,8 @@ import json
 from pathlib import Path
 from typing import Any
 
+from .school_foreign_database_portal import fetch_school_foreign_databases
+from .en_chaoxing_portal_retry import retry_failed_records as retry_en_failed_records_via_chaoxing
 from .en_open_access_batch_fulltext_download import download_batch as en_batch_download
 from .en_open_access_search_metadata import search_metadata as en_search_metadata
 from .en_open_access_pipeline import run_pipeline as run_english_pipeline
@@ -34,6 +36,27 @@ def _safe_run(func: Any, config: dict[str, Any]) -> dict[str, Any]:
 def _load_debug_inputs(script_dir: Path) -> dict[str, Any]:
     input_path = script_dir / "debug_inputs.json"
     return json.loads(input_path.read_text(encoding="utf-8"))
+
+
+def _load_router_config(payload: dict[str, Any]) -> dict[str, Any]:
+    default_path = Path(__file__).resolve().with_name("config.json")
+    config_path = Path(str(payload.get("online_retrieval_config_path") or default_path)).expanduser().resolve()
+    if not config_path.exists():
+        return {}
+    loaded = json.loads(config_path.read_text(encoding="utf-8"))
+    return loaded if isinstance(loaded, dict) else {}
+
+
+def _inject_rules(payload: dict[str, Any]) -> dict[str, Any]:
+    merged = dict(payload)
+    config = _load_router_config(payload)
+    config_rules = dict(config.get("rules") or {})
+    payload_rules = dict(payload.get("retrieval_rules") or {})
+    if config_rules or payload_rules:
+        rules = dict(config_rules)
+        rules.update(payload_rules)
+        merged["retrieval_rules"] = rules
+    return merged
 
 
 def _build_english_config(inputs: dict[str, Any], script_dir: Path) -> dict[str, Any]:
@@ -187,6 +210,7 @@ def run_full_debug(script_dir: Path, payload: dict[str, Any] | None = None) -> d
 
 
 def route(payload: dict[str, Any]) -> dict[str, Any]:
+    payload = _inject_rules(payload)
     source = str(payload.get("source") or "").strip()
     mode = str(payload.get("mode") or "").strip()
     action = str(payload.get("action") or "").strip()
@@ -233,6 +257,18 @@ def route(payload: dict[str, Any]) -> dict[str, Any]:
         if not records:
             raise ValueError("en_open_access batch download 需要 records 数组。")
         return en_batch_download(payload, records)
+
+    if source == "chaoxing_portal" and mode == "catalog" and action == "fetch":
+        return fetch_school_foreign_databases(payload)
+
+    if source == "school_foreign_database_portal" and mode == "catalog" and action == "fetch":
+        return fetch_school_foreign_databases(payload)
+
+    if source == "school_database_portal" and mode == "catalog" and action == "fetch":
+        return fetch_school_foreign_databases(payload)
+
+    if source == "en_open_access" and mode == "retry" and action == "chaoxing_portal":
+        return retry_en_failed_records_via_chaoxing(payload)
 
     raise ValueError(f"不支持的路由组合: source={source}, mode={mode}, action={action}")
 
