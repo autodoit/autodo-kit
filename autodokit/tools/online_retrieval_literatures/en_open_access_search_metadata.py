@@ -7,7 +7,7 @@ import json
 from pathlib import Path
 from typing import Any
 
-from online_retrieval_literatures.en_open_access_pipeline import run_pipeline as run_english_pipeline
+from .en_open_access_pipeline import run_pipeline as run_english_pipeline
 
 
 def _load_defaults(script_dir: Path) -> dict[str, Any]:

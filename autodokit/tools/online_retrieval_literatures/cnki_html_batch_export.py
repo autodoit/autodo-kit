@@ -7,7 +7,7 @@ import json
 from pathlib import Path
 from typing import Any
 
-from online_retrieval_literatures.cnki_html_reader_probe import _build_probe_config, _open_context, run_probe_in_context
+from .cnki_html_reader_probe import _build_probe_config, _open_context, run_probe_in_context
 
 
 def _write_json(path: Path, payload: Any) -> None:

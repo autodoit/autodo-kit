@@ -7,7 +7,7 @@ import json
 from pathlib import Path
 from typing import Any
 
-from online_retrieval_literatures.cnki_paged_retrieval import run_pipeline as run_cnki_pipeline
+from .cnki_paged_retrieval import run_pipeline as run_cnki_pipeline
 
 
 def _load_debug_defaults(script_dir: Path) -> dict[str, Any]:

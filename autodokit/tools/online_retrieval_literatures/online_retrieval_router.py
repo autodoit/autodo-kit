@@ -7,17 +7,17 @@ import json
 from pathlib import Path
 from typing import Any
 
-from online_retrieval_literatures.en_open_access_batch_fulltext_download import download_batch as en_batch_download
-from online_retrieval_literatures.en_open_access_search_metadata import search_metadata as en_search_metadata
-from online_retrieval_literatures.en_open_access_pipeline import run_pipeline as run_english_pipeline
-from online_retrieval_literatures.en_open_access_single_fulltext_download import _to_record as en_to_record
-from online_retrieval_literatures.en_open_access_single_fulltext_download import download_single as en_single_download
-from online_retrieval_literatures.cnki_paged_retrieval import run_pipeline as run_cnki_pipeline
-from online_retrieval_literatures.zh_cnki_batch_fulltext_download import download_batch as zh_batch_download
-from online_retrieval_literatures.zh_cnki_batch_html_extract import extract_batch as zh_batch_html
-from online_retrieval_literatures.zh_cnki_search_metadata import search_metadata as zh_search_metadata
-from online_retrieval_literatures.zh_cnki_single_fulltext_download import download_single as zh_single_download
-from online_retrieval_literatures.zh_cnki_single_html_extract import extract_single as zh_single_html
+from .en_open_access_batch_fulltext_download import download_batch as en_batch_download
+from .en_open_access_search_metadata import search_metadata as en_search_metadata
+from .en_open_access_pipeline import run_pipeline as run_english_pipeline
+from .en_open_access_single_fulltext_download import _to_record as en_to_record
+from .en_open_access_single_fulltext_download import download_single as en_single_download
+from .cnki_paged_retrieval import run_pipeline as run_cnki_pipeline
+from .zh_cnki_batch_fulltext_download import download_batch as zh_batch_download
+from .zh_cnki_batch_html_extract import extract_batch as zh_batch_html
+from .zh_cnki_search_metadata import search_metadata as zh_search_metadata
+from .zh_cnki_single_fulltext_download import download_single as zh_single_download
+from .zh_cnki_single_html_extract import extract_single as zh_single_html
 
 
 def _safe_run(func: Any, config: dict[str, Any]) -> dict[str, Any]:

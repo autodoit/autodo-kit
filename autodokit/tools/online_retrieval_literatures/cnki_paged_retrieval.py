@@ -54,9 +54,15 @@ _CNKI_ARTIFACTS_MODULE = _load_repo_module(
     "autodokit/affairs/CNKI桥接/artifacts.py",
 )
 
-build_model_routing_decision = _OPEN_ACCESS_MODULE.build_model_routing_decision
-invoke_with_fallback = _OPEN_ACCESS_MODULE.invoke_with_fallback
-load_api_key_file = _OPEN_ACCESS_MODULE._load_api_key_file
+def _missing_stub(name: str):
+    def _fn(*args: Any, **kwargs: Any) -> Any:  # pragma: no cover - runtime stub
+        raise RuntimeError(f"依赖模块 open_access_literature_retrieval 缺少 `{name}`，在运行时请确保该模块提供此函数。")
+
+    return _fn
+
+build_model_routing_decision = getattr(_OPEN_ACCESS_MODULE, "build_model_routing_decision", _missing_stub("build_model_routing_decision"))
+invoke_with_fallback = getattr(_OPEN_ACCESS_MODULE, "invoke_with_fallback", _missing_stub("invoke_with_fallback"))
+load_api_key_file = getattr(_OPEN_ACCESS_MODULE, "_load_api_key_file", _missing_stub("_load_api_key_file"))
 build_ris_text = _CNKI_ARTIFACTS_MODULE.build_ris_text
 parse_cnkielearning = _CNKI_ARTIFACTS_MODULE.parse_cnkielearning
 slugify_filename = _CNKI_ARTIFACTS_MODULE.slugify_filename

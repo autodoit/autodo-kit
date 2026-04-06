@@ -7,7 +7,7 @@ import json
 from pathlib import Path
 from typing import Any
 
-from online_retrieval_literatures.cnki_html_reader_probe import _build_probe_config, run_probe
+from .cnki_html_reader_probe import _build_probe_config, run_probe
 
 
 def build_config(args: argparse.Namespace) -> dict[str, Any]:

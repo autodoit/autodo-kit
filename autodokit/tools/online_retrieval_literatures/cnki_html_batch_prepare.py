@@ -8,7 +8,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
-from online_retrieval_literatures.cnki_html_reader_probe import (
+from .cnki_html_reader_probe import (
     CNKI_DEBUG,
     _load_debug_inputs,
     _open_context,

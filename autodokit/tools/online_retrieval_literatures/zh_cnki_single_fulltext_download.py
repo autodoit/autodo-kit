@@ -9,7 +9,7 @@ import time
 from pathlib import Path
 from typing import Any
 
-import online_retrieval_literatures.cnki_paged_retrieval as cnki
+from . import cnki_paged_retrieval as cnki
 from playwright.sync_api import BrowserContext, Page, Playwright
 
 
