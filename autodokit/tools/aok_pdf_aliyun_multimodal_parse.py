@@ -10,7 +10,6 @@ from __future__ import annotations
 import json
 import re
 import uuid
-from datetime import UTC, datetime
 from pathlib import Path
 from time import sleep
 from typing import Any, Dict, Iterable, List, Optional, Sequence
@@ -26,6 +25,7 @@ from autodokit.tools.pdf_multimodal_tree_builder import (
     render_reconstructed_markdown,
 )
 from autodokit.tools.pdf_page_image_tools import crop_image_by_normalized_bbox, render_pdf_pages_to_png
+from autodokit.tools.time_utils import now_compact, now_iso
 
 
 _DEFAULT_CHUNK_TARGET_TYPES = {
@@ -53,7 +53,7 @@ def _is_data_inspection_failed_error(exc: Exception) -> bool:
 
 
 def _utc_now_iso() -> str:
-    return datetime.now(tz=UTC).isoformat()
+    return now_iso()
 
 
 def _resolve_path(path: str | Path, *, field_name: str, require_file: bool = False) -> Path:
@@ -76,7 +76,7 @@ def generate_aok_pdf_parse_uid() -> str:
         str: 时间戳加随机后缀的 UID。
     """
 
-    stamp = datetime.now(tz=UTC).strftime("%Y%m%d%H%M%S")
+    stamp = now_compact()
     suffix = uuid.uuid4().hex[:8]
     return f"aok_pdf_parse_{stamp}_{suffix}"
 

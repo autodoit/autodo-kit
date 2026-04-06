@@ -8,13 +8,14 @@
 """
 from __future__ import annotations
 
-from datetime import UTC, datetime
 import os
 from pathlib import Path
 import sqlite3
 from typing import Mapping, Sequence
 
 import pandas as pd
+
+from autodokit.tools.time_utils import now_iso
 
 
 DEFAULT_CONTENT_DB_NAME = "content.db"
@@ -56,7 +57,7 @@ PDF_STRUCTURED_VARIANT_PATH_COLUMNS: dict[str, str] = {
 
 
 def _utc_now_iso() -> str:
-    return datetime.now(tz=UTC).isoformat()
+    return now_iso()
 
 
 def _quote_identifier(identifier: str) -> str:

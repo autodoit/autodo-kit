@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-from datetime import UTC, datetime
 from hashlib import sha1
 import json
 from pathlib import Path
@@ -48,6 +47,7 @@ from autodokit.tools.pdf_structured_data_tools import (
     extract_reference_lines_from_structured_data,
     load_structured_data,
 )
+from autodokit.tools.time_utils import now_compact
 
 
 STRUCTURED_ATTACHMENT_HEADERS: Dict[str, List[str]] = {
@@ -123,7 +123,7 @@ def _build_scope_key(raw_cfg: Dict[str, Any]) -> str:
 def _build_run_uid(scope_key: str) -> str:
     """生成本轮 A05 运行 UID。"""
 
-    timestamp = datetime.now(tz=UTC).strftime("%Y%m%d%H%M%S")
+    timestamp = now_compact()
     return f"a05-{timestamp}-{sha1(scope_key.encode('utf-8')).hexdigest()[:8]}"
 
 
@@ -745,7 +745,7 @@ def _prepare_review_assets(
 
     created_note_rows: List[Dict[str, Any]] = []
     validation_errors: List[str] = []
-    placeholder_run_uid = f"{run_uid_prefix}-{datetime.now(tz=UTC).strftime('%Y%m%d%H%M%S')}"
+    placeholder_run_uid = f"{run_uid_prefix}-{now_compact()}"
     for path, title, summary in composite_specs:
         knowledge_index, note_info, validation = _register_note(
             knowledge_index,

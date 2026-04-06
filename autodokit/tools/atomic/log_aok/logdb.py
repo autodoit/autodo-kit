@@ -2,13 +2,15 @@
 
 from __future__ import annotations
 
-from datetime import UTC, datetime
+from datetime import datetime
 import json
 from pathlib import Path
 import shutil
 import sqlite3
 from typing import Any, Dict, List, Sequence, Tuple
 from uuid import uuid4
+
+from ...time_utils import now_iso
 
 
 DEFAULT_AOK_LOG_DB_FILENAME = "aok_log.db"
@@ -223,9 +225,9 @@ def _build_logdb_blocked_result(
 
 
 def _utc_now_iso() -> str:
-    """返回 UTC ISO 时间。"""
+    """返回 ISO 时间（默认北京时间）。"""
 
-    return datetime.now(tz=UTC).isoformat()
+    return now_iso()
 
 
 def _stringify(value: Any) -> str:

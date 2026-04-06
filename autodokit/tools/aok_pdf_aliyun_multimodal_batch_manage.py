@@ -3,15 +3,15 @@
 from __future__ import annotations
 
 import json
-from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, Dict, Iterable, List
 
 from autodokit.tools.aok_pdf_aliyun_multimodal_parse import parse_pdf_with_aliyun_multimodal
+from autodokit.tools.time_utils import now_iso
 
 
 def _utc_now_iso() -> str:
-    return datetime.now(tz=UTC).isoformat()
+    return now_iso()
 
 
 def _resolve_path(path: str | Path, *, field_name: str) -> Path:

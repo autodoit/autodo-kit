@@ -18,11 +18,11 @@ from __future__ import annotations
 import random
 import re
 from dataclasses import dataclass
-from datetime import datetime
 from pathlib import Path
 from typing import Iterable, List, Optional
 
 from autodokit.tools.obsidian_note_timezone_tools import get_current_time_iso
+from autodokit.tools.time_utils import now_dt
 
 
 @dataclass(frozen=True)
@@ -71,7 +71,7 @@ def generate_uid(spec: UidSpec | None = None) -> str:
     if mode.endswith("-rand") and random_length <= 0:
         raise ValueError("random_length 必须大于 0")
 
-    now = datetime.now()
+    now = now_dt()
     if mode == "timestamp":
         return now.strftime("%Y%m%d%H%M%S")
     if mode == "timestamp-us":

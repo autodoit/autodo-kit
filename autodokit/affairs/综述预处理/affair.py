@@ -7,7 +7,6 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
-from datetime import UTC, datetime
 from typing import Any, Dict, List
 
 import pandas as pd
@@ -24,6 +23,7 @@ from autodokit.tools import append_aok_log_event, build_gate_review, load_json_o
 from autodokit.tools.atomic.task_aok.post_affair_git_commit import affair_auto_git_commit
 from autodokit.tools.bibliodb_sqlite import load_reading_queue_df, upsert_reading_queue_rows
 from autodokit.tools.storage_backend import load_reference_main_table
+from autodokit.tools.time_utils import now_compact
 
 
 def _safe_read_csv(path: Path) -> pd.DataFrame:
@@ -201,7 +201,7 @@ def execute(config_path: Path) -> List[Path]:
     parse_status_path = output_dir / "parse_asset_status.csv"
     pd.DataFrame(parse_status_rows).to_csv(parse_status_path, index=False, encoding="utf-8-sig")
 
-    run_uid = f"a060-{datetime.now(tz=UTC).strftime('%Y%m%d%H%M%S')}"
+    run_uid = f"a060-{now_compact()}"
     topic = str(raw_cfg.get("research_topic") or raw_cfg.get("topic") or "A060_topic")
     a065_queue_rows = _build_a065_queue_rows(review_read_pool, run_uid=run_uid, topic=topic)
     if a065_queue_rows:

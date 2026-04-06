@@ -8,7 +8,6 @@ from __future__ import annotations
 
 import json
 from dataclasses import dataclass
-from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
@@ -20,6 +19,7 @@ from autodokit.tools.pdf_structured_data_tools import (
     load_structured_data,
     write_chunk_shards,
 )
+from autodokit.tools.time_utils import now_compact
 
 
 @dataclass
@@ -42,7 +42,7 @@ def _build_chunks_uid(raw_value: str) -> str:
     text = str(raw_value or "").strip()
     if text:
         return text
-    return f"chunks-{datetime.now(tz=UTC).strftime('%Y%m%d%H%M%S')}"
+    return f"chunks-{now_compact()}"
 
 
 def _collect_structured_paths(*, structured_dir: Optional[str], content_db: Optional[str]) -> List[Path]:

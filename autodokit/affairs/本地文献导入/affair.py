@@ -12,7 +12,6 @@ import json
 import re
 import xml.etree.ElementTree as element_tree
 from dataclasses import asdict, dataclass, field
-from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, Dict, List
 
@@ -21,6 +20,7 @@ import pandas as pd
 
 from autodokit.tools import load_json_or_py
 from autodokit.tools.storage_backend import load_reference_tables, persist_reference_tables
+from autodokit.tools.time_utils import now_iso
 
 SUPPORTED_METADATA_SUFFIXES = {".bib", ".rdf"}
 ATTACHMENT_SUFFIXES = {".pdf", ".md", ".docx", ".doc", ".html", ".txt", ".caj"}
@@ -35,13 +35,13 @@ RDF_NAMESPACES = {
 
 
 def utc_now_iso() -> str:
-    """返回 UTC ISO 时间字符串。
+    """返回 ISO 时间字符串（默认北京时间）。
 
     Returns:
-        UTC ISO 时间字符串。
+        ISO 时间字符串。
     """
 
-    return datetime.now(tz=UTC).isoformat()
+    return now_iso()
 
 
 def normalize_text(value: str) -> str:

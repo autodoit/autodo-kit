@@ -9,7 +9,7 @@ import importlib
 import importlib.util
 import json
 import re
-from datetime import UTC, datetime
+from datetime import datetime
 from pathlib import Path
 import shutil
 from tempfile import NamedTemporaryFile
@@ -17,6 +17,7 @@ from types import ModuleType
 from typing import Any
 
 from autodokit.tools import load_json_or_py, resolve_paths_to_absolute
+from autodokit.tools.time_utils import now_iso
 
 
 def _runtime_root(workspace_root: str | Path | None) -> Path:
@@ -225,7 +226,7 @@ def import_user_affair(
         }
     )
     registry["records"] = records
-    registry["generated_at"] = datetime.now(tz=UTC).isoformat()
+    registry["generated_at"] = now_iso()
     stats = registry.get("stats", {})
     stats["user_business"] = sum(1 for item in records if item.get("domain") == "user_business")
     registry["stats"] = stats
