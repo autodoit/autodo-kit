@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-from datetime import datetime
 import json
 from pathlib import Path
 import subprocess
@@ -10,6 +9,7 @@ import sys
 from typing import Any, Callable, Iterable, List, Sequence
 
 from autodokit.tools.atomic.task_aok.git_snapshot_ledger import git_create_snapshot_for_task
+from autodokit.tools.time_utils import now_compact
 
 _TRUE_VALUES = {"1", "true", "yes", "y", "on", "是"}
 _FALSE_VALUES = {"0", "false", "no", "n", "off", "否"}
@@ -175,7 +175,7 @@ def _run_post_affair_auto_commit(config_path: Path, *, node_code: str, execute_r
     global_ask = _extract_commit_value(global_cfg, "自动提交前是否询问人类")
     resolved_ask = _resolve_policy(local_ask, global_ask, fallback="false")
 
-    timestamp = datetime.now().strftime("%Y%m%d%H%M%S")
+    timestamp = now_compact()
     title = f"{node_code}-{timestamp}"
     if resolved_ask == "true":
         confirmed, _ = _confirm_from_human(node_code, title)

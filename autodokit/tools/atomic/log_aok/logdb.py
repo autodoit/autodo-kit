@@ -10,7 +10,7 @@ import sqlite3
 from typing import Any, Dict, List, Sequence, Tuple
 from uuid import uuid4
 
-from ...time_utils import now_iso
+from ...time_utils import now_compact, now_iso
 
 
 DEFAULT_AOK_LOG_DB_FILENAME = "aok_log.db"
@@ -1035,7 +1035,7 @@ def repair_aok_logdb(
 
     if resolved_db_path.exists() and resolved_db_path.is_dir():
         quarantine_path = resolved_db_path.parent / (
-            f"{resolved_db_path.name}.dir_quarantine_{datetime.now(tz=UTC).strftime('%Y%m%d%H%M%S')}"
+            f"{resolved_db_path.name}.dir_quarantine_{now_compact()}"
         )
         actions.append(f"quarantine_directory:{resolved_db_path}->{quarantine_path}")
         quarantined_paths.append(str(quarantine_path))

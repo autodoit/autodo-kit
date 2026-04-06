@@ -8,19 +8,20 @@ import re
 import urllib.error
 import urllib.request
 from dataclasses import dataclass
-from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
+from autodokit.tools.time_utils import now_iso
+
 
 def utc_now_iso() -> str:
-    """返回 UTC ISO 时间字符串。
+    """返回 ISO 时间字符串（默认北京时间）。
 
     Returns:
-        当前 UTC ISO 时间字符串。
+        当前 ISO 时间字符串。
     """
 
-    return datetime.now(tz=UTC).isoformat()
+    return now_iso()
 
 
 def slugify_filename(value: str) -> str:
