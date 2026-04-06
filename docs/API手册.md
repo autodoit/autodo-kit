@@ -361,6 +361,31 @@ if repair_result["status"] == "PASS":
   )
 ```
 
+## 2.2.4 AOK 全局日志配置（config）
+
+建议在 `workspace/config/config.json` 中提供最小 `logging` 配置：
+
+```json
+{
+  "logging": {
+    "enabled": true,
+    "snapshot_mode": "log_only"
+  },
+  "paths": {
+    "log_db_path": "workspace/database/logs/aok_log.db",
+    "runtime_dir": "workspace/runtime",
+    "logs_dir": "workspace/logs"
+  }
+}
+```
+
+`logging.snapshot_mode` 可选值与含义：
+
+- `"log_only"`：仅写入结构化 SQLite 日志，不保存运行时快照（默认）。
+- `"log_and_snapshot"`：写入 SQLite 日志并同时保存运行时快照到 `runtime_dir`（用于故障复现、审计与局部回放）。
+
+注意：`runtime_dir` 仅在 `snapshot_mode` 为 `log_and_snapshot` 且 `logging.enabled=true` 时被创建与写入。
+
 ## 2.3 AOB 工具统一执行 API（autodokit.tools.aob_tools）
 
 用途：将 AOB 历史执行能力统一收敛到 `autodokit.tools`，脚本层仅做参数组织与调用。

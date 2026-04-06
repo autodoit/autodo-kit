@@ -71,6 +71,34 @@ def _resolve_path_from_base(base: Path, raw_path: str | Path) -> Path:
     return raw.resolve() if raw.is_absolute() else (base / raw).resolve()
 
 
+def resolve_workspace_logs_dir(
+    workspace_root: str | Path,
+    *,
+    config_path: str | Path | None = None,
+) -> Path:
+    """解析 workspace/logs 目录。"""
+
+    resolved_workspace_root = Path(workspace_root).resolve()
+    resolved_config_path: Path | None = None
+    if config_path is not None:
+        candidate = Path(config_path)
+        if candidate.exists() and candidate.is_file():
+            resolved_config_path = candidate
+    else:
+        candidate = resolved_workspace_root / "config" / "config.json"
+        if candidate.exists() and candidate.is_file():
+            resolved_config_path = candidate
+
+    if resolved_config_path is not None:
+        payload = _load_global_config_payload(resolved_config_path)
+        path_cfg = payload.get("paths") if isinstance(payload.get("paths"), dict) else {}
+        raw_logs_dir = _stringify(path_cfg.get("logs_dir"))
+        if raw_logs_dir:
+            return _resolve_path_from_base(resolved_workspace_root, raw_logs_dir)
+
+    return (resolved_workspace_root / "logs").resolve()
+
+
 def _load_global_config_payload(config_path: Path) -> Dict[str, Any]:
     """读取全局配置 JSON 负载。"""
 
@@ -236,6 +264,43 @@ def _safe_json_dumps(value: Any) -> str:
         return json.dumps(value, ensure_ascii=False)
     except TypeError:
         return "{}"
+
+
+def _write_workspace_log_exports(
+    *,
+    workspace_root: Path,
+    record: Dict[str, Any],
+    gate_review: Dict[str, Any] | None = None,
+    gate_review_path: str | Path | None = None,
+) -> Dict[str, str]:
+    """把事件与 gate 审计镜像到 workspace/logs。"""
+
+    logs_dir = resolve_workspace_logs_dir(workspace_root)
+    exports_dir = logs_dir / "exports"
+    reviews_dir = logs_dir / "reviews"
+    exports_dir.mkdir(parents=True, exist_ok=True)
+    reviews_dir.mkdir(parents=True, exist_ok=True)
+
+    event_uid = _stringify(record.get("event_uid")) or f"event-{uuid4().hex[:12]}"
+    event_path = exports_dir / f"{event_uid}.json"
+    event_path.write_text(json.dumps(record, ensure_ascii=False, indent=2), encoding="utf-8")
+
+    written: Dict[str, str] = {"event_export_path": str(event_path)}
+
+    if gate_review is not None:
+        gate_code = _stringify(gate_review.get("gate_uid") or gate_review.get("gate_code")) or "gate_review"
+        gate_export_path = reviews_dir / f"{gate_code}.json"
+        gate_export_path.write_text(json.dumps(gate_review, ensure_ascii=False, indent=2), encoding="utf-8")
+        written["gate_export_path"] = str(gate_export_path)
+    elif gate_review_path:
+        source_path = Path(gate_review_path).expanduser().resolve()
+        if source_path.exists() and source_path.is_file():
+            gate_export_path = reviews_dir / source_path.name
+            if source_path != gate_export_path:
+                shutil.copy2(source_path, gate_export_path)
+            written["gate_export_path"] = str(gate_export_path)
+
+    return written
 
 
 def _connect_sqlite(db_path: Path) -> sqlite3.Connection:
@@ -514,6 +579,15 @@ def append_aok_log_event(
     reasoning_summary: str = "",
     conversation_excerpt: str = "",
     payload: Dict[str, Any] | None = None,
+    affair_code: str = "",
+    artifact_paths: Sequence[str | Path] | None = None,
+    artifact_type: str = "",
+    file_role: str = "",
+    gate_review: Dict[str, Any] | None = None,
+    gate_review_path: str | Path | None = None,
+    reviewer_agent: str = "",
+    decision_candidates: Sequence[str] | str | None = None,
+    mirror_to_workspace_logs: bool = True,
 ) -> Dict[str, Any]:
     """追加一条常规日志事件。"""
 
@@ -592,6 +666,59 @@ def append_aok_log_event(
             "error": _stringify(exc),
             "event_uid": record["event_uid"],
         }
+
+    if gate_review is not None:
+        gate_code = _stringify(gate_review.get("gate_uid") or gate_review.get("gate_code"))
+        if gate_code:
+            record_aok_gate_review(
+                gate_code=gate_code,
+                project_root=project_root,
+                logs_db_root=logs_db_root,
+                log_db_path=log_db_path,
+                enabled=enabled,
+                affair_code=_stringify(affair_code),
+                reviewer_agent=_stringify(reviewer_agent) or _normalize_string_list(agent_names)[:1][0] if _normalize_string_list(agent_names) else "",
+                review_summary=_stringify(gate_review.get("summary")) if not isinstance(gate_review.get("summary"), dict) else _safe_json_dumps(gate_review.get("summary") or {}),
+                decision_candidates=decision_candidates or [
+                    _stringify(gate_review.get("recommendation"))
+                ],
+                payload=gate_review,
+            )
+
+    for raw_path in artifact_paths or []:
+        normalized_path = _stringify(raw_path)
+        if not normalized_path:
+            continue
+        record_aok_log_artifact(
+            file_path=normalized_path,
+            project_root=project_root,
+            logs_db_root=logs_db_root,
+            log_db_path=log_db_path,
+            enabled=enabled,
+            affair_code=_stringify(affair_code),
+            artifact_type=_stringify(artifact_type) or "file",
+            file_role=_stringify(file_role),
+            produced_by_event_uid=record["event_uid"],
+        )
+
+    if mirror_to_workspace_logs:
+        try:
+            mirror_paths = _write_workspace_log_exports(
+                workspace_root=Path(project_root).resolve(),
+                record={
+                    **record,
+                    "payload": payload or {},
+                    "affair_code": _stringify(affair_code),
+                    "artifact_paths": [str(Path(path).expanduser().resolve()) for path in artifact_paths or []],
+                    "gate_review": gate_review or {},
+                },
+                gate_review=gate_review,
+                gate_review_path=gate_review_path,
+            )
+            record.update(mirror_paths)
+        except Exception:
+            pass
+
     return record
 
 
