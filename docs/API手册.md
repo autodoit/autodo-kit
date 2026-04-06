@@ -236,6 +236,27 @@ result = migrate_workspace_paths(
 - `invoke_aliyun_llm(...)`：按路由计划执行主模型调用，失败时按回退链重试，并返回统一 `attempts` 审计结构。
 - `load_aliyun_llm_config(...)`：在 `model=auto/smart` 时内部走统一路由，不建议业务层自行实现选模分支。
 
+### 2.1.1 在线检索文献模块
+
+在线检索文献能力已统一收口到 `autodokit.tools.online_retrieval_literatures` 目录，对外正式入口只有：
+
+- `run_online_retrieval_router(payload)`
+
+调用约束：
+
+1. 用户侧不要直接调用 `zh_cnki_*`、`en_open_access_*`、`open_access_literature_retrieval` 等子模块。
+2. 所有在线检索相关配置文件都应维护在 `autodokit/tools/online_retrieval_literatures/` 目录。
+3. 默认规则配置文件是 `autodokit/tools/online_retrieval_literatures/config.json`，由 router 自动注入到下游执行器。
+4. 若需要覆盖默认规则，只能通过 router payload 显式传入 `retrieval_rules`，不要在子模块里单独分叉。
+
+典型场景：
+
+- 中文 CNKI 题录检索
+- 中文 CNKI 单篇/批量 PDF 下载
+- 中文 CNKI 单篇/批量 HTML 抽取
+- 英文开放源题录检索与全文下载
+- 学校数据库导航与超星门户相关流程
+
 路由治理与回归补充（P5 起生效）：
 
 - `scripts/check_aliyun_routing_compliance.py`：扫描事务与工具中的硬编码模型默认值。

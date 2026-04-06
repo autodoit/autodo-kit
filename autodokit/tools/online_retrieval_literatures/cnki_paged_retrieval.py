@@ -47,7 +47,7 @@ def _load_repo_module(module_name: str, relative_path: str) -> Any:
 
 _OPEN_ACCESS_MODULE = _load_repo_module(
     "autodokit.tools.open_access_literature_retrieval",
-    "autodokit/tools/open_access_literature_retrieval.py",
+    "autodokit/tools/online_retrieval_literatures/open_access_literature_retrieval.py",
 )
 _CNKI_ARTIFACTS_MODULE = _load_repo_module(
     "autodokit.affairs.CNKI桥接.artifacts",

@@ -23,7 +23,7 @@ REPO_ROOT = _discover_repo_root(Path(__file__).resolve().parent)
 
 
 def _load_core_module() -> Any:
-    module_path = REPO_ROOT / "autodokit" / "tools" / "open_access_literature_retrieval.py"
+    module_path = REPO_ROOT / "autodokit" / "tools" / "online_retrieval_literatures" / "open_access_literature_retrieval.py"
     spec = importlib.util.spec_from_file_location("autodokit.tools.open_access_literature_retrieval", module_path)
     if spec is None or spec.loader is None:
         raise ImportError(f"无法加载模块源码：{module_path}")
