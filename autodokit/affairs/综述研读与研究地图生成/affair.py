@@ -1099,6 +1099,33 @@ def _keywords_from_record(literature_record: Dict[str, Any]) -> str:
         if value:
             return value
     return ""
+    # New function to check for Chinese characters
+def _contains_chinese(text: str) -> bool:
+    return bool(re.search(r"[\u4e00-\u9fff]", _stringify(text)))
+
+    # New function to score Chinese signals
+def _chinese_signal_score(literature_record: Dict[str, Any]) -> tuple[int, bool, str]:
+    title = _stringify(literature_record.get("title"))
+    keywords_cn = _stringify(literature_record.get("keywords_cn"))
+    abstract = _stringify(literature_record.get("abstract"))
+    source = _stringify(literature_record.get("source"))
+    signals: List[str] = []
+    score = 0
+
+    if _contains_chinese(title):
+        score += 4
+        signals.append("title")
+    if keywords_cn:
+        score += 3
+        signals.append("keywords_cn")
+    if _contains_chinese(abstract):
+        score += 2
+        signals.append("abstract")
+    if any(token in source.lower() for token in ("cnki", "万方", "维普", "cssci")):
+        score += 3
+        signals.append("source")
+
+    return score, bool(signals), "+".join(signals)
 
 
 def _render_callout(title: str, lines: Sequence[str], *, callout_type: str = "note") -> str:
@@ -1156,7 +1183,12 @@ def _render_standard_note_body(
         f"- 原文入口：{pdf_link or '待补充原文 PDF 链接'}",
         "",
         "## 研究对象与综述边界",
-        *(research_problem or [f"- 该文围绕“{sanitize_note_sentence(title) or title}”展开综述，需结合原文进一步细化其研究边界。见 {note_link}。"]),
+    lookup_columns = [
+        column
+        for column in ["uid_literature", "cite_key", "title", "keywords_cn", "abstract", "source"]
+        if column in literature_table.columns
+    ]
+    lookup = literature_table[lookup_columns].copy()
         "",
         "## 综述问题意识",
         *(research_problem or [f"- 该文试图组织既有问题意识与解释路径，但当前自动抽取尚未形成更细的问题意识分层。见 {note_link}。"]),
@@ -1168,7 +1200,7 @@ def _render_standard_note_body(
         *(trajectory or [f"- 当前尚未从自动抽取结果中形成稳定的阶段性研究脉络，需要结合全文结构继续凝练。见 {note_link}。"]),
         "",
         "## 主要共识",
-        *consensus,
+                "reason": f"被 {count} 篇综述高置信引用；中文信号加分 {chinese_bonus}",
         "",
         "## 关键争议",
         *controversy,
@@ -1555,7 +1587,12 @@ def execute(config_path: Path) -> List[Path]:
             "source_type": "structured" if structured_abs_path else "pdf",
             "used_structured_data": bool(structured_abs_path),
             "structured_path": structured_abs_path,
-            "pdf_path": str(pdf_path) if pdf_path else "",
+        lookup_columns = [
+            column
+            for column in ["uid_literature", "cite_key", "title", "keywords_cn", "abstract", "source"]
+            if column in literature_table.columns
+        ]
+        lookup = literature_table[lookup_columns].copy()
             "full_text_chars": len(full_text),
             "original_sentence_count": original_sentence_count,
             "sentence_count": len(sentences),

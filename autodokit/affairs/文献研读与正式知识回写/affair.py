@@ -52,7 +52,7 @@ def _resolve_output_dir(config_path: Path, raw_cfg: Dict[str, Any]) -> Path:
     return output_dir
 
 
-def _generate_local_deep_note(*, title: str, cite_key: str, text: str) -> str:
+def _generate_local_deep_note(*, title: str, cite_key: str, text: str, manual_guidance: str = "", reading_objective: str = "") -> str:
     normalized = " ".join(str(text or "").split())
     sample = normalized[:2500]
     fragments = [fragment.strip() for fragment in sample.replace("。", "。\n").splitlines() if fragment.strip()]
@@ -62,6 +62,8 @@ def _generate_local_deep_note(*, title: str, cite_key: str, text: str) -> str:
             f"# {title}",
             "",
             f"- cite_key: {cite_key}",
+            f"- reading_objective: {reading_objective or '未指定'}",
+            f"- manual_guidance: {manual_guidance or '未指定'}",
             "",
             "## 深读证据摘录",
             *bullets,
@@ -141,6 +143,9 @@ def execute(config_path: Path) -> List[Path]:
     for _, row in state_df.fillna("").iterrows():
         uid_literature = _stringify(row.get("uid_literature"))
         cite_key = _stringify(row.get("cite_key")) or uid_literature
+        manual_guidance = _stringify(row.get("manual_guidance"))
+        reading_objective = _stringify(row.get("reading_objective"))
+        source_origin = _stringify(row.get("source_origin")) or "auto"
         upsert_reading_state_rows(
             content_db,
             [
@@ -175,7 +180,13 @@ def execute(config_path: Path) -> List[Path]:
             title = _stringify(document.get("title")) or cite_key
             full_text = _stringify(document.get("text"))
             note_path = deep_note_dir / f"deep_reading_{_safe_file_stem(cite_key)}.md"
-            note_body = _generate_local_deep_note(title=title, cite_key=cite_key, text=full_text)
+            note_body = _generate_local_deep_note(
+                title=title,
+                cite_key=cite_key,
+                text=full_text,
+                manual_guidance=manual_guidance,
+                reading_objective=reading_objective,
+            )
             note_info = knowledge_note_register(
                 note_path=note_path,
                 title=title,
@@ -239,13 +250,19 @@ def execute(config_path: Path) -> List[Path]:
                 {
                     "uid_literature": uid_literature,
                     "cite_key": cite_key,
+                    "source_origin": source_origin,
+                    "reading_objective": reading_objective,
+                    "manual_guidance": manual_guidance,
                     "pending_deep_read": 0,
                     "in_deep_read": 0,
                     "deep_read_done": 1,
                     "deep_read_count": deep_read_count,
                     "deep_read_note_path": str(note_path),
                     "deep_read_decision": "completed",
-                    "deep_read_reason": "已完成正式深读与知识回写",
+                    "deep_read_reason": (
+                        f"已完成正式深读与知识回写。"
+                        f"阅读目标={reading_objective or '未指定'}；提示语={manual_guidance or '未指定'}"
+                    ),
                     "analysis_formal_synced": 1,
                     "innovation_synced": 1,
                 }

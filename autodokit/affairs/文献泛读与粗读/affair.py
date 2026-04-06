@@ -269,6 +269,9 @@ def execute(config_path: Path) -> List[Path]:
     for _, row in rough_pool.fillna("").iterrows():
         uid_literature = _stringify(row.get("uid_literature"))
         cite_key = _stringify(row.get("cite_key")) or uid_literature
+        manual_guidance = _stringify(row.get("manual_guidance"))
+        reading_objective = _stringify(row.get("reading_objective"))
+        source_origin = _stringify(row.get("source_origin")) or "auto"
         upsert_reading_state_rows(
             content_db,
             [
@@ -355,6 +358,13 @@ def execute(config_path: Path) -> List[Path]:
         note_lines.append("")
         note_lines.append("## 核心发现")
         note_lines.extend(_sentence_line(cite_key, item) for item in finding_sentences)
+        if manual_guidance or reading_objective:
+            note_lines.append("")
+            note_lines.append("## 人工阅读目标")
+            if reading_objective:
+                note_lines.append(f"- reading_objective: {reading_objective}")
+            if manual_guidance:
+                note_lines.append(f"- manual_guidance: {manual_guidance}")
         note_body = "\n".join(note_lines).strip() + "\n"
         knowledge_index, note_info = _register_note(knowledge_index, note_path, f"{cite_key} 粗读笔记", note_body, workspace_root, uid_literature=uid_literature, cite_key=cite_key)
         written_paths.append(note_path)
@@ -455,12 +465,18 @@ def execute(config_path: Path) -> List[Path]:
             {
                 "uid_literature": uid_literature,
                 "cite_key": cite_key,
+                "source_origin": source_origin,
+                "reading_objective": reading_objective,
+                "manual_guidance": manual_guidance,
                 "pending_rough_read": 0,
                 "in_rough_read": 0,
                 "rough_read_done": 1,
                 "rough_read_note_path": str(note_path),
                 "rough_read_decision": "promote_a100" if should_promote else "hold",
-                "rough_read_reason": "粗读完成，已形成轻量笔记与参考文献映射",
+                "rough_read_reason": (
+                    f"粗读完成，已形成轻量笔记与参考文献映射。"
+                    f"阅读目标={reading_objective or '未指定'}；提示语={manual_guidance or '未指定'}"
+                ),
                 "analysis_light_synced": 1,
                 "pending_deep_read": 1 if should_promote else 0,
                 "theme_relation": _stringify(row.get("theme_relation")) or "a090_completed",

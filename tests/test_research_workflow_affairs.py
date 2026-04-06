@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import importlib
 import json
+import sqlite3
 from pathlib import Path
 
 import pandas as pd
@@ -476,7 +477,7 @@ def test_candidate_view_affair_should_use_reference_tools_for_mapping(monkeypatc
         module,
         "extract_reference_lines_from_structured_data",
         lambda *args, **kwargs: {
-            "attachment_path": str(review_pdf),
+            "attachment_path": str(tmp_path / "review.pdf"),
             "attachment_type": "pdf",
             "extract_status": "ok",
             "extract_method": "structured",
@@ -537,6 +538,96 @@ def test_candidate_view_affair_should_use_reference_tools_for_mapping(monkeypatc
     assert quality_summary["llm_recognized_count"] == 1
     assert quality_summary["placeholder_count"] == 1
     assert quality_summary["suspicious_merged_count"] == 0
+
+
+def test_a080_human_seed_should_route_unique_cite_key() -> None:
+    """A080 人工 seed 在 cite_key 唯一命中时应写入状态行。"""
+
+    module = importlib.import_module("autodokit.affairs.非综述候选视图构建.affair")
+    literatures_df = pd.DataFrame(
+        [
+            {
+                "uid_literature": "lit-001",
+                "cite_key": "wang-2024-a",
+                "pdf_path": "C:/tmp/a.pdf",
+            }
+        ]
+    )
+    attachments_df = pd.DataFrame(
+        [
+            {
+                "uid_literature": "lit-001",
+                "storage_path": "C:/tmp/a.pdf",
+                "is_primary": 1,
+                "attachment_name": "a.pdf",
+            }
+        ]
+    )
+
+    rows, issues = module._build_human_seed_state_rows(
+        seed_contract={
+            "enabled": True,
+            "default_target_stage": "rough_read",
+            "seed_items": [
+                {
+                    "cite_key": "wang-2024-a",
+                    "target_stage": "rough_read",
+                    "manual_guidance": "重点看方法",
+                    "reading_objective": "方法借鉴",
+                }
+            ],
+        },
+        literatures_df=literatures_df,
+        attachments_df=attachments_df,
+        existing_state_by_uid={
+            "lit-001": {
+                "uid_literature": "lit-001",
+                "preprocessed": 1,
+                "pending_preprocess": 0,
+                "pending_rough_read": 0,
+                "rough_read_done": 0,
+                "pending_deep_read": 0,
+                "deep_read_done": 0,
+                "deep_read_count": 0,
+            }
+        },
+    )
+
+    assert issues == []
+    assert len(rows) == 1
+    assert rows[0]["uid_literature"] == "lit-001"
+    assert rows[0]["source_origin"] == "human"
+    assert rows[0]["manual_guidance"] == "重点看方法"
+    assert rows[0]["reading_objective"] == "方法借鉴"
+    assert int(rows[0]["pending_preprocess"]) == 0
+    assert int(rows[0]["pending_rough_read"]) == 1
+
+
+def test_a080_human_seed_should_report_ambiguous_cite_key() -> None:
+    """A080 人工 seed 在 cite_key 多重命中时应进入问题列表。"""
+
+    module = importlib.import_module("autodokit.affairs.非综述候选视图构建.affair")
+    literatures_df = pd.DataFrame(
+        [
+            {"uid_literature": "lit-001", "cite_key": "dup-key", "pdf_path": "C:/tmp/a.pdf"},
+            {"uid_literature": "lit-002", "cite_key": "dup-key", "pdf_path": "C:/tmp/b.pdf"},
+        ]
+    )
+    attachments_df = pd.DataFrame()
+
+    rows, issues = module._build_human_seed_state_rows(
+        seed_contract={
+            "enabled": True,
+            "on_ambiguous": "manual_review",
+            "seed_items": [{"cite_key": "dup-key"}],
+        },
+        literatures_df=literatures_df,
+        attachments_df=attachments_df,
+        existing_state_by_uid={},
+    )
+
+    assert rows == []
+    assert any("命中多条文献" in issue for issue in issues)
 
 
 def test_review_map_affair_execute_should_work(monkeypatch, tmp_path: Path) -> None:

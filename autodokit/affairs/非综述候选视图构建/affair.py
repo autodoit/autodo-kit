@@ -101,6 +101,113 @@ def _resolve_pdf_path(literature_row: pd.Series, attachments_df: pd.DataFrame) -
     return _stringify(literature_row.get("pdf_path"))
 
 
+def _build_human_seed_state_rows(
+    *,
+    seed_contract: Dict[str, Any],
+    literatures_df: pd.DataFrame,
+    attachments_df: pd.DataFrame,
+    existing_state_by_uid: Dict[str, Dict[str, Any]],
+) -> tuple[List[Dict[str, Any]], List[str]]:
+    """把 human_seed_contract 转换为 reading_state 行。"""
+
+    if not bool(seed_contract.get("enabled", False)):
+        return [], []
+
+    seed_items = seed_contract.get("seed_items") or []
+    if not isinstance(seed_items, list):
+        return [], ["human_seed_contract.seed_items 不是数组，已跳过"]
+
+    default_target_stage = _stringify(seed_contract.get("default_target_stage") or "rough_read") or "rough_read"
+    default_manual_guidance = _stringify(seed_contract.get("manual_guidance"))
+    default_reading_objective = _stringify(seed_contract.get("reading_objective"))
+    on_ambiguous = _stringify(seed_contract.get("on_ambiguous") or "manual_review") or "manual_review"
+    on_missing = _stringify(seed_contract.get("on_missing") or "route_to_a040") or "route_to_a040"
+
+    rows: List[Dict[str, Any]] = []
+    issues: List[str] = []
+    for item in seed_items:
+        if not isinstance(item, dict):
+            issues.append("human_seed_contract.seed_items 含非对象条目，已跳过")
+            continue
+
+        cite_key = _stringify(item.get("cite_key"))
+        if not cite_key:
+            issues.append("human_seed_contract.seed_items 存在空 cite_key，已跳过")
+            continue
+
+        matches = literatures_df[literatures_df.get("cite_key", pd.Series(dtype=str)).astype(str) == cite_key]
+        if matches.empty:
+            issues.append(f"{cite_key}: 未命中文献主表，策略={on_missing}")
+            continue
+        if len(matches) > 1:
+            issues.append(f"{cite_key}: 命中多条文献，策略={on_ambiguous}")
+            continue
+
+        literature_row = matches.iloc[0]
+        uid_literature = _stringify(literature_row.get("uid_literature"))
+        if not uid_literature:
+            issues.append(f"{cite_key}: 文献缺少 uid_literature，已跳过")
+            continue
+
+        existing = existing_state_by_uid.get(uid_literature, {})
+        target_stage = _stringify(item.get("target_stage") or default_target_stage) or "rough_read"
+        target_stage = "deep_read" if target_stage == "deep_read" else "rough_read"
+        manual_guidance = _stringify(item.get("manual_guidance") or default_manual_guidance)
+        reading_objective = _stringify(item.get("reading_objective") or default_reading_objective)
+        reason = _stringify(item.get("recommended_reason") or item.get("reason") or f"human seed: {target_stage}")
+        theme_relation = _stringify(item.get("theme_relation") or "human_seed")
+
+        has_attachment = bool(_resolve_pdf_path(literature_row, attachments_df))
+        preprocessed = int(existing.get("preprocessed") or 0)
+        rough_done = int(existing.get("rough_read_done") or 0)
+        deep_done = int(existing.get("deep_read_done") or 0)
+
+        pending_preprocess = int(existing.get("pending_preprocess") or 0)
+        pending_rough_read = int(existing.get("pending_rough_read") or 0)
+        pending_deep_read = int(existing.get("pending_deep_read") or 0)
+
+        if target_stage == "deep_read":
+            if deep_done:
+                issues.append(f"{cite_key}: 已 deep_read_done=1，跳过重复投递")
+                continue
+            if preprocessed and has_attachment:
+                pending_deep_read = 1
+                pending_preprocess = 0
+            else:
+                pending_preprocess = 1
+        else:
+            if rough_done:
+                issues.append(f"{cite_key}: 已 rough_read_done=1，跳过重复投递")
+                continue
+            if preprocessed and has_attachment:
+                pending_rough_read = 1
+                pending_preprocess = 0
+            else:
+                pending_preprocess = 1
+
+        row: Dict[str, Any] = {
+            "uid_literature": uid_literature,
+            "cite_key": cite_key,
+            "source_stage": "A080_human_seed",
+            "recommended_reason": reason,
+            "theme_relation": theme_relation,
+            "source_origin": "human",
+            "manual_guidance": manual_guidance,
+            "reading_objective": reading_objective,
+            "pending_preprocess": pending_preprocess,
+            "preprocessed": preprocessed,
+            "pending_rough_read": pending_rough_read,
+            "rough_read_done": rough_done,
+            "pending_deep_read": pending_deep_read,
+            "deep_read_done": deep_done,
+            "deep_read_count": int(existing.get("deep_read_count") or 0),
+        }
+        rows.append(row)
+        existing_state_by_uid[uid_literature] = row
+
+    return rows, issues
+
+
 @affair_auto_git_commit("A080")
 def execute(config_path: Path) -> List[Path]:
     raw_cfg = load_json_or_py(config_path)
@@ -115,12 +222,30 @@ def execute(config_path: Path) -> List[Path]:
     assert content_db is not None
 
     seeded_count = 0
+    literatures_df, attachments_df, _ = load_reference_tables(db_path=content_db)
+    existing_state_df = load_reading_state_df(content_db)
+    existing_state_by_uid = {
+        _stringify(row.get("uid_literature")): row.to_dict()
+        for _, row in existing_state_df.fillna("").iterrows()
+        if _stringify(row.get("uid_literature"))
+    }
+
+    seed_contract = raw_cfg.get("human_seed_contract") or {}
+    human_seed_rows, human_seed_issues = _build_human_seed_state_rows(
+        seed_contract=seed_contract if isinstance(seed_contract, dict) else {},
+        literatures_df=literatures_df,
+        attachments_df=attachments_df,
+        existing_state_by_uid=existing_state_by_uid,
+    )
+    if human_seed_rows:
+        upsert_reading_state_rows(content_db, human_seed_rows)
+        seeded_count += len(human_seed_rows)
+
     state_df = load_reading_state_df(content_db, flag_filters={"pending_preprocess": 1})
     if state_df.empty:
-        seeded_count = _seed_state_from_legacy_queue(content_db)
+        seeded_count += _seed_state_from_legacy_queue(content_db)
         state_df = load_reading_state_df(content_db, flag_filters={"pending_preprocess": 1})
 
-    literatures_df, attachments_df, _ = load_reference_tables(db_path=content_db)
     knowledge_index_df, knowledge_attachments_df, _ = load_knowledge_tables(db_path=content_db)
     ensure_parse_on_entry = bool(raw_cfg.get("ensure_parse_on_entry", True))
     overwrite_parse_asset = bool(raw_cfg.get("overwrite_parse_asset", False))
@@ -133,7 +258,7 @@ def execute(config_path: Path) -> List[Path]:
     note_dir.mkdir(parents=True, exist_ok=True)
     result_rows: List[Dict[str, Any]] = []
     state_updates: List[Dict[str, Any]] = []
-    failures: List[str] = []
+    failures: List[str] = list(human_seed_issues)
 
     for _, state_row in state_df.fillna("").iterrows():
         uid_literature = _stringify(state_row.get("uid_literature"))
@@ -208,6 +333,9 @@ def execute(config_path: Path) -> List[Path]:
                 "source_stage": _stringify(state_row.get("source_stage")) or "A080",
                 "recommended_reason": _stringify(state_row.get("recommended_reason")),
                 "theme_relation": _stringify(state_row.get("theme_relation")),
+                "source_origin": _stringify(state_row.get("source_origin")) or "auto",
+                "reading_objective": _stringify(state_row.get("reading_objective")),
+                "manual_guidance": _stringify(state_row.get("manual_guidance")),
                 "pending_preprocess": 0,
                 "preprocessed": 1,
                 "preprocess_status": parse_status,

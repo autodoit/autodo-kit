@@ -33,6 +33,9 @@ autodo-kit 对外公开的是“事务内容 + 事务工具 + 本地运行时 AP
 | 批次分析已同步 | `analysis_batch_synced` | A095 | A095 | 当前条目已进入 A095 批次汇总。 |
 | 正式分析已同步 | `analysis_formal_synced` | - | A100 | 五类分析笔记已完成正式修订。 |
 | 创新点已同步 | `innovation_synced` | - | A100 | 创新点笔记已完成更新。 |
+| 条目来源类型 | `source_origin` | A080/A090/A100 | A080 | 标记 `human`/`auto`/`legacy_queue`/`recovery`。 |
+| 阅读目标 | `reading_objective` | A090/A100 | A080 | 逐文献的阅读目标说明。 |
+| 用户提示语 | `manual_guidance` | A090/A100 | A080 | 逐文献阅读指令，用于影响粗读/深读输出。 |
 
 ### 0.2 当前实现流程
 
@@ -44,6 +47,79 @@ autodo-kit 对外公开的是“事务内容 + 事务工具 + 本地运行时 AP
 6. 若新候选已完成预处理（`preprocessed=1`），则直接进入 `pending_rough_read=1`。
 7. 若新候选尚未完成预处理，则进入 `pending_preprocess=1`。
 8. 若新候选已经 `rough_read_done=1`，则不再重复回到待泛读清单。
+
+### 0.3 human_seed_contract（A080/A090/A100 共用）
+
+为什么 A080/A090/A100 都允许写 `seed_items`：
+
+1. 统一契约：三个节点读取同一配置结构，便于同一批 seed 在不同轮次复用，不需要按节点维护三套格式。
+2. 人工纠偏：真实运行中人工干预常发生在中途；允许在 A090/A100 继续补 seed，可避免“必须回到 A080 才能加单”的流程阻塞。
+3. 职责不变：虽然都可写，但节点仍按状态机消费；A080 只做预处理落位，A090 只做泛读，A100 只做深读，不会越权。
+4. 审计一致：`source_origin`、`manual_guidance`、`reading_objective` 在同一状态表回写，便于追溯“谁在何阶段加了什么种子”。
+
+建议在事务配置中统一提供以下结构：
+
+| 字段 | 类型 | 说明 |
+| --- | --- | --- |
+| `human_seed_contract.enabled` | bool | 是否启用人工 seed。 |
+| `human_seed_contract.default_target_stage` | string | 默认目标阶段，`rough_read` 或 `deep_read`。 |
+| `human_seed_contract.on_ambiguous` | string | cite_key 命中多条时策略，建议 `manual_review`。 |
+| `human_seed_contract.on_missing` | string | cite_key 未命中时策略，建议 `route_to_a040`。 |
+| `human_seed_contract.manual_guidance` | string | 全局默认提示语，可被条目覆盖。 |
+| `human_seed_contract.reading_objective` | string | 全局默认阅读目标，可被条目覆盖。 |
+| `human_seed_contract.seed_items` | array | 人工 seed 条目数组。 |
+
+`seed_items` 单条建议字段：
+
+| 字段 | 类型 | 说明 |
+| --- | --- | --- |
+| `cite_key` | string | 目标文献引用键。 |
+| `target_stage` | string | `rough_read` 或 `deep_read`。 |
+| `manual_guidance` | string | 该文献的个性化阅读提示语。 |
+| `reading_objective` | string | 该文献的个性化阅读目标。 |
+| `priority` | number | 可选优先级。 |
+| `tags` | array[string] | 可选标签，例如 `method_transfer`。 |
+
+科学学科（Science of Science）示例模板：
+
+```json
+{
+  "human_seed_contract": {
+    "enabled": true,
+    "default_target_stage": "rough_read",
+    "on_ambiguous": "manual_review",
+    "on_missing": "route_to_a040",
+    "manual_guidance": "优先抽取研究问题、识别策略与可迁移的方法线索。",
+    "reading_objective": "围绕科研产出、合作网络与资助机制构建可复用证据链。",
+    "seed_items": [
+      {
+        "cite_key": "wang-2021-funding-and-team-science",
+        "target_stage": "deep_read",
+        "manual_guidance": "重点读识别策略与内生性处理，判断能否迁移到当前课题。",
+        "reading_objective": "提炼资助政策影响科研合作产出的可检验机制。",
+        "priority": 95,
+        "tags": ["method_transfer", "identification", "mechanism_focus"]
+      },
+      {
+        "cite_key": "liu-2019-citation-network-dynamics",
+        "target_stage": "rough_read",
+        "manual_guidance": "先看网络构建口径与数据清洗流程，记录可复用字段定义。",
+        "reading_objective": "补齐引文网络指标构造与预处理步骤。",
+        "priority": 80,
+        "tags": ["data_cleaning", "empirical_reference", "network_metrics"]
+      },
+      {
+        "cite_key": "chen-2023-ai-and-scientific-discovery",
+        "target_stage": "rough_read",
+        "manual_guidance": "关注 AI 工具介入科研发现流程的证据类型与边界条件。",
+        "reading_objective": "为创新点池提供可讨论的机制假说。",
+        "priority": 70,
+        "tags": ["innovation_support", "hypothesis_generation"]
+      }
+    ]
+  }
+}
+```
 
 ## 1. 桥接入口
 
