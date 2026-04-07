@@ -1475,6 +1475,28 @@ def build_aliyun_llm_runtime_payload(
     }
 
 
+def postprocess_aliyun_multimodal_parse_outputs(*args: Any, **kwargs: Any) -> Dict[str, Any]:
+    """通过统一 LLM 工具入口执行阿里百炼多模态解析后处理。
+
+    Args:
+        *args: 透传给底层后处理工具的参数。
+        **kwargs: 透传给底层后处理工具的参数。
+
+    Returns:
+        后处理执行摘要。
+
+    Raises:
+        各底层实现可能抛出的文件、配置或解析异常。
+
+    Examples:
+        >>> postprocess_aliyun_multimodal_parse_outputs(normalized_structured_path='...')
+    """
+
+    from autodokit.tools.aliyun_multimodal_postprocess_tools import postprocess_aliyun_multimodal_parse_outputs as _impl
+
+    return _impl(*args, **kwargs)
+
+
 def invoke_aliyun_llm(
     *,
     prompt: str,
