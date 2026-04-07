@@ -481,6 +481,14 @@ def run_online_retrieval_router(payload: dict[str, Any]) -> dict[str, Any]:
     return route(payload)
 
 
+def run_online_retrieval_from_bib(payload: dict[str, Any]) -> dict[str, Any]:
+    """根据 Bib 条目执行在线检索四项任务（通过路由层统一入口）。"""
+
+    module = importlib.import_module("autodokit.tools.bib_online_retrieval_tool")
+    runner = getattr(module, "run_online_retrieval_from_bib")
+    return runner(payload)
+
+
 _用户公开工具 = [
     "parse_reference_text",
     "insert_placeholder_from_reference",
@@ -793,6 +801,7 @@ _开发者工具 = [
     "parse_pdf_with_aliyun_multimodal",
     "batch_manage_pdf_with_aliyun_multimodal",
     "run_online_retrieval_router",
+    "run_online_retrieval_from_bib",
 ]
 
 

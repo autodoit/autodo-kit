@@ -220,6 +220,26 @@ result = migrate_workspace_paths(
 )
 ```
 
+### 1.9 autodokit.tools.run_online_retrieval_from_bib(...)
+
+用途：根据 Bib 文件批量执行在线检索四项任务，并把中文/英文检索、下载、HTML 结构化抽取结果汇总到输出目录。
+
+典型参数：
+
+- `bib_path`：Bib 文件路径。
+- `output_dir`：批处理输出目录。
+- `max_pages`：中英文检索最大翻页数。
+- `en_per_page`：英文检索每页返回条数。
+- `en_sources`：英文来源列表。
+- `max_entries`：可选，仅处理前 N 条 Bib 记录。
+- `use_llm_matching`：是否启用阿里百炼小模型做英文候选匹配。
+- `llm_api_key_file`：百炼 API Key 文件路径。
+
+说明：
+
+- 该工具属于通用批处理工具，不隶属于 `online_retrieval_literatures/` 目录。
+- 工具内部仍然通过 `run_online_retrieval_router(...)` 进入在线检索三层结构，保持路由统一入口不变。
+
 ## 2. autodokit.tools 导出
 
 `autodokit.tools` 采用“按函数直接调用”的公开方式，并按对象分为用户 API 与开发者 API。
@@ -258,6 +278,7 @@ result = migrate_workspace_paths(
 - `batch_rewrite_obsidian_note_timestamps(note_paths=None, note_dir=None, target_timezone='Asia/Shanghai', ...)`
  - `build_cnki_result(...)`
  - `local_reference_lookup_and_materialize(...)`：本地参考文献清单检索与占位补录工具。
+- `run_online_retrieval_from_bib(...)`：按 Bib 批量触发在线检索四项任务的通用工具。
   用途：把一段参考文献清单文本解析为单条引文，逐条在本地 `content.db` 的 `literatures` 表中做匹配；未命中时插入占位条目并写回数据库。
 
   函数签名（概要）：
