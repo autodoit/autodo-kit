@@ -7,8 +7,10 @@ from typing import Any, Callable
 from .cnki_paged_retrieval import run_pipeline as run_cnki_pipeline
 from .en_chaoxing_portal_retry import retry_failed_records as retry_en_failed_records_via_chaoxing
 from .en_open_access_batch_fulltext_download import download_batch as en_batch_download
+from .en_open_access_batch_html_extract import extract_batch as en_batch_html
 from .en_open_access_pipeline import run_pipeline as run_english_pipeline
 from .en_open_access_search_metadata import search_metadata as en_search_metadata
+from .en_open_access_single_html_extract import extract_single as en_single_html
 from .en_open_access_single_fulltext_download import _to_record as en_to_record
 from .en_open_access_single_fulltext_download import download_single as en_single_download
 from .online_retrieval_resolver import (
@@ -87,11 +89,23 @@ def dispatch(
             raise ValueError("en_open_access single download 需要 record，或可解析的 cite_keys/pdf_paths/seed_items。")
         return en_single_download(payload, en_to_record(record_payload))
 
+    if source == "en_open_access" and mode == "single" and action == "html_extract":
+        record_payload = resolve_en_single_record_payload(payload)
+        if not isinstance(record_payload, dict):
+            raise ValueError("en_open_access single html_extract 需要 record，或可解析的 cite_keys/pdf_paths/seed_items。")
+        return en_single_html(payload, record_payload)
+
     if source == "en_open_access" and mode == "batch" and action == "download":
         records = resolve_en_batch_records_payload(payload)
         if not records:
             _raise_missing_batch_payload("en_open_access batch download")
         return en_batch_download(payload, records)
+
+    if source == "en_open_access" and mode == "batch" and action == "html_extract":
+        records = resolve_en_batch_records_payload(payload)
+        if not records:
+            _raise_missing_batch_payload("en_open_access batch html_extract")
+        return en_batch_html(payload, records)
 
     if source == "chaoxing_portal" and mode == "catalog" and action == "fetch":
         return fetch_school_foreign_databases(payload)

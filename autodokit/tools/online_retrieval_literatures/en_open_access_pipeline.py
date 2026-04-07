@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import importlib.util
 import json
+import sys
 from pathlib import Path
 from typing import Any
 
@@ -24,6 +25,7 @@ def _load_core_module() -> Any:
     if spec is None or spec.loader is None:
         raise ImportError(f"无法加载模块源码：{module_path}")
     module = importlib.util.module_from_spec(spec)
+    sys.modules.setdefault(spec.name, module)
     spec.loader.exec_module(module)
     return module
 
