@@ -10,6 +10,7 @@ import pandas as pd
 
 from autodokit.tools.aok_pdf_aliyun_multimodal_batch_manage import batch_manage_pdf_with_aliyun_multimodal
 from autodokit.tools.aok_pdf_aliyun_multimodal_parse import parse_pdf_with_aliyun_multimodal
+from autodokit.tools.aliyun_multimodal_postprocess_tools import postprocess_aliyun_multimodal_parse_outputs
 from autodokit.tools.bibliodb_sqlite import load_literatures_df, load_parse_assets_df, save_tables
 from autodokit.tools.contentdb_sqlite import init_content_db
 from autodokit.tools.pdf_parse_asset_manager import ensure_multimodal_parse_asset
@@ -58,6 +59,7 @@ class _FakeClient:
 class _FakeConfig:
     model = "qwen3-vl-plus"
     sdk_backend = "openai-compatible"
+    region = "cn-beijing"
 
 
 def test_parse_pdf_with_aliyun_multimodal_should_create_required_outputs(monkeypatch, tmp_path: Path) -> None:
@@ -243,6 +245,96 @@ def test_ensure_multimodal_parse_asset_should_register_normalized_structured(mon
     literatures = load_literatures_df(content_db)
     assert literatures.iloc[0]["structured_abs_path"] == str(normalized_path)
     assert literatures.iloc[0]["latest_parse_level"] == "non_review_rough"
+
+
+def test_postprocess_aliyun_multimodal_parse_outputs_should_remove_cross_article_contamination(monkeypatch, tmp_path: Path) -> None:
+    """后处理应在模型判定后剥离混排进来的外来文章段落。"""
+
+    structured_path = (tmp_path / "normalized.structured.json").resolve()
+    markdown_path = (tmp_path / "reconstructed_content.md").resolve()
+    structured_path.write_text(
+        json.dumps(
+            {
+                "schema": "aok.pdf_structured.v3",
+                "source": {
+                        "title": "张三-2008-科学学-科研评价与学术产出关系的协整检验与误差修正模型",
+                    "year": "2008",
+                },
+                "text": {
+                    "full_text": """
+科研评价指标与学术产出之间存在复杂的动态关系。
+
+在样本期间内，学科间合作与资助分配模式对产出影响显著，但部分段落混入了与目标论文主题无关的文本，涉及学术出版生态的讨论。
+
+结论部分表明，评价制度调整对短期产出有显著效应，但长期关系需要进一步验证。
+""".strip(),
+                    "meta": {"title": "张三-2008-科学学-科研评价与学术产出关系的协整检验与误差修正模型"},
+                },
+            },
+            ensure_ascii=False,
+            indent=2,
+        ),
+        encoding="utf-8",
+    )
+    markdown_path.write_text(
+        "科研评价指标与学术产出之间存在复杂的动态关系。\n\n在样本期间内，学科间合作与资助分配模式对产出影响显著，但部分段落混入了与目标论文主题无关的文本，涉及学术出版生态的讨论。\n\n结论部分表明，评价制度调整对短期产出有显著效应，但长期关系需要进一步验证。\n",
+        encoding="utf-8",
+    )
+
+    class _FakeLLMConfig:
+        model = "qwen-plus"
+        sdk_backend = "dashscope"
+        region = "cn-beijing"
+
+    class _FakeLLMClient:
+        def __init__(self, config) -> None:
+            self._config = config
+
+        def generate_text(self, **kwargs) -> str:
+            payload = json.loads(kwargs["prompt"])
+            remove_ids = [block["block_id"] for block in payload["blocks"] if "学术出版生态" in block["text"]]
+            return json.dumps(
+                {
+                    "remove_block_ids": remove_ids,
+                    "keep_block_ids": [block["block_id"] for block in payload["blocks"] if block["block_id"] not in remove_ids],
+                    "uncertain_block_ids": [],
+                    "block_judgements": [
+                        {
+                            "block_id": block["block_id"],
+                            "decision": "remove" if block["block_id"] in remove_ids else "keep",
+                            "reason": "主题与目标论文无关" if block["block_id"] in remove_ids else "属于目标论文正文",
+                        }
+                        for block in payload["blocks"]
+                    ],
+                },
+                ensure_ascii=False,
+            )
+
+    monkeypatch.setattr(
+        "autodokit.tools.aliyun_multimodal_postprocess_tools.load_aliyun_llm_config",
+        lambda **kwargs: _FakeLLMConfig(),
+    )
+    monkeypatch.setattr(
+        "autodokit.tools.aliyun_multimodal_postprocess_tools.AliyunDashScopeClient",
+        _FakeLLMClient,
+    )
+
+    result = postprocess_aliyun_multimodal_parse_outputs(
+        normalized_structured_path=structured_path,
+        reconstructed_markdown_path=markdown_path,
+        rewrite_structured=True,
+        rewrite_markdown=True,
+        enable_llm_contamination_filter=True,
+        contamination_llm_model="auto",
+        config_path=tmp_path / "config.json",
+    )
+
+    rewritten_text = structured_path.read_text(encoding="utf-8")
+    assert result["contamination_removed_block_count"] == 1
+    assert result["contamination_filter_applied"] is True
+    assert "学术出版生态" not in markdown_path.read_text(encoding="utf-8")
+    assert "学术出版生态" not in rewritten_text
+    assert Path(result["postprocess_audit_path"]).exists()
 
 
 def test_init_content_db_should_auto_migrate_legacy_schema(tmp_path: Path) -> None:
