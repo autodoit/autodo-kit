@@ -17,6 +17,7 @@ from autodokit.tools import (
     literature_bind_standard_note,
     load_json_or_py,
 )
+from autodokit.tools.llm_clients import postprocess_aliyun_multimodal_parse_outputs
 from autodokit.tools.bibliodb_sqlite import load_reading_queue_df, load_reading_state_df, save_dataframe_table, upsert_reading_state_rows
 from autodokit.tools.contentdb_sqlite import CONTENT_DB_DIRECTORY_NAME, DEFAULT_CONTENT_DB_NAME, resolve_content_db_config
 from autodokit.tools.pdf_parse_asset_manager import ensure_multimodal_parse_asset
@@ -250,6 +251,22 @@ def execute(config_path: Path) -> List[Path]:
     ensure_parse_on_entry = bool(raw_cfg.get("ensure_parse_on_entry", True))
     overwrite_parse_asset = bool(raw_cfg.get("overwrite_parse_asset", False))
     parse_model = _stringify(raw_cfg.get("parse_model")) or "auto"
+    enable_aliyun_postprocess = bool(raw_cfg.get("enable_aliyun_postprocess", True))
+    enable_llm_basic_cleanup = bool(raw_cfg.get("enable_llm_basic_cleanup", True))
+    basic_cleanup_llm_model = _stringify(raw_cfg.get("basic_cleanup_llm_model")) or "qwen3.5-flash"
+    basic_cleanup_llm_sdk_backend = _stringify(raw_cfg.get("basic_cleanup_llm_sdk_backend")) or None
+    basic_cleanup_llm_region = _stringify(raw_cfg.get("basic_cleanup_llm_region")) or "cn-beijing"
+    enable_llm_structure_resolution = bool(raw_cfg.get("enable_llm_structure_resolution", True))
+    structure_llm_model = _stringify(raw_cfg.get("structure_llm_model")) or "qwen3.5-plus"
+    structure_llm_sdk_backend = _stringify(raw_cfg.get("structure_llm_sdk_backend")) or None
+    structure_llm_region = _stringify(raw_cfg.get("structure_llm_region")) or "cn-beijing"
+    enable_llm_contamination_filter = bool(raw_cfg.get("enable_llm_contamination_filter", True))
+    contamination_llm_model = _stringify(raw_cfg.get("contamination_llm_model")) or "qwen3-max"
+    contamination_llm_sdk_backend = _stringify(raw_cfg.get("contamination_llm_sdk_backend")) or None
+    contamination_llm_region = _stringify(raw_cfg.get("contamination_llm_region")) or "cn-beijing"
+    postprocess_rewrite_structured = bool(raw_cfg.get("postprocess_rewrite_structured", True))
+    postprocess_rewrite_markdown = bool(raw_cfg.get("postprocess_rewrite_markdown", True))
+    postprocess_keep_page_markers = bool(raw_cfg.get("postprocess_keep_page_markers", False))
     max_items = int(raw_cfg.get("max_items") or 0)
     if max_items > 0:
         state_df = state_df.head(max_items).reset_index(drop=True)
@@ -280,6 +297,7 @@ def execute(config_path: Path) -> List[Path]:
 
         parse_status = "skipped"
         structured_path = ""
+        postprocess_summary: Dict[str, Any] = {}
         if ensure_parse_on_entry:
             try:
                 parse_asset = ensure_multimodal_parse_asset(
@@ -292,6 +310,27 @@ def execute(config_path: Path) -> List[Path]:
                     overwrite_existing=overwrite_parse_asset,
                     model=parse_model,
                 )
+                if enable_aliyun_postprocess:
+                    postprocess_summary = postprocess_aliyun_multimodal_parse_outputs(
+                        normalized_structured_path=_stringify(parse_asset.get("normalized_structured_path")),
+                        reconstructed_markdown_path=_stringify(parse_asset.get("reconstructed_markdown_path")),
+                        rewrite_structured=postprocess_rewrite_structured,
+                        rewrite_markdown=postprocess_rewrite_markdown,
+                        keep_page_markers=postprocess_keep_page_markers,
+                        enable_llm_basic_cleanup=enable_llm_basic_cleanup,
+                        basic_cleanup_llm_model=basic_cleanup_llm_model,
+                        basic_cleanup_llm_sdk_backend=basic_cleanup_llm_sdk_backend,
+                        basic_cleanup_llm_region=basic_cleanup_llm_region,
+                        enable_llm_structure_resolution=enable_llm_structure_resolution,
+                        structure_llm_model=structure_llm_model,
+                        structure_llm_sdk_backend=structure_llm_sdk_backend,
+                        structure_llm_region=structure_llm_region,
+                        enable_llm_contamination_filter=enable_llm_contamination_filter,
+                        contamination_llm_model=contamination_llm_model,
+                        contamination_llm_sdk_backend=contamination_llm_sdk_backend,
+                        contamination_llm_region=contamination_llm_region,
+                        config_path=workspace_root / "config" / "config.json",
+                    )
                 structured_path = _stringify(parse_asset.get("normalized_structured_path"))
                 parse_status = "ready"
             except Exception as exc:
@@ -299,7 +338,7 @@ def execute(config_path: Path) -> List[Path]:
                 state_updates.append({"uid_literature": uid_literature, "cite_key": resolved_cite_key, "pending_preprocess": 1, "preprocessed": 0, "preprocess_status": "parse_failed"})
                 continue
 
-        note_path = note_dir / f"standard_note_{_safe_file_stem(resolved_cite_key)}.md"
+        note_path = note_dir / f"{_safe_file_stem(resolved_cite_key)}.md"
         note_body = build_standard_note_body(
             title=_stringify(literature_row.get("title")) or resolved_cite_key,
             cite_key=resolved_cite_key,
@@ -348,7 +387,18 @@ def execute(config_path: Path) -> List[Path]:
                 "deep_read_count": int(state_row.get("deep_read_count") or 0),
             }
         )
-        result_rows.append({"uid_literature": uid_literature, "cite_key": resolved_cite_key, "title": _stringify(literature_row.get("title")), "standard_note_path": str(note_path), "structured_path": structured_path, "preprocess_status": parse_status})
+        result_rows.append({
+            "uid_literature": uid_literature,
+            "cite_key": resolved_cite_key,
+            "title": _stringify(literature_row.get("title")),
+            "standard_note_path": str(note_path),
+            "structured_path": structured_path,
+            "preprocess_status": parse_status,
+            "postprocess_ok": int(bool(postprocess_summary) or (not enable_aliyun_postprocess)),
+            "postprocess_llm_basic_cleanup_status": _stringify(postprocess_summary.get("llm_basic_cleanup_status")),
+            "postprocess_llm_structure_status": _stringify(postprocess_summary.get("llm_structure_resolution_status")),
+            "postprocess_contamination_removed_block_count": int(postprocess_summary.get("contamination_removed_block_count") or 0),
+        })
 
     persist_reference_tables(literatures_df=literatures_df, attachments_df=attachments_df, db_path=content_db)
     persist_knowledge_tables(index_df=knowledge_index_df, attachments_df=knowledge_attachments_df, db_path=content_db)
@@ -369,7 +419,17 @@ def execute(config_path: Path) -> List[Path]:
         recommendation="pass" if len(result_df) > 0 else "retry_current",
         score=max(40.0, 92.0 - len(failures) * 8.0),
         issues=failures,
-        metadata={"workspace_root": str(workspace_root), "content_db": str(content_db)},
+        metadata={
+            "workspace_root": str(workspace_root),
+            "content_db": str(content_db),
+            "enable_aliyun_postprocess": enable_aliyun_postprocess,
+            "enable_llm_basic_cleanup": enable_llm_basic_cleanup,
+            "basic_cleanup_llm_model": basic_cleanup_llm_model,
+            "enable_llm_structure_resolution": enable_llm_structure_resolution,
+            "structure_llm_model": structure_llm_model,
+            "enable_llm_contamination_filter": enable_llm_contamination_filter,
+            "contamination_llm_model": contamination_llm_model,
+        },
     )
     gate_path = output_dir / OUTPUT_GATE
     gate_path.write_text(json.dumps(gate_review, ensure_ascii=False, indent=2), encoding="utf-8")
@@ -386,7 +446,14 @@ def execute(config_path: Path) -> List[Path]:
             gate_review=gate_review,
             gate_review_path=gate_path,
             artifact_paths=[index_path, gate_path],
-            payload={"preprocessed_count": len(result_df), "seeded_from_legacy_queue": seeded_count, "failure_count": len(failures)},
+            payload={
+                "preprocessed_count": len(result_df),
+                "seeded_from_legacy_queue": seeded_count,
+                "failure_count": len(failures),
+                "enable_llm_basic_cleanup": enable_llm_basic_cleanup,
+                "enable_llm_structure_resolution": enable_llm_structure_resolution,
+                "enable_llm_contamination_filter": enable_llm_contamination_filter,
+            },
         )
     except Exception:
         pass

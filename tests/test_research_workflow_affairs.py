@@ -207,8 +207,9 @@ def _prepare_review_synthesis_workspace(tmp_path: Path) -> tuple[Path, Path, Pat
         Path("knowledge/review_summaries/consensus_notes.md"),
         Path("knowledge/review_summaries/controversy_notes.md"),
         Path("knowledge/review_summaries/future_directions_notes.md"),
-        Path("knowledge/trajectories/trajectory_seed.md"),
-        Path("knowledge/frameworks/knowledge_framework.md"),
+        Path("knowledge/trajectories/领域研究脉络.md"),
+        Path("knowledge/frameworks/领域知识框架.md"),
+        Path("knowledge/innovation_pool/创新点补写.md"),
     ]:
         _write_placeholder_note(workspace_root / relative_path, relative_path.stem)
 

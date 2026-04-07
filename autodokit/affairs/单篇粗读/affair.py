@@ -28,6 +28,7 @@ import pandas as pd
 
 from autodokit.tools import load_json_or_py
 from autodokit.tools.bibliodb import init_empty_table, insert_placeholder_from_reference
+from autodokit.tools.llm_clients import postprocess_aliyun_multimodal_parse_outputs
 from autodokit.tools.contentdb_sqlite import infer_workspace_root_from_content_db, resolve_content_db_config
 from autodokit.tools.pdf_parse_asset_manager import ensure_multimodal_parse_asset
 from autodokit.tools.pdf_structured_data_tools import load_single_document_record
@@ -276,6 +277,13 @@ def execute(config_path: Path) -> List[Path]:
             global_config_path=global_config_path if global_config_path.exists() else None,
             overwrite_existing=bool(raw_cfg.get("overwrite_parse_asset", False)),
             model=str(raw_cfg.get("parse_model") or raw_cfg.get("structured_model") or "auto"),
+        )
+        postprocess_aliyun_multimodal_parse_outputs(
+            normalized_structured_path=str(parse_asset.get("normalized_structured_path") or ""),
+            reconstructed_markdown_path=str(parse_asset.get("reconstructed_markdown_path") or ""),
+            rewrite_structured=True,
+            rewrite_markdown=True,
+            keep_page_markers=False,
         )
         cfg.input_structured_json = str(parse_asset.get("normalized_structured_path") or "")
 

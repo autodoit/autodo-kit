@@ -51,11 +51,11 @@ DEFAULT_REVIEW_STATE_FIELD_LIMITS: Dict[str, int] = {
 }
 
 DEFAULT_EVIDENCE_CONSTRAINED_LINE_TARGETS: Dict[str, int] = {
-    "trajectory_seed.md": 5,
+    "领域研究脉络.md": 5,
     "core_findings.md": 5,
     "future_directions_notes.md": 5,
-    "knowledge_framework.md": 4,
-    "innovation_seed.md": 6,
+    "领域知识框架.md": 4,
+    "创新点补写.md": 6,
 }
 
 DEFAULT_CONSENSUS_THEME_DEFS: Tuple[Tuple[str, Tuple[str, ...]], ...] = (
@@ -122,11 +122,11 @@ def _build_review_state_from_sentences(
 
 def _note_type_to_evidence_fields(note_name: str) -> List[str]:
     mapping = {
-        "trajectory_seed.md": ["research_problem", "mechanism_paths", "core_findings"],
+        "领域研究脉络.md": ["research_problem", "mechanism_paths", "core_findings"],
         "core_findings.md": ["core_findings", "supporting_evidence", "mechanism_paths"],
         "future_directions_notes.md": ["future_directions", "limitation_points", "controversy_points"],
-        "knowledge_framework.md": ["mechanism_paths", "core_findings", "research_method"],
-        "innovation_seed.md": ["future_directions", "limitation_points", "controversy_points", "mechanism_paths"],
+        "领域知识框架.md": ["mechanism_paths", "core_findings", "research_method"],
+        "创新点补写.md": ["future_directions", "limitation_points", "controversy_points", "mechanism_paths"],
     }
     return mapping.get(note_name, ["core_findings", "supporting_evidence"])
 

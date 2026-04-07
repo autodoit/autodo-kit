@@ -20,6 +20,7 @@ from autodokit.affairs.候选文献视图构建.affair import (
     _resolve_workspace_root,
 )
 from autodokit.tools import append_aok_log_event, build_gate_review, load_json_or_py
+from autodokit.tools.llm_clients import postprocess_aliyun_multimodal_parse_outputs
 from autodokit.tools.atomic.task_aok.post_affair_git_commit import affair_auto_git_commit
 from autodokit.tools.bibliodb_sqlite import load_reading_queue_df, upsert_reading_queue_rows
 from autodokit.tools.storage_backend import load_reference_main_table
@@ -145,8 +146,25 @@ def execute(config_path: Path) -> List[Path]:
     review_reading_batches = _safe_read_csv(review_reading_batches_path)
 
     structured_variants = _collect_structured_variants(raw_cfg)
+    enable_aliyun_postprocess = bool(raw_cfg.get("enable_aliyun_postprocess", True))
+    enable_llm_basic_cleanup = bool(raw_cfg.get("enable_llm_basic_cleanup", True))
+    basic_cleanup_llm_model = str(raw_cfg.get("basic_cleanup_llm_model") or "qwen3.5-flash").strip() or "qwen3.5-flash"
+    basic_cleanup_llm_sdk_backend = str(raw_cfg.get("basic_cleanup_llm_sdk_backend") or "").strip() or None
+    basic_cleanup_llm_region = str(raw_cfg.get("basic_cleanup_llm_region") or "cn-beijing").strip() or "cn-beijing"
+    enable_llm_structure_resolution = bool(raw_cfg.get("enable_llm_structure_resolution", True))
+    structure_llm_model = str(raw_cfg.get("structure_llm_model") or "qwen3.5-plus").strip() or "qwen3.5-plus"
+    structure_llm_sdk_backend = str(raw_cfg.get("structure_llm_sdk_backend") or "").strip() or None
+    structure_llm_region = str(raw_cfg.get("structure_llm_region") or "cn-beijing").strip() or "cn-beijing"
+    enable_llm_contamination_filter = bool(raw_cfg.get("enable_llm_contamination_filter", True))
+    contamination_llm_model = str(raw_cfg.get("contamination_llm_model") or "qwen3-max").strip() or "qwen3-max"
+    contamination_llm_sdk_backend = str(raw_cfg.get("contamination_llm_sdk_backend") or "").strip() or None
+    contamination_llm_region = str(raw_cfg.get("contamination_llm_region") or "cn-beijing").strip() or "cn-beijing"
+    postprocess_rewrite_structured = bool(raw_cfg.get("postprocess_rewrite_structured", True))
+    postprocess_rewrite_markdown = bool(raw_cfg.get("postprocess_rewrite_markdown", True))
+    postprocess_keep_page_markers = bool(raw_cfg.get("postprocess_keep_page_markers", False))
     parse_status_rows: List[Dict[str, Any]] = []
     ready_count = 0
+    postprocess_success_count = 0
     for _, row in review_read_pool.fillna("").iterrows():
         record = dict(row)
         uid_literature = str(record.get("uid_literature") or "").strip()
@@ -161,6 +179,7 @@ def execute(config_path: Path) -> List[Path]:
         reason = ""
         used_structured = False
         structured_path = ""
+        postprocess_summary: Dict[str, Any] = {}
         try:
             _, source_record, _, _, used_structured = _ensure_structured_reference_lines(
                 source_record=source_record,
@@ -179,6 +198,29 @@ def execute(config_path: Path) -> List[Path]:
             )
             structured_path = str(source_record.get("structured_abs_path") or "")
             if used_structured:
+                if enable_aliyun_postprocess and structured_path:
+                    postprocess_summary = postprocess_aliyun_multimodal_parse_outputs(
+                        normalized_structured_path=structured_path,
+                        reconstructed_markdown_path=str(Path(structured_path).parent / "reconstructed_content.md"),
+                        rewrite_structured=postprocess_rewrite_structured,
+                        rewrite_markdown=postprocess_rewrite_markdown,
+                        keep_page_markers=postprocess_keep_page_markers,
+                        enable_llm_basic_cleanup=enable_llm_basic_cleanup,
+                        basic_cleanup_llm_model=basic_cleanup_llm_model,
+                        basic_cleanup_llm_sdk_backend=basic_cleanup_llm_sdk_backend,
+                        basic_cleanup_llm_region=basic_cleanup_llm_region,
+                        enable_llm_structure_resolution=enable_llm_structure_resolution,
+                        structure_llm_model=structure_llm_model,
+                        structure_llm_sdk_backend=structure_llm_sdk_backend,
+                        structure_llm_region=structure_llm_region,
+                        enable_llm_contamination_filter=enable_llm_contamination_filter,
+                        contamination_llm_model=contamination_llm_model,
+                        contamination_llm_sdk_backend=contamination_llm_sdk_backend,
+                        contamination_llm_region=contamination_llm_region,
+                        config_path=workspace_root / "config" / "config.json",
+                        api_key_file=str(raw_cfg.get("api_key_file") or "") or None,
+                    )
+                    postprocess_success_count += 1
                 ready_count += 1
             else:
                 status = "not_ready"
@@ -194,6 +236,13 @@ def execute(config_path: Path) -> List[Path]:
                 "status": status,
                 "used_structured": int(used_structured),
                 "structured_abs_path": structured_path,
+                "postprocess_enabled": int(enable_aliyun_postprocess),
+                "postprocess_ok": int(bool(postprocess_summary) or (not enable_aliyun_postprocess)),
+                "postprocess_removed_noise_lines": int(postprocess_summary.get("removed_noise_lines") or 0),
+                "postprocess_llm_basic_cleanup_status": str(postprocess_summary.get("llm_basic_cleanup_status") or ""),
+                "postprocess_llm_structure_status": str(postprocess_summary.get("llm_structure_resolution_status") or ""),
+                "postprocess_contamination_removed_block_count": int(postprocess_summary.get("contamination_removed_block_count") or 0),
+                "postprocess_markdown_path": str(postprocess_summary.get("postprocessed_markdown_path") or ""),
                 "reason": reason,
             }
         )
@@ -212,12 +261,13 @@ def execute(config_path: Path) -> List[Path]:
         node_name="综述预处理",
         summary=(
             f"完成综述结构化资产准备：阅读池 {len(review_read_pool)} 条，"
-            f"structured 就绪 {ready_count} 条，进入 A065 队列 {len(a065_queue_rows)} 条。"
+            f"structured 就绪 {ready_count} 条，后处理成功 {postprocess_success_count} 条，进入 A065 队列 {len(a065_queue_rows)} 条。"
         ),
         checks=[
             {"name": "review_read_pool_count", "value": len(review_read_pool)},
             {"name": "batch_count", "value": int(review_reading_batches['batch_id'].nunique()) if not review_reading_batches.empty and 'batch_id' in review_reading_batches.columns else 0},
             {"name": "structured_ready_count", "value": ready_count},
+            {"name": "postprocess_success_count", "value": postprocess_success_count},
             {"name": "structured_failed_count", "value": sum(1 for item in parse_status_rows if item["status"] == "failed")},
             {"name": "a065_queue_count", "value": len(a065_queue_rows)},
         ],
@@ -238,6 +288,23 @@ def execute(config_path: Path) -> List[Path]:
             "source_review_reading_batches_path": str(review_reading_batches_path),
             "a065_queue_count": len(a065_queue_rows),
             "structured_ready_count": ready_count,
+            "postprocess_success_count": postprocess_success_count,
+            "enable_aliyun_postprocess": enable_aliyun_postprocess,
+            "postprocess_rewrite_structured": postprocess_rewrite_structured,
+            "postprocess_rewrite_markdown": postprocess_rewrite_markdown,
+            "postprocess_keep_page_markers": postprocess_keep_page_markers,
+            "enable_llm_basic_cleanup": enable_llm_basic_cleanup,
+            "basic_cleanup_llm_model": basic_cleanup_llm_model,
+            "basic_cleanup_llm_sdk_backend": basic_cleanup_llm_sdk_backend,
+            "basic_cleanup_llm_region": basic_cleanup_llm_region,
+            "enable_llm_structure_resolution": enable_llm_structure_resolution,
+            "structure_llm_model": structure_llm_model,
+            "structure_llm_sdk_backend": structure_llm_sdk_backend,
+            "structure_llm_region": structure_llm_region,
+            "enable_llm_contamination_filter": enable_llm_contamination_filter,
+            "contamination_llm_model": contamination_llm_model,
+            "contamination_llm_sdk_backend": contamination_llm_sdk_backend,
+            "contamination_llm_region": contamination_llm_region,
             "run_uid": run_uid,
         },
     )
@@ -261,6 +328,10 @@ def execute(config_path: Path) -> List[Path]:
             "review_read_pool_count": len(review_read_pool),
             "batch_count": int(review_reading_batches['batch_id'].nunique()) if not review_reading_batches.empty and 'batch_id' in review_reading_batches.columns else 0,
             "structured_ready_count": ready_count,
+            "postprocess_success_count": postprocess_success_count,
+            "enable_llm_basic_cleanup": enable_llm_basic_cleanup,
+            "enable_llm_structure_resolution": enable_llm_structure_resolution,
+            "enable_llm_contamination_filter": enable_llm_contamination_filter,
             "a065_queue_count": len(a065_queue_rows),
             "run_uid": run_uid,
         },

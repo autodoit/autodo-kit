@@ -325,6 +325,26 @@ result = migrate_workspace_paths(
 3. 默认规则配置文件是 `autodokit/tools/online_retrieval_literatures/config.json`，由 router 自动注入到下游执行器。
 4. 若需要覆盖默认规则，只能通过 router payload 显式传入 `retrieval_rules`，不要在子模块里单独分叉。
 
+三层结构（2026-04 起）：
+
+1. 路由层：`online_retrieval_router.py`，负责统一入口、规则注入和 debug 编排。
+2. 解析层：`online_retrieval_resolver.py`，负责把 `entries` / `records` / `seed_items` / `cite_keys` / `pdf_paths` 统一转换为可执行载荷。
+3. 功能层：`online_retrieval_service.py` + `zh_cnki_*` / `en_open_access_*` 执行器，负责实际检索、下载、抽取。
+
+新增输入契约（兼容旧 payload）：
+
+- `seed_items`: `list[dict]`，每项可含 `cite_key`、`pdf_path`、`title`、`detail_url`。
+- `cite_keys`: `list[str]`，用于批量输入文献引用键。
+- `pdf_paths`: `list[str]`，用于批量输入 PDF 绝对路径。
+- `content_db` / `content_db_path`: `str`，可选；提供后会优先尝试从 `literatures` 表补齐 `title` / `pdf_path`。
+- `workspace_root`: `str`，当未显式提供 `content_db` 时，解析层会尝试使用 `<workspace_root>/database/content/content.db`。
+
+解析策略说明：
+
+- `zh_cnki batch download/html_extract`：若未传 `entries`，会自动尝试由 `seed_items` / `cite_keys` / `pdf_paths` 解析生成。
+- `zh_cnki single download/html_extract`：若未传 `zh_query`（或 `query`）且未传 `detail_url`，会自动从解析结果补齐首条候选。
+- `en_open_access single/batch download`：若未传 `record`（或 `records`），会自动由种子输入构造最小 `record` 载荷。
+
 典型场景：
 
 - 中文 CNKI 题录检索
@@ -332,6 +352,7 @@ result = migrate_workspace_paths(
 - 中文 CNKI 单篇/批量 HTML 抽取
 - 英文开放源题录检索与全文下载
 - 学校数据库导航与超星门户相关流程
+- 本地 `cite_key`/PDF 清单驱动的在线补检索（解析层先归一，再由功能层执行）
 
 路由治理与回归补充（P5 起生效）：
 

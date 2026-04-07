@@ -117,11 +117,11 @@ CONSENSUS_THEME_DEFS: Tuple[Tuple[str, Tuple[str, ...]], ...] = (
 )
 
 DEFAULT_EVIDENCE_CONSTRAINED_LINE_TARGETS: Dict[str, int] = {
-    "trajectory_seed.md": 5,
+    "领域研究脉络.md": 5,
     "core_findings.md": 5,
     "future_directions_notes.md": 5,
-    "knowledge_framework.md": 4,
-    "innovation_seed.md": 6,
+    "领域知识框架.md": 4,
+    "创新点补写.md": 6,
 }
 
 PLACEHOLDER_HINTS: Tuple[str, ...] = (
@@ -200,13 +200,13 @@ def _a05_dirs(workspace_root: Path) -> Dict[str, Path]:
 def _a05_asset_paths(workspace_root: Path) -> Dict[str, Path]:
     dirs = _a05_dirs(workspace_root)
     return {
-        "trajectory_seed": dirs["trajectories"] / "trajectory_seed.md",
+        "trajectory_seed": dirs["trajectories"] / "领域研究脉络.md",
         "core_findings": dirs["review_summaries"] / "core_findings.md",
         "consensus_notes": dirs["review_summaries"] / "consensus_notes.md",
         "controversy_notes": dirs["review_summaries"] / "controversy_notes.md",
         "future_directions_notes": dirs["review_summaries"] / "future_directions_notes.md",
-        "knowledge_framework": dirs["frameworks"] / "knowledge_framework.md",
-        "innovation_seed": dirs["innovation_pool"] / "innovation_seed.md",
+        "knowledge_framework": dirs["frameworks"] / "领域知识框架.md",
+        "innovation_seed": dirs["innovation_pool"] / "创新点补写.md",
         "consensus_csv": dirs["audits"] / "consensus_list.csv",
         "controversy_csv": dirs["audits"] / "controversy_list.csv",
         "future_csv": dirs["audits"] / "future_directions.csv",
@@ -1183,12 +1183,6 @@ def _render_standard_note_body(
         f"- 原文入口：{pdf_link or '待补充原文 PDF 链接'}",
         "",
         "## 研究对象与综述边界",
-    lookup_columns = [
-        column
-        for column in ["uid_literature", "cite_key", "title", "keywords_cn", "abstract", "source"]
-        if column in literature_table.columns
-    ]
-    lookup = literature_table[lookup_columns].copy()
         "",
         "## 综述问题意识",
         *(research_problem or [f"- 该文试图组织既有问题意识与解释路径，但当前自动抽取尚未形成更细的问题意识分层。见 {note_link}。"]),
@@ -1200,7 +1194,7 @@ def _render_standard_note_body(
         *(trajectory or [f"- 当前尚未从自动抽取结果中形成稳定的阶段性研究脉络，需要结合全文结构继续凝练。见 {note_link}。"]),
         "",
         "## 主要共识",
-                "reason": f"被 {count} 篇综述高置信引用；中文信号加分 {chinese_bonus}",
+        *consensus,
         "",
         "## 关键争议",
         *controversy,
@@ -1237,7 +1231,7 @@ def _render_composite_note_body(
     summary_block = list(summary_lines) or ["- 当前没有形成稳定的综合结论。"]
     evidence_block = list(evidence_lines) or ["- 当前没有可回链的证据条目。"]
 
-    if note_name == "trajectory_seed.md":
+    if note_name == "领域研究脉络.md":
         sections = [
             f"# {body_title}",
             "",
@@ -1258,7 +1252,7 @@ def _render_composite_note_body(
         ]
         return "\n".join(sections).rstrip() + "\n"
 
-    if note_name == "knowledge_framework.md":
+    if note_name == "领域知识框架.md":
         sections = [
             f"# {body_title}",
             "",
@@ -1339,7 +1333,7 @@ def _render_composite_note_body(
         ]
         return "\n".join(sections).rstrip() + "\n"
 
-    if note_name == "innovation_seed.md":
+    if note_name == "创新点补写.md":
         sections = [
             f"# {body_title}",
             "",
@@ -1587,12 +1581,6 @@ def execute(config_path: Path) -> List[Path]:
             "source_type": "structured" if structured_abs_path else "pdf",
             "used_structured_data": bool(structured_abs_path),
             "structured_path": structured_abs_path,
-        lookup_columns = [
-            column
-            for column in ["uid_literature", "cite_key", "title", "keywords_cn", "abstract", "source"]
-            if column in literature_table.columns
-        ]
-        lookup = literature_table[lookup_columns].copy()
             "full_text_chars": len(full_text),
             "original_sentence_count": original_sentence_count,
             "sentence_count": len(sentences),
@@ -1871,7 +1859,7 @@ def execute(config_path: Path) -> List[Path]:
             return generated_lines
         return fallback_lines
 
-    trajectory_summary_lines = _maybe_generate_summary_lines("trajectory_seed.md", trajectory_summary_lines)
+    trajectory_summary_lines = _maybe_generate_summary_lines("领域研究脉络.md", trajectory_summary_lines)
     core_summary_lines = _maybe_generate_summary_lines(
         "core_findings.md",
         _composite_evidence_lines(review_states, "core_findings"),
@@ -1881,11 +1869,11 @@ def execute(config_path: Path) -> List[Path]:
         _future_summary_lines(future_df),
     )
     framework_summary_lines = _maybe_generate_summary_lines(
-        "knowledge_framework.md",
+        "领域知识框架.md",
         _framework_summary_lines(consensus_df, future_df),
     )
     innovation_summary_lines = _maybe_generate_summary_lines(
-        "innovation_seed.md",
+        "创新点补写.md",
         _innovation_summary_lines(review_states, future_df),
     )
 

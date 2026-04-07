@@ -29,6 +29,7 @@ from autodokit.tools import (
     process_reference_citation,
     refine_reference_lines_with_llm,
 )
+from autodokit.tools.llm_clients import postprocess_aliyun_multimodal_parse_outputs
 from autodokit.tools.pdf_parse_asset_manager import ensure_multimodal_parse_asset
 from autodokit.tools.bibliodb_sqlite import replace_tags_for_namespace, save_structured_state
 from autodokit.tools.bibliodb_sqlite import replace_tags_for_namespace, save_structured_state, upsert_reading_queue_rows
@@ -262,6 +263,22 @@ def _ensure_structured_reference_lines(
     api_key_file: str = "",
     parse_model: str = "",
     structured_babeldoc: Dict[str, Any] | None = None,
+    enable_aliyun_postprocess: bool = True,
+    enable_llm_basic_cleanup: bool = True,
+    basic_cleanup_llm_model: str = "qwen3.5-flash",
+    basic_cleanup_llm_sdk_backend: str | None = None,
+    basic_cleanup_llm_region: str = "cn-beijing",
+    enable_llm_structure_resolution: bool = True,
+    structure_llm_model: str = "qwen3.5-plus",
+    structure_llm_sdk_backend: str | None = None,
+    structure_llm_region: str = "cn-beijing",
+    enable_llm_contamination_filter: bool = True,
+    contamination_llm_model: str = "qwen3-max",
+    contamination_llm_sdk_backend: str | None = None,
+    contamination_llm_region: str = "cn-beijing",
+    postprocess_rewrite_structured: bool = True,
+    postprocess_rewrite_markdown: bool = True,
+    postprocess_keep_page_markers: bool = False,
 ) -> Tuple[pd.DataFrame, Dict[str, Any], List[str], List[Dict[str, Any]], bool]:
     """优先复用 structured 文件，缺失时按配置生成。"""
 
@@ -289,6 +306,28 @@ def _ensure_structured_reference_lines(
                 overwrite_existing=structured_overwrite,
                 model=parse_model or "auto",
             )
+            if enable_aliyun_postprocess:
+                postprocess_aliyun_multimodal_parse_outputs(
+                    normalized_structured_path=_stringify(parse_asset.get("normalized_structured_path")),
+                    reconstructed_markdown_path=_stringify(parse_asset.get("reconstructed_markdown_path")),
+                    rewrite_structured=postprocess_rewrite_structured,
+                    rewrite_markdown=postprocess_rewrite_markdown,
+                    keep_page_markers=postprocess_keep_page_markers,
+                    enable_llm_basic_cleanup=enable_llm_basic_cleanup,
+                    basic_cleanup_llm_model=basic_cleanup_llm_model,
+                    basic_cleanup_llm_sdk_backend=basic_cleanup_llm_sdk_backend,
+                    basic_cleanup_llm_region=basic_cleanup_llm_region,
+                    enable_llm_structure_resolution=enable_llm_structure_resolution,
+                    structure_llm_model=structure_llm_model,
+                    structure_llm_sdk_backend=structure_llm_sdk_backend,
+                    structure_llm_region=structure_llm_region,
+                    enable_llm_contamination_filter=enable_llm_contamination_filter,
+                    contamination_llm_model=contamination_llm_model,
+                    contamination_llm_sdk_backend=contamination_llm_sdk_backend,
+                    contamination_llm_region=contamination_llm_region,
+                    config_path=global_config_path,
+                    api_key_file=api_key_file or None,
+                )
             structured_path = Path(_stringify(parse_asset.get("normalized_structured_path"))).resolve()
             backend = "aliyun_multimodal"
             task_type = parse_level
@@ -709,6 +748,22 @@ def _prepare_review_assets(
     reference_line_repair_model: str = "auto",
     placeholder_source: str = "placeholder_from_a065_review_scan",
     run_uid_prefix: str = "a065",
+    enable_aliyun_postprocess: bool = True,
+    enable_llm_basic_cleanup: bool = True,
+    basic_cleanup_llm_model: str = "qwen3.5-flash",
+    basic_cleanup_llm_sdk_backend: str | None = None,
+    basic_cleanup_llm_region: str = "cn-beijing",
+    enable_llm_structure_resolution: bool = True,
+    structure_llm_model: str = "qwen3.5-plus",
+    structure_llm_sdk_backend: str | None = None,
+    structure_llm_region: str = "cn-beijing",
+    enable_llm_contamination_filter: bool = True,
+    contamination_llm_model: str = "qwen3-max",
+    contamination_llm_sdk_backend: str | None = None,
+    contamination_llm_region: str = "cn-beijing",
+    postprocess_rewrite_structured: bool = True,
+    postprocess_rewrite_markdown: bool = True,
+    postprocess_keep_page_markers: bool = False,
 ) -> Dict[str, Any]:
     """预创建 A06 所需资产骨架并执行参考文献占位映射。"""
 
@@ -726,12 +781,12 @@ def _prepare_review_assets(
     reference_dump_path.write_text("", encoding="utf-8")
 
     composite_specs = [
-        (dirs["trajectories"] / "trajectory_seed.md", "trajectory_seed", "研究脉络种子，记录时间线与主题演进骨架。"),
+        (dirs["trajectories"] / "领域研究脉络.md", "领域研究脉络", "研究脉络种子，记录时间线与主题演进骨架。"),
         (dirs["review_summaries"] / "core_findings.md", "core_findings", "核心发现汇总骨架。"),
         (dirs["review_summaries"] / "consensus_notes.md", "consensus_notes", "综述共识汇总骨架。"),
         (dirs["review_summaries"] / "controversy_notes.md", "controversy_notes", "综述争议汇总骨架。"),
         (dirs["review_summaries"] / "future_directions_notes.md", "future_directions_notes", "未来研究方向骨架。"),
-        (dirs["frameworks"] / "knowledge_framework.md", "knowledge_framework", "领域知识框架骨架。"),
+        (dirs["frameworks"] / "领域知识框架.md", "领域知识框架", "领域知识框架骨架。"),
         (dirs["matrices"] / "review_matrix.md", "review_matrix", "综述矩阵骨架，用于后续整理主题、方法与结论。"),
     ]
 
