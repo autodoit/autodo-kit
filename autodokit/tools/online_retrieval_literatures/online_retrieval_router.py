@@ -1,4 +1,4 @@
-"""在线检索下载路由工具。"""
+"""在线检索下载路由工具（路由层）。"""
 
 from __future__ import annotations
 
@@ -7,19 +7,9 @@ import json
 from pathlib import Path
 from typing import Any
 
-from .school_foreign_database_portal import fetch_school_foreign_databases
-from .en_chaoxing_portal_retry import retry_failed_records as retry_en_failed_records_via_chaoxing
-from .en_open_access_batch_fulltext_download import download_batch as en_batch_download
-from .en_open_access_search_metadata import search_metadata as en_search_metadata
 from .en_open_access_pipeline import run_pipeline as run_english_pipeline
-from .en_open_access_single_fulltext_download import _to_record as en_to_record
-from .en_open_access_single_fulltext_download import download_single as en_single_download
 from .cnki_paged_retrieval import run_pipeline as run_cnki_pipeline
-from .zh_cnki_batch_fulltext_download import download_batch as zh_batch_download
-from .zh_cnki_batch_html_extract import extract_batch as zh_batch_html
-from .zh_cnki_search_metadata import search_metadata as zh_search_metadata
-from .zh_cnki_single_fulltext_download import download_single as zh_single_download
-from .zh_cnki_single_html_extract import extract_single as zh_single_html
+from .online_retrieval_service import dispatch as dispatch_online_retrieval
 
 
 def _safe_run(func: Any, config: dict[str, Any]) -> dict[str, Any]:
@@ -210,67 +200,13 @@ def run_full_debug(script_dir: Path, payload: dict[str, Any] | None = None) -> d
 
 
 def route(payload: dict[str, Any]) -> dict[str, Any]:
+    """执行路由层治理并分发到功能层。"""
+
     payload = _inject_rules(payload)
-    source = str(payload.get("source") or "").strip()
-    mode = str(payload.get("mode") or "").strip()
-    action = str(payload.get("action") or "").strip()
-
-    if source == "all" and mode == "debug" and action == "run":
-        return run_full_debug(Path(__file__).resolve().parent, payload)
-
-    source = str(payload.get("source") or "").strip()
-    mode = str(payload.get("mode") or "").strip()
-    action = str(payload.get("action") or "").strip()
-
-    if source == "zh_cnki" and mode == "search" and action == "metadata":
-        return zh_search_metadata(payload)
-
-    if source == "zh_cnki" and mode == "single" and action == "download":
-        return zh_single_download(payload)
-
-    if source == "zh_cnki" and mode == "single" and action == "html_extract":
-        return zh_single_html(payload)
-
-    if source == "zh_cnki" and mode == "batch" and action == "download":
-        entries = list(payload.get("entries") or [])
-        if not entries:
-            raise ValueError("zh_cnki batch download 需要 entries 数组。")
-        return zh_batch_download(payload, entries)
-
-    if source == "zh_cnki" and mode == "batch" and action == "html_extract":
-        entries = list(payload.get("entries") or [])
-        if not entries:
-            raise ValueError("zh_cnki batch html_extract 需要 entries 数组。")
-        return zh_batch_html(payload, entries)
-
-    if source == "en_open_access" and mode == "search" and action == "metadata":
-        return en_search_metadata(payload)
-
-    if source == "en_open_access" and mode == "single" and action == "download":
-        record_payload = payload.get("record")
-        if not isinstance(record_payload, dict):
-            raise ValueError("en_open_access single download 需要 record 对象。")
-        return en_single_download(payload, en_to_record(record_payload))
-
-    if source == "en_open_access" and mode == "batch" and action == "download":
-        records = list(payload.get("records") or [])
-        if not records:
-            raise ValueError("en_open_access batch download 需要 records 数组。")
-        return en_batch_download(payload, records)
-
-    if source == "chaoxing_portal" and mode == "catalog" and action == "fetch":
-        return fetch_school_foreign_databases(payload)
-
-    if source == "school_foreign_database_portal" and mode == "catalog" and action == "fetch":
-        return fetch_school_foreign_databases(payload)
-
-    if source == "school_database_portal" and mode == "catalog" and action == "fetch":
-        return fetch_school_foreign_databases(payload)
-
-    if source == "en_open_access" and mode == "retry" and action == "chaoxing_portal":
-        return retry_en_failed_records_via_chaoxing(payload)
-
-    raise ValueError(f"不支持的路由组合: source={source}, mode={mode}, action={action}")
+    return dispatch_online_retrieval(
+        payload,
+        debug_handler=lambda merged_payload: run_full_debug(Path(__file__).resolve().parent, merged_payload),
+    )
 
 
 def _load_payload(args: argparse.Namespace) -> dict[str, Any]:
