@@ -380,6 +380,10 @@ def test_init_content_db_should_auto_migrate_legacy_schema(tmp_path: Path) -> No
             row[0]
             for row in conn.execute("SELECT name FROM sqlite_master WHERE type='table'")
         }
+        view_names = {
+            row[0]
+            for row in conn.execute("SELECT name FROM sqlite_master WHERE type='view'")
+        }
         index_names = {
             row[0]
             for row in conn.execute("SELECT name FROM sqlite_master WHERE type='index'")
@@ -390,13 +394,17 @@ def test_init_content_db_should_auto_migrate_legacy_schema(tmp_path: Path) -> No
         ).fetchone()
 
     assert migrated_row == ("lit-legacy-001", "legacy_001", "Legacy Paper")
-    assert "a07_queue_status" in literature_columns
-    assert "a08_queue_status" in literature_columns
-    assert "latest_parse_level" in literature_columns
-    assert "latest_parse_asset_dir" in literature_columns
+    assert "a05_scope_key" in literature_columns
+    assert "a05_current_rank" in literature_columns
+    assert "structured_status" in literature_columns
+    assert "structured_backend" in literature_columns
     assert "structured_abs_path" in literature_columns
     assert "literature_reading_queue" in table_names
+    assert "literature_reading_state" in table_names
     assert "literature_parse_assets" in table_names
-    assert "idx_lit_a07_status" in index_names
-    assert "idx_lit_a08_status" in index_names
+    assert "阅读状态总视图" in view_names
+    assert "待预处理文献清单" in view_names
+    assert "待批判性研读文献清单" in view_names
+    assert "idx_lit_a05_rank" in index_names
+    assert "idx_reading_state_preprocess" in index_names
     assert "idx_parse_asset_lit_level" in index_names
