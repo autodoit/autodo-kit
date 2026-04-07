@@ -1247,7 +1247,7 @@ print(outputs)
 - `demos/scripts/demo_tool_developer_get_tool_call.py`：开发者工具按名称读取并调用。
 - `demos/scripts/demo_tool_cli_call.py`：通过 `python -m autodokit.tools.adapters.cli` 调用工具。
 
-## 6. 内容主库新契约补记
+# 6. 内容主库新契约补记
 
 自 content.db 极简重构完成后，以下规则是新项目默认口径：
 
@@ -1255,3 +1255,43 @@ print(outputs)
 - 任何名为 `view` 的下游产物，默认都应理解为 CSV 导出物或阶段快照，而不是数据库视图。
 - A010 初始化脚本 `C:\Users\Ethan\.copilot\skills\A010_项目初始化_v5\scripts\generate_config.py` 会在初始化完成后写入自检结果，确保 `content.db` 零视图。
 - `review_read_pool_current_view`、`review_candidate_current_view`、`review_priority_current_view` 等旧 current view 仅保留在历史文档中，不再作为新项目运行时契约。
+
+## 7. 附录：AOK CLI 工具（aok_tool）简介
+
+项目内新增了轻量命令行工具包 `tools/aok_tool`，用于对 AOK 运行时日志与阅读队列执行常见检查与写入操作。工具目的是提供一个可复用的本地运维入口，便于脚本化操作与审计。
+
+安装位置（仓库内）：
+
+- `tools/aok_tool/aok.py` — 主入口，支持子命令 `write-log` 与 `list-queue`。
+- `tools/aok_tool/__init__.py` — 包标记。
+- `tools/aok_tool/README.md` — 使用说明与示例。
+
+主要子命令：
+
+- `write-log`：把一段文本写入 AOK 日志数据库（`workspace/database/logs/aok_log.db`），可通过 `--message` 传入字符串，或 `--message-file` 指定文件，或从标准输入读取。
+  - 典型示例：
+    - `python tools/aok_tool/aok.py write-log --workspace workspace --message "已完成 A080，准备启动 A090"`
+    - `python tools/aok_tool/aok.py write-log --workspace workspace --message-file ./notes/summary.txt`
+
+- `list-queue`：读取工作区内容数据库（`workspace/database/content/content.db`）并按阶段列出候选队列简要视图（JSON 输出）。支持 `--stage` 指定阶段（如 `A060`、`A080`、`A090`），`--limit` 控制返回数量。
+  - 典型示例：
+    - `python tools/aok_tool/aok.py list-queue --workspace workspace --stage A060 --limit 10`
+
+参数约定：
+
+- `--workspace` / `-w`：工作区根目录（相对于仓库根）；如果省略，工具尝试使用当前工作目录的 `workspace/` 子目录。
+- `--stage`：阅读队列阶段（`A060`/`A080`/`A090`/`A100` 等）。
+- `--message` / `--message-file`：写日志时使用。
+
+行为说明：
+
+- `write-log` 会使用 `autodokit.tools.atomic.log_aok` 的填写契约（`append_aok_log_event`）进行写入，优先尊重 `workspace/config/config.json` 中的 `paths.log_db_path` 配置。
+- 工具对数据库不可用的情况保持容错：尝试修复或返回友好错误，而非抛出未捕获异常。
+- `list-queue` 只是只读视图，默认不修改 `content.db`。
+
+建议：将常用检查脚本或 CI 步骤调用该工具，以保持日志写入与队列检查的一致性。工具为轻量运维入口，不替代事务级别的事务实现。
+
+若需把该工具注册为可执行模块（`python -m tools.aok_tool.aok` 或打包后 `pip install -e .`），可在仓库级 packaging/CI 中加入对应条目。
+
+--
+
