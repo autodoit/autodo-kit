@@ -78,7 +78,7 @@ autodo-kit 对外公开的是“事务内容 + 事务工具 + 本地运行时 AP
 | `manual_guidance` | string | 该文献的个性化阅读提示语。 |
 | `reading_objective` | string | 该文献的个性化阅读目标。 |
 | `priority` | number | 可选优先级。 |
-| `tags` | array[string] | 可选标签，例如 `method_transfer`。 |
+| `tags` | array of strings | 可选标签，例如 `method_transfer`。 |
 
 科学学科（Science of Science）示例模板：
 
@@ -464,6 +464,35 @@ result = migrate_workspace_paths(
 - `run_summary.json`
 - `report.md`
 - 每个 job 一个独立子目录
+
+#### 阿里百炼多模态解析后处理统一入口（llm_clients）
+
+用途：对阿里百炼多模态解析生成的 `reconstructed_content.md` 与 `normalized.structured.json` 做统一后处理、污染块剥离与轻量文本清洗。
+
+推荐入口：
+
+- `from autodokit.tools.llm_clients import postprocess_aliyun_multimodal_parse_outputs`
+
+说明：
+
+- 事务层与业务脚本不要直接导入 `autodokit.tools.aliyun_multimodal_postprocess_tools`；统一通过 `llm_clients.py` 的门面函数调用。
+- A060、A100 以及其它直接生成阿里百炼解析资产的 AOK 事务，都会在解析完成后自动调用该入口。
+- `autodokit.tools.__init__` 不再对外公开该函数，避免绕过统一门面。
+
+最小示例：
+
+```python
+from autodokit.tools.llm_clients import postprocess_aliyun_multimodal_parse_outputs
+
+summary = postprocess_aliyun_multimodal_parse_outputs(
+  normalized_structured_path=r"D:\outputs\paper\normalized.structured.json",
+  reconstructed_markdown_path=r"D:\outputs\paper\reconstructed_content.md",
+  rewrite_structured=True,
+  rewrite_markdown=True,
+  keep_page_markers=False,
+)
+print(summary["postprocessed_markdown_path"])
+```
 
 ### 2.2.3 AOK 日志数据库工具（autodokit.tools.atomic.log_aok）
 

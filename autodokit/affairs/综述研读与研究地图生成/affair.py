@@ -118,8 +118,8 @@ CONSENSUS_THEME_DEFS: Tuple[Tuple[str, Tuple[str, ...]], ...] = (
 
 DEFAULT_EVIDENCE_CONSTRAINED_LINE_TARGETS: Dict[str, int] = {
     "领域研究脉络.md": 5,
-    "core_findings.md": 5,
-    "future_directions_notes.md": 5,
+    "核心成果.md": 5,
+    "未来方向.md": 5,
     "领域知识框架.md": 4,
     "创新点补写.md": 6,
 }
@@ -201,10 +201,10 @@ def _a05_asset_paths(workspace_root: Path) -> Dict[str, Path]:
     dirs = _a05_dirs(workspace_root)
     return {
         "trajectory_seed": dirs["trajectories"] / "领域研究脉络.md",
-        "core_findings": dirs["review_summaries"] / "core_findings.md",
-        "consensus_notes": dirs["review_summaries"] / "consensus_notes.md",
-        "controversy_notes": dirs["review_summaries"] / "controversy_notes.md",
-        "future_directions_notes": dirs["review_summaries"] / "future_directions_notes.md",
+        "core_findings": dirs["review_summaries"] / "核心成果.md",
+        "consensus_notes": dirs["review_summaries"] / "共识点.md",
+        "controversy_notes": dirs["review_summaries"] / "争议点.md",
+        "future_directions_notes": dirs["review_summaries"] / "未来方向.md",
         "knowledge_framework": dirs["frameworks"] / "领域知识框架.md",
         "innovation_seed": dirs["innovation_pool"] / "创新点补写.md",
         "consensus_csv": dirs["audits"] / "consensus_list.csv",
@@ -1276,7 +1276,7 @@ def _render_composite_note_body(
         ]
         return "\n".join(sections).rstrip() + "\n"
 
-    if note_name == "consensus_notes.md":
+    if note_name == "共识点.md":
         sections = [
             f"# {body_title}",
             "",
@@ -1294,7 +1294,7 @@ def _render_composite_note_body(
         ]
         return "\n".join(sections).rstrip() + "\n"
 
-    if note_name == "controversy_notes.md":
+    if note_name == "争议点.md":
         sections = [
             f"# {body_title}",
             "",
@@ -1315,7 +1315,7 @@ def _render_composite_note_body(
         ]
         return "\n".join(sections).rstrip() + "\n"
 
-    if note_name == "future_directions_notes.md":
+    if note_name == "未来方向.md":
         sections = [
             f"# {body_title}",
             "",
@@ -1861,11 +1861,11 @@ def execute(config_path: Path) -> List[Path]:
 
     trajectory_summary_lines = _maybe_generate_summary_lines("领域研究脉络.md", trajectory_summary_lines)
     core_summary_lines = _maybe_generate_summary_lines(
-        "core_findings.md",
+        "核心成果.md",
         _composite_evidence_lines(review_states, "core_findings"),
     )
     future_summary_lines = _maybe_generate_summary_lines(
-        "future_directions_notes.md",
+        "未来方向.md",
         _future_summary_lines(future_df),
     )
     framework_summary_lines = _maybe_generate_summary_lines(
