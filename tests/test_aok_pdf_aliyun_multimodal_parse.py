@@ -1,4 +1,4 @@
-"""多模态文档 tools 回归测试。"""
+﻿"""多模态文档 tools 回归测试。"""
 
 from __future__ import annotations
 
@@ -8,12 +8,12 @@ import sqlite3
 
 import pandas as pd
 
-from autodokit.tools.aok_pdf_aliyun_multimodal_batch_manage import batch_manage_pdf_with_aliyun_multimodal
-from autodokit.tools.aok_pdf_aliyun_multimodal_parse import parse_pdf_with_aliyun_multimodal
-from autodokit.tools.aliyun_multimodal_postprocess_tools import postprocess_aliyun_multimodal_parse_outputs
+from autodokit.tools.ocr.aliyun_multimodal.aok_pdf_aliyun_multimodal_batch_manage import batch_manage_pdf_with_aliyun_multimodal
+from autodokit.tools.ocr.aliyun_multimodal.aok_pdf_aliyun_multimodal_parse import parse_pdf_with_aliyun_multimodal
+from autodokit.tools.ocr.aliyun_multimodal.aliyun_multimodal_postprocess_tools import postprocess_aliyun_multimodal_parse_outputs
 from autodokit.tools.bibliodb_sqlite import load_literatures_df, load_parse_assets_df, save_tables
 from autodokit.tools.contentdb_sqlite import init_content_db
-from autodokit.tools.pdf_parse_asset_manager import ensure_multimodal_parse_asset
+from autodokit.tools.ocr.classic.pdf_parse_asset_manager import ensure_multimodal_parse_asset
 
 
 class _FakeClient:
@@ -75,7 +75,7 @@ def test_parse_pdf_with_aliyun_multimodal_should_create_required_outputs(monkeyp
     page_image.write_bytes(b"png")
 
     monkeypatch.setattr(
-        "autodokit.tools.aok_pdf_aliyun_multimodal_parse.render_pdf_pages_to_png",
+        "autodokit.tools.ocr.aliyun_multimodal.aok_pdf_aliyun_multimodal_parse.render_pdf_pages_to_png",
         lambda *args, **kwargs: [
             {
                 "page_index": 0,
@@ -89,15 +89,15 @@ def test_parse_pdf_with_aliyun_multimodal_should_create_required_outputs(monkeyp
         ],
     )
     monkeypatch.setattr(
-        "autodokit.tools.aok_pdf_aliyun_multimodal_parse.extract_images_with_pymupdf",
+        "autodokit.tools.ocr.aliyun_multimodal.aok_pdf_aliyun_multimodal_parse.extract_images_with_pymupdf",
         lambda *args, **kwargs: ([], type("Status", (), {"enabled": True, "disabled_reason": ""})()),
     )
     monkeypatch.setattr(
-        "autodokit.tools.aok_pdf_aliyun_multimodal_parse.load_aliyun_llm_config",
+        "autodokit.tools.ocr.aliyun_multimodal.aok_pdf_aliyun_multimodal_parse.load_aliyun_llm_config",
         lambda **kwargs: _FakeConfig(),
     )
     monkeypatch.setattr(
-        "autodokit.tools.aok_pdf_aliyun_multimodal_parse.AliyunDashScopeClient",
+        "autodokit.tools.ocr.aliyun_multimodal.aok_pdf_aliyun_multimodal_parse.AliyunDashScopeClient",
         _FakeClient,
     )
 
@@ -140,7 +140,7 @@ def test_batch_manage_pdf_with_aliyun_multimodal_should_use_named_output_field(m
         }
 
     monkeypatch.setattr(
-        "autodokit.tools.aok_pdf_aliyun_multimodal_batch_manage.parse_pdf_with_aliyun_multimodal",
+        "autodokit.tools.ocr.aliyun_multimodal.aok_pdf_aliyun_multimodal_batch_manage.parse_pdf_with_aliyun_multimodal",
         _fake_parse,
     )
 
@@ -228,7 +228,7 @@ def test_ensure_multimodal_parse_asset_should_register_normalized_structured(mon
         }
 
     monkeypatch.setattr(
-        "autodokit.tools.pdf_parse_asset_manager.parse_pdf_with_aliyun_multimodal",
+        "autodokit.tools.ocr.classic.pdf_parse_asset_manager.parse_pdf_with_aliyun_multimodal",
         _fake_parse,
     )
 
@@ -313,11 +313,11 @@ def test_postprocess_aliyun_multimodal_parse_outputs_should_remove_cross_article
             )
 
     monkeypatch.setattr(
-        "autodokit.tools.aliyun_multimodal_postprocess_tools.load_aliyun_llm_config",
+        "autodokit.tools.ocr.aliyun_multimodal.aliyun_multimodal_postprocess_tools.load_aliyun_llm_config",
         lambda **kwargs: _FakeLLMConfig(),
     )
     monkeypatch.setattr(
-        "autodokit.tools.aliyun_multimodal_postprocess_tools.AliyunDashScopeClient",
+        "autodokit.tools.ocr.aliyun_multimodal.aliyun_multimodal_postprocess_tools.AliyunDashScopeClient",
         _FakeLLMClient,
     )
 

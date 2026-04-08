@@ -1,4 +1,4 @@
-"""PDF 转结构化事务测试。"""
+﻿"""PDF 转结构化事务测试。"""
 
 from __future__ import annotations
 
@@ -9,7 +9,7 @@ from pathlib import Path
 import pandas as pd
 
 from autodokit.tools.bibliodb_sqlite import get_structured_state, save_tables
-from autodokit.tools.pdf_structured_data_tools import build_structured_data_payload
+from autodokit.tools.ocr.classic.pdf_structured_data_tools import build_structured_data_payload
 
 
 def test_pdf_to_structured_affair_should_route_to_variant_dir_and_update_content_db(
@@ -98,3 +98,4 @@ def test_pdf_to_structured_affair_should_route_to_variant_dir_and_update_content
     assert state["structured_task_type"] == "reference_context"
     assert state["structured_path_local_pipeline_v2_reference_context"] == str(structured_outputs[0])
     assert not state["structured_path_babeldoc_reference_context"]
+

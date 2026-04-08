@@ -1,8 +1,8 @@
-"""高精度多模态结构树工具测试。"""
+﻿"""高精度多模态结构树工具测试。"""
 
 from __future__ import annotations
 
-from autodokit.tools.pdf_multimodal_tree_builder import (
+from autodokit.tools.ocr.aliyun_multimodal.pdf_multimodal_tree_builder import (
     build_elements_payload,
     build_quality_report,
     build_tree_linear_index,

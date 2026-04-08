@@ -1,4 +1,4 @@
-"""通用流程事务最小样例测试。"""
+﻿"""通用流程事务最小样例测试。"""
 
 from __future__ import annotations
 
@@ -10,7 +10,7 @@ from pathlib import Path
 import pandas as pd
 
 from autodokit.tools.bibliodb_sqlite import load_chunk_sets_df, load_chunks_df, load_reading_queue_df, upsert_reading_queue_rows
-from autodokit.tools.pdf_structured_data_tools import build_structured_data_payload
+from autodokit.tools.ocr.classic.pdf_structured_data_tools import build_structured_data_payload
 from autodokit.tools.storage_backend import persist_reference_main_table, persist_reference_tables
 
 
@@ -1410,3 +1410,4 @@ def test_single_reading_should_accept_structured_json_without_llm(tmp_path: Path
     note_path = output_dir / "single_reading_lit-001.md"
     assert note_path in outputs
     assert "核心内容速记" in note_path.read_text(encoding="utf-8")
+
