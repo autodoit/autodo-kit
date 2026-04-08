@@ -1,4 +1,4 @@
-"""A070 单篇综述精读包工具。"""
+﻿"""A070 单篇综述精读包工具。"""
 
 from __future__ import annotations
 
@@ -7,7 +7,7 @@ import re
 from pathlib import Path
 from typing import Any, Dict, List
 
-from autodokit.tools.pdf_structured_data_tools import (
+from autodokit.tools.ocr.classic.pdf_structured_data_tools import (
     extract_reference_lines_from_structured_data,
     load_structured_data,
     split_text_to_paragraphs,
@@ -328,3 +328,4 @@ def build_review_reading_packet(
 
 
 __all__ = ["build_review_reading_packet", "resolve_review_text_by_priority"]
+

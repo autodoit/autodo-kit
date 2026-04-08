@@ -1,4 +1,4 @@
-"""LLM 客户端封装与智能路由。
+﻿"""LLM 客户端封装与智能路由。
 
 本模块用于统一封装阿里百炼（DashScope）调用，提供以下能力：
 - 统一读取 API Key（不在仓库中硬编码密钥）。
@@ -1492,7 +1492,7 @@ def postprocess_aliyun_multimodal_parse_outputs(*args: Any, **kwargs: Any) -> Di
         >>> postprocess_aliyun_multimodal_parse_outputs(normalized_structured_path='...')
     """
 
-    from autodokit.tools.aliyun_multimodal_postprocess_tools import postprocess_aliyun_multimodal_parse_outputs as _impl
+    from autodokit.tools.ocr.aliyun_multimodal.aliyun_multimodal_postprocess_tools import postprocess_aliyun_multimodal_parse_outputs as _impl
 
     return _impl(*args, **kwargs)
 
@@ -1592,3 +1592,4 @@ def invoke_aliyun_llm(
 
 # 为兼容历史调用名，保留别名。
 AliyunDashScopeClient = AliyunLLMClient
+

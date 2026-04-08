@@ -282,7 +282,7 @@ def _extract_reference_line_details_from_text(text: str) -> List[Dict[str, Any]]
 
     raw_chunks: List[str] = []
     try:
-        from autodokit.tools.pdf_elements_extractors import extract_references_from_full_text
+        from autodokit.tools.ocr.classic.pdf_elements_extractors import extract_references_from_full_text
 
         structured_refs, _status = extract_references_from_full_text(text)
         raw_chunks = [
@@ -369,7 +369,7 @@ def _read_pdf_text(pdf_path: Path) -> Tuple[str, str]:
         pass
 
     try:
-        from autodokit.tools.pdf_elements_extractors import extract_text_with_rapidocr
+        from autodokit.tools.ocr.classic.pdf_elements_extractors import extract_text_with_rapidocr
 
         text, status, _meta = extract_text_with_rapidocr(pdf_path)
         if text.strip():
@@ -1405,3 +1405,4 @@ def process_reference_citation(
     if print_to_stdout:
         print(json.dumps(result, ensure_ascii=False, indent=2))
     return working, result
+
