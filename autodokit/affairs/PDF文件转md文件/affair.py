@@ -16,7 +16,7 @@ from pathlib import Path
 from typing import Any, Dict, List
 
 from autodokit.tools import load_json_or_py
-from autodokit.tools.pdf_to_markdown_converter_use_markitdown import convert_pdf_to_markdown_file as _convert_with_markitdown
+from autodokit.tools.ocr.classic.pdf_to_markdown_converter_use_markitdown import convert_pdf_to_markdown_file as _convert_with_markitdown
 
 
 @dataclass
@@ -260,5 +260,6 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
+
 
 

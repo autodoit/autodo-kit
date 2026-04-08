@@ -1,4 +1,4 @@
-"""AOK 工具统一导出入口。
+﻿"""AOK 工具统一导出入口。
 
 本模块采用“直调函数优先”的设计：
 
@@ -432,7 +432,7 @@ from autodokit.tools.review_reading_packet_tools import (
     build_review_reading_packet,
     resolve_review_text_by_priority,
 )
-from autodokit.tools.pdf_structured_data_tools import (
+from autodokit.tools.ocr.classic.pdf_structured_data_tools import (
     build_chunk_entries_from_structured_data,
     build_doc_record_from_structured_data,
     build_structured_data_payload,
@@ -443,32 +443,32 @@ from autodokit.tools.pdf_structured_data_tools import (
     load_structured_data,
     write_chunk_shards,
 )
-from autodokit.tools.pdf_structured_element_extractor_from_babeldoc import (
+from autodokit.tools.ocr.babeldoc.pdf_structured_element_extractor_from_babeldoc import (
     extract_pdf_elements_from_structured_data,
     extract_pdf_elements_from_structured_file,
 )
-from autodokit.tools.pdf_page_image_tools import (
+from autodokit.tools.ocr.classic.pdf_page_image_tools import (
     crop_image_by_normalized_bbox,
     render_pdf_pages_to_png,
 )
-from autodokit.tools.pdf_multimodal_tree_builder import (
+from autodokit.tools.ocr.aliyun_multimodal.pdf_multimodal_tree_builder import (
     build_elements_payload as build_pdf_multimodal_elements_payload,
     build_quality_report as build_pdf_multimodal_quality_report,
     build_tree_linear_index as build_pdf_multimodal_tree_linear_index,
     build_structure_tree as build_pdf_multimodal_structure_tree,
     render_reconstructed_markdown as render_pdf_multimodal_reconstructed_markdown,
 )
-from autodokit.tools.monkeyocr_windows_tools import (
+from autodokit.tools.ocr.monkeyocr.monkeyocr_windows_tools import (
     prepare_monkeyocr_windows_runtime,
     run_monkeyocr_windows_single_pdf,
 )
-from autodokit.tools.aok_pdf_aliyun_multimodal_parse import (
+from autodokit.tools.ocr.aliyun_multimodal.aok_pdf_aliyun_multimodal_parse import (
     build_aliyun_multimodal_chunks,
     generate_aok_pdf_parse_uid,
     parse_pdf_with_aliyun_multimodal,
     resolve_aok_pdf_parse_output_dir,
 )
-from autodokit.tools.aok_pdf_aliyun_multimodal_batch_manage import (
+from autodokit.tools.ocr.aliyun_multimodal.aok_pdf_aliyun_multimodal_batch_manage import (
     batch_manage_pdf_with_aliyun_multimodal,
 )
 from autodokit.tools.workspace_path_migration import (
@@ -881,3 +881,4 @@ def get_tool(tool_name: str, *, scope: str = "user") -> Callable[..., Any]:
 
 
 __all__ = list(_用户公开工具)
+

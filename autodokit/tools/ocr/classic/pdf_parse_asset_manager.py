@@ -1,4 +1,4 @@
-"""PDF 解析资产管理工具。
+﻿"""PDF 解析资产管理工具。
 
 负责把阿里百炼多模态解析结果注册为统一可复用的解析资产，并补写
 兼容旧消费者的 `aok.pdf_structured.v3` 文件入口。
@@ -10,7 +10,7 @@ import json
 from pathlib import Path
 from typing import Any, Dict
 
-from autodokit.tools.aok_pdf_aliyun_multimodal_parse import parse_pdf_with_aliyun_multimodal
+from autodokit.tools.ocr.aliyun_multimodal.aok_pdf_aliyun_multimodal_parse import parse_pdf_with_aliyun_multimodal
 from autodokit.tools.bibliodb_sqlite import (
     load_attachments_df,
     load_literatures_df,
@@ -19,8 +19,8 @@ from autodokit.tools.bibliodb_sqlite import (
     upsert_parse_asset_rows,
 )
 from autodokit.tools.contentdb_sqlite import infer_workspace_root_from_content_db
-from autodokit.tools.pdf_elements_extractors import extract_text_with_rapidocr
-from autodokit.tools.pdf_structured_data_tools import build_structured_data_payload
+from autodokit.tools.ocr.classic.pdf_elements_extractors import extract_text_with_rapidocr
+from autodokit.tools.ocr.classic.pdf_structured_data_tools import build_structured_data_payload
 
 
 def _stringify(value: Any) -> str:

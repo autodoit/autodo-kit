@@ -27,7 +27,7 @@ from typing import Any, Dict, List, Optional
 from autodokit.tools.llm_clients import AliyunDashScopeClient, load_aliyun_llm_config
 from autodokit.tools import load_json_or_py
 from autodokit.tools.contentdb_sqlite import resolve_content_db_config
-from autodokit.tools.pdf_structured_data_tools import load_document_records_from_structured_source
+from autodokit.tools.ocr.classic.pdf_structured_data_tools import load_document_records_from_structured_source
 
 
 @dataclass
@@ -180,4 +180,5 @@ def execute(config_path: Path) -> List[Path]:
     )
 
     return [out_path]
+
 

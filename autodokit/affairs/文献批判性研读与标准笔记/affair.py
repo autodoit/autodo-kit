@@ -1,4 +1,4 @@
-"""A105 文献批判性研读与标准笔记事务。"""
+﻿"""A105 文献批判性研读与标准笔记事务。"""
 
 from __future__ import annotations
 
@@ -12,8 +12,8 @@ from autodokit.tools import append_aok_log_event, build_gate_review, knowledge_i
 from autodokit.tools.llm_clients import postprocess_aliyun_multimodal_parse_outputs
 from autodokit.tools.bibliodb_sqlite import load_reading_state_df, upsert_reading_state_rows
 from autodokit.tools.contentdb_sqlite import CONTENT_DB_DIRECTORY_NAME, DEFAULT_CONTENT_DB_NAME, resolve_content_db_config
-from autodokit.tools.pdf_parse_asset_manager import ensure_multimodal_parse_asset, ensure_pdf_text_fallback_asset
-from autodokit.tools.pdf_structured_data_tools import load_single_document_record
+from autodokit.tools.ocr.classic.pdf_parse_asset_manager import ensure_multimodal_parse_asset, ensure_pdf_text_fallback_asset
+from autodokit.tools.ocr.classic.pdf_structured_data_tools import load_single_document_record
 from autodokit.tools.reading_state_tools import build_followup_candidate_state_row
 from autodokit.tools.storage_backend import load_knowledge_tables, load_reference_tables, persist_knowledge_tables, persist_reference_tables
 from autodokit.tools.atomic.task_aok.post_affair_git_commit import affair_auto_git_commit
@@ -407,3 +407,4 @@ def execute(config_path: Path) -> List[Path]:
         pass
 
     return [index_path, gate_path]
+

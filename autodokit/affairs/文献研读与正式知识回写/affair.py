@@ -1,4 +1,4 @@
-"""A100 文献精解析资产化事务。"""
+﻿"""A100 文献精解析资产化事务。"""
 
 from __future__ import annotations
 
@@ -11,8 +11,8 @@ import pandas as pd
 from autodokit.tools import append_aok_log_event, build_gate_review, load_json_or_py
 from autodokit.tools.bibliodb_sqlite import load_reading_state_df, upsert_reading_state_rows
 from autodokit.tools.contentdb_sqlite import CONTENT_DB_DIRECTORY_NAME, DEFAULT_CONTENT_DB_NAME, resolve_content_db_config
-from autodokit.tools.aliyun_multimodal_postprocess_tools import postprocess_aliyun_multimodal_parse_outputs
-from autodokit.tools.pdf_parse_asset_manager import ensure_multimodal_parse_asset, ensure_pdf_text_fallback_asset
+from autodokit.tools.ocr.aliyun_multimodal.aliyun_multimodal_postprocess_tools import postprocess_aliyun_multimodal_parse_outputs
+from autodokit.tools.ocr.classic.pdf_parse_asset_manager import ensure_multimodal_parse_asset, ensure_pdf_text_fallback_asset
 from autodokit.tools.atomic.task_aok.post_affair_git_commit import affair_auto_git_commit
 
 
@@ -299,3 +299,4 @@ def execute(config_path: Path) -> List[Path]:
         pass
 
     return [index_path]
+

@@ -1,4 +1,4 @@
-"""阿里百炼多模态 PDF 单篇解析工具。
+﻿"""阿里百炼多模态 PDF 单篇解析工具。
 
 本工具只负责单篇 PDF 的阿里百炼多模态解析，不接入 BabelDOC 或旧 PDF 解析链。
 默认始终生成结构树、线性索引、chunks、解析记录和质量报告，并为每个 PDF
@@ -16,15 +16,15 @@ from typing import Any, Dict, Iterable, List, Optional, Sequence
 
 from autodokit.tools.llm_clients import AliyunDashScopeClient, LLMConfigError, load_aliyun_llm_config
 from autodokit.tools.llm_parsing import LLMOutputParseError, parse_json_object_from_text
-from autodokit.tools.pdf_elements_extractors import extract_images_with_pymupdf, extract_references_from_full_text
-from autodokit.tools.pdf_multimodal_tree_builder import (
+from autodokit.tools.ocr.classic.pdf_elements_extractors import extract_images_with_pymupdf, extract_references_from_full_text
+from autodokit.tools.ocr.aliyun_multimodal.pdf_multimodal_tree_builder import (
     build_elements_payload,
     build_quality_report,
     build_tree_linear_index,
     build_structure_tree,
     render_reconstructed_markdown,
 )
-from autodokit.tools.pdf_page_image_tools import crop_image_by_normalized_bbox, render_pdf_pages_to_png
+from autodokit.tools.ocr.classic.pdf_page_image_tools import crop_image_by_normalized_bbox, render_pdf_pages_to_png
 from autodokit.tools.time_utils import now_compact, now_iso
 
 

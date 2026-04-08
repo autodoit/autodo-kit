@@ -353,7 +353,7 @@ def _split_sentences(text: str) -> List[Dict[str, Any]]:
 
 def _extract_reference_lines_from_text(text: str) -> List[str]:
     try:
-        from autodokit.tools.pdf_elements_extractors import extract_references_from_full_text
+        from autodokit.tools.ocr.classic.pdf_elements_extractors import extract_references_from_full_text
 
         structured_refs, _status = extract_references_from_full_text(text)
         extracted = [
@@ -2060,3 +2060,4 @@ def execute(config_path: Path) -> List[Path]:
         pass
 
     return [*artifacts, gate_path]
+

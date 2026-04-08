@@ -1,4 +1,4 @@
-"""向量化与索引构建事务（第一版：TF-IDF）。
+﻿"""向量化与索引构建事务（第一版：TF-IDF）。
 
 本事务基于 chunk manifest 或统一内容主库中的 chunk 集索引生成检索向量。
 
@@ -33,7 +33,7 @@ from typing import Any, Dict, List, Tuple
 from autodokit.tools import load_json_or_py
 from autodokit.tools.bibliodb_sqlite import load_chunk_sets_df
 from autodokit.tools.contentdb_sqlite import resolve_content_db_config
-from autodokit.tools.pdf_structured_data_tools import iter_chunk_files_from_manifest
+from autodokit.tools.ocr.classic.pdf_structured_data_tools import iter_chunk_files_from_manifest
 
 
 @dataclass
@@ -235,4 +235,5 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
+
 

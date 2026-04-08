@@ -32,7 +32,7 @@ except ModuleNotFoundError:  # pragma: no cover - 联调环境兼容回退
     from autodoengine.core.template_affair import TemplateAffairBase
 from autodokit.tools.contentdb_sqlite import resolve_content_db_config
 from autodokit.tools.llm_clients import AliyunDashScopeClient, load_aliyun_llm_config
-from autodokit.tools.pdf_structured_data_tools import load_document_records_from_structured_source
+from autodokit.tools.ocr.classic.pdf_structured_data_tools import load_document_records_from_structured_source
 from autodokit.tools.atomic.task_aok.post_affair_git_commit import affair_auto_git_commit
 
 
@@ -239,4 +239,5 @@ def execute(config_path: Path, workspace_root: Path | None = None) -> List[Path]
 
     affair = LiteratureMatrixTemplateAffair()
     return affair.execute(config_path=config_path, workspace_root=workspace_root)
+
 

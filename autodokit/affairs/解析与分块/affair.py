@@ -14,7 +14,7 @@ from typing import Any, Dict, List, Optional
 from autodokit.tools import load_json_or_py
 from autodokit.tools.bibliodb_sqlite import load_literatures_df, replace_chunk_set_records
 from autodokit.tools.contentdb_sqlite import resolve_content_db_config
-from autodokit.tools.pdf_structured_data_tools import (
+from autodokit.tools.ocr.classic.pdf_structured_data_tools import (
     build_chunk_entries_from_structured_data,
     load_structured_data,
     write_chunk_shards,
@@ -207,5 +207,6 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
+
 
 

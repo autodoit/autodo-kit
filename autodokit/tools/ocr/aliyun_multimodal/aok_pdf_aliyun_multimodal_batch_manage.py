@@ -1,4 +1,4 @@
-"""阿里百炼多模态 PDF 批量管理工具。"""
+﻿"""阿里百炼多模态 PDF 批量管理工具。"""
 
 from __future__ import annotations
 
@@ -6,7 +6,7 @@ import json
 from pathlib import Path
 from typing import Any, Dict, Iterable, List
 
-from autodokit.tools.aok_pdf_aliyun_multimodal_parse import parse_pdf_with_aliyun_multimodal
+from autodokit.tools.ocr.aliyun_multimodal.aok_pdf_aliyun_multimodal_parse import parse_pdf_with_aliyun_multimodal
 from autodokit.tools.time_utils import now_iso
 
 

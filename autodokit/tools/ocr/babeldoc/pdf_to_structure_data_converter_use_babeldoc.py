@@ -1,4 +1,4 @@
-"""PDF 转结构化数据：BabelDOC 转换器封装。
+﻿"""PDF 转结构化数据：BabelDOC 转换器封装。
 
 本模块在工具层封装使用 BabelDOC 将单个 PDF 转为“适合大模型读取与解析”的结构化数据。
 
@@ -30,15 +30,15 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Dict, Optional
 
-from autodokit.tools.pdf_elements_extractors import (
+from autodokit.tools.ocr.classic.pdf_elements_extractors import (
     extract_images_with_pymupdf,
     extract_references_from_full_text,
 )
-from autodokit.tools.babeldoc_intermediate_artifacts import (
+from autodokit.tools.ocr.babeldoc.babeldoc_intermediate_artifacts import (
     export_babeldoc_intermediate_artifacts,
     parse_layout_elements_from_babeldoc_intermediate,
 )
-from autodokit.tools.pdf_structured_data_tools import build_structured_data_payload
+from autodokit.tools.ocr.classic.pdf_structured_data_tools import build_structured_data_payload
 
 
 @dataclass(frozen=True)
@@ -348,3 +348,4 @@ def convert_pdf_to_structured_data_file(
         encoding=encoding,
     )
     return output_path
+

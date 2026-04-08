@@ -1,4 +1,4 @@
-"""候选文献视图构建事务。"""
+﻿"""候选文献视图构建事务。"""
 
 from __future__ import annotations
 
@@ -30,12 +30,12 @@ from autodokit.tools import (
     refine_reference_lines_with_llm,
 )
 from autodokit.tools.llm_clients import postprocess_aliyun_multimodal_parse_outputs
-from autodokit.tools.pdf_parse_asset_manager import ensure_multimodal_parse_asset
+from autodokit.tools.ocr.classic.pdf_parse_asset_manager import ensure_multimodal_parse_asset
 from autodokit.tools.bibliodb_sqlite import replace_tags_for_namespace, save_structured_state
 from autodokit.tools.bibliodb_sqlite import replace_tags_for_namespace, save_structured_state, upsert_reading_queue_rows
 from autodokit.tools.contentdb_sqlite import get_pdf_structured_variant_column, resolve_content_db_config, resolve_pdf_structured_variant_output_dir
-from autodokit.tools.pdf_to_structured_data_converter_local_pipeline_v2 import convert_pdf_to_structured_data_file as convert_pdf_to_structured_data_file_local_v2
-from autodokit.tools.pdf_to_structure_data_converter_use_babeldoc import convert_pdf_to_structured_data_file as convert_pdf_to_structured_data_file_babeldoc
+from autodokit.tools.ocr.classic.pdf_to_structured_data_converter_local_pipeline_v2 import convert_pdf_to_structured_data_file as convert_pdf_to_structured_data_file_local_v2
+from autodokit.tools.ocr.babeldoc.pdf_to_structure_data_converter_use_babeldoc import convert_pdf_to_structured_data_file as convert_pdf_to_structured_data_file_babeldoc
 from autodokit.tools.storage_backend import (
     load_knowledge_tables,
     load_reference_main_table,
@@ -44,7 +44,7 @@ from autodokit.tools.storage_backend import (
     persist_review_candidate_views,
 )
 from autodokit.tools.atomic.task_aok.post_affair_git_commit import affair_auto_git_commit
-from autodokit.tools.pdf_structured_data_tools import (
+from autodokit.tools.ocr.classic.pdf_structured_data_tools import (
     extract_reference_lines_from_structured_data,
     load_structured_data,
 )
@@ -461,7 +461,7 @@ def _extract_reference_lines_from_text(text: str) -> List[str]:
     """从全文文本提取参考文献行。"""
 
     try:
-        from autodokit.tools.pdf_elements_extractors import extract_references_from_full_text
+        from autodokit.tools.ocr.classic.pdf_elements_extractors import extract_references_from_full_text
 
         structured_refs, _status = extract_references_from_full_text(text)
         extracted = [
@@ -529,7 +529,7 @@ def _read_pdf_text(pdf_path: Path) -> str:
         pass
 
     try:
-        from autodokit.tools.pdf_elements_extractors import extract_text_with_rapidocr
+        from autodokit.tools.ocr.classic.pdf_elements_extractors import extract_text_with_rapidocr
 
         text, status, _meta = extract_text_with_rapidocr(pdf_path)
         if text.strip():

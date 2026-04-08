@@ -1,4 +1,4 @@
-"""PDF 结构化结果与分块工具。"""
+﻿"""PDF 结构化结果与分块工具。"""
 
 from __future__ import annotations
 
@@ -7,7 +7,7 @@ import re
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional, Sequence
 
-from autodokit.tools.pdf_elements_extractors import extract_references_from_full_text
+from autodokit.tools.ocr.classic.pdf_elements_extractors import extract_references_from_full_text
 from autodokit.tools.time_utils import now_iso
 
 

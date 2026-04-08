@@ -588,7 +588,7 @@ MonkeyOCR 单篇解析的输出契约建议统一如下：
 
 说明：
 
-- 事务层与业务脚本不要直接导入 `autodokit.tools.aliyun_multimodal_postprocess_tools`；统一通过 `llm_clients.py` 的门面函数调用。
+- 事务层与业务脚本不要直接导入 `autodokit.tools.ocr.aliyun_multimodal.aliyun_multimodal_postprocess_tools`；统一通过 `llm_clients.py` 的门面函数调用。
 - A060、A100 以及其它直接生成阿里百炼解析资产的 AOK 事务，都会在解析完成后自动调用该入口。
 - `autodokit.tools.__init__` 不再对外公开该函数，避免绕过统一门面。
 
@@ -1407,4 +1407,5 @@ print(outputs)
 若需把该工具注册为可执行模块（`python -m tools.aok_tool.aok` 或打包后 `pip install -e .`），可在仓库级 packaging/CI 中加入对应条目。
 
 --
+
 

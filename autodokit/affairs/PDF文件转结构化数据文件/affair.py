@@ -30,13 +30,13 @@ from autodokit.tools.contentdb_sqlite import (
     resolve_content_db_config,
     resolve_pdf_structured_variant_output_dir,
 )
-from autodokit.tools.pdf_to_structured_data_converter_local_pipeline_v2 import (
+from autodokit.tools.ocr.classic.pdf_to_structured_data_converter_local_pipeline_v2 import (
     convert_pdf_to_structured_data_file as convert_pdf_to_structured_data_file_local_v2,
 )
-from autodokit.tools.pdf_to_structure_data_converter_use_babeldoc import (
+from autodokit.tools.ocr.babeldoc.pdf_to_structure_data_converter_use_babeldoc import (
     convert_pdf_to_structured_data_file as convert_pdf_to_structured_data_file_babeldoc,
 )
-from autodokit.tools.pdf_structured_data_tools import load_structured_data
+from autodokit.tools.ocr.classic.pdf_structured_data_tools import load_structured_data
 
 
 @dataclass
@@ -350,5 +350,6 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
+
 
 
