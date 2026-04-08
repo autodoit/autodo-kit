@@ -196,8 +196,13 @@ def _parse_page_with_model(
         debug_dir=debug_dir,
         debug_prefix=f"page_{int(page_record.get('page_number') or 0):04d}",
     )
-    if "page_index" not in payload:
-        payload["page_index"] = int(page_record.get("page_index") or 0)
+    raw_page_index = payload.get("page_index")
+    try:
+        payload["model_page_index"] = int(raw_page_index)
+    except (TypeError, ValueError):
+        payload["model_page_index"] = None
+    # 始终使用本地页记录页号，避免模型回传页号污染结构化顺序。
+    payload["page_index"] = int(page_record.get("page_index") or 0)
     if not isinstance(payload.get("elements"), list):
         payload["elements"] = []
     return payload
@@ -596,6 +601,8 @@ def parse_pdf_with_aliyun_multimodal(
         last_error = ""
         inspection_blocked = False
         inspection_retry_used = False
+        canonical_page_index = int(page_record.get("page_index") or 0)
+        canonical_page_number = int(page_record.get("page_number") or (canonical_page_index + 1))
         for attempt in range(1, max_retries + 1):
             try:
                 page_result = _parse_page_with_model(
@@ -608,10 +615,21 @@ def parse_pdf_with_aliyun_multimodal(
                     temperature=temperature,
                     max_output_tokens=max_output_tokens,
                 )
-                if attempt > 1:
-                    page_result["retry_count"] = attempt - 1
+                retry_count = max(attempt - 1, 0)
+                if retry_count > 0:
+                    page_result["retry_count"] = retry_count
+                page_result["canonical_page_index"] = canonical_page_index
+                page_result["canonical_page_number"] = canonical_page_number
                 page_result["inspection_blocked"] = inspection_blocked
                 page_result["inspection_retry_used"] = inspection_retry_used
+                if inspection_retry_used:
+                    page_result["page_parse_status"] = "inspection_retry_ok"
+                elif retry_count > 0:
+                    page_result["page_parse_status"] = "retry_ok"
+                else:
+                    page_result["page_parse_status"] = "ok"
+                page_result["page_parse_completeness"] = "full"
+                page_result["page_parse_error"] = ""
                 page_results.append(page_result)
                 break
             except Exception as exc:  # noqa: BLE001
@@ -636,9 +654,14 @@ def parse_pdf_with_aliyun_multimodal(
                             max_output_tokens=max_output_tokens,
                         )
                         page_result["retry_count"] = attempt
+                        page_result["canonical_page_index"] = canonical_page_index
+                        page_result["canonical_page_number"] = canonical_page_number
                         page_result["inspection_blocked"] = True
                         page_result["inspection_retry_used"] = True
                         page_result["inspection_retry_image_path"] = str(sanitized_path)
+                        page_result["page_parse_status"] = "inspection_retry_ok"
+                        page_result["page_parse_completeness"] = "full"
+                        page_result["page_parse_error"] = ""
                         page_results.append(page_result)
                         inspection_retry_used = True
                         break
@@ -650,8 +673,13 @@ def parse_pdf_with_aliyun_multimodal(
                         )
                         page_result["fallback_reason"] = last_error
                         page_result["retry_count"] = attempt
+                        page_result["canonical_page_index"] = canonical_page_index
+                        page_result["canonical_page_number"] = canonical_page_number
                         page_result["inspection_blocked"] = True
                         page_result["inspection_retry_used"] = True
+                        page_result["page_parse_status"] = "inspection_failed_fallback"
+                        page_result["page_parse_completeness"] = "partial_or_unknown"
+                        page_result["page_parse_error"] = last_error
                         page_results.append(page_result)
                         break
                 last_error = str(exc)
@@ -662,8 +690,13 @@ def parse_pdf_with_aliyun_multimodal(
                     )
                     page_result["fallback_reason"] = last_error
                     page_result["retry_count"] = attempt - 1
+                    page_result["canonical_page_index"] = canonical_page_index
+                    page_result["canonical_page_number"] = canonical_page_number
                     page_result["inspection_blocked"] = inspection_blocked
                     page_result["inspection_retry_used"] = inspection_retry_used
+                    page_result["page_parse_status"] = "parse_failed_fallback"
+                    page_result["page_parse_completeness"] = "partial_or_unknown"
+                    page_result["page_parse_error"] = last_error
                     page_results.append(page_result)
                     break
                 sleep(max(float(retry_backoff_seconds), 0.0))
@@ -757,12 +790,18 @@ def parse_pdf_with_aliyun_multimodal(
         "page_results": [
             {
                 "page_index": int(item.get("page_index") or 0),
+                "canonical_page_index": int(item.get("canonical_page_index") or int(item.get("page_index") or 0)),
+                "canonical_page_number": int(item.get("canonical_page_number") or (int(item.get("canonical_page_index") or int(item.get("page_index") or 0)) + 1)),
+                "model_page_index": item.get("model_page_index"),
                 "page_summary": str(item.get("page_summary") or ""),
                 "element_count": int(len(item.get("elements") or [])),
                 "fallback_reason": str(item.get("fallback_reason") or ""),
                 "retry_count": int(item.get("retry_count") or 0),
                 "inspection_blocked": bool(item.get("inspection_blocked") or False),
                 "inspection_retry_used": bool(item.get("inspection_retry_used") or False),
+                "page_parse_status": str(item.get("page_parse_status") or ""),
+                "page_parse_completeness": str(item.get("page_parse_completeness") or ""),
+                "page_parse_error": str(item.get("page_parse_error") or ""),
             }
             for item in page_results
         ],
@@ -773,6 +812,7 @@ def parse_pdf_with_aliyun_multimodal(
     attachments_manifest_path = (output_dir / "attachments_manifest.json").resolve()
     linear_index_path = (output_dir / "linear_index.json").resolve()
     reconstructed_markdown_path = (output_dir / "reconstructed_content.md").resolve()
+    reconstructed_raw_markdown_path = (output_dir / "reconstructed_content_raw.md").resolve()
     parse_record_path = (output_dir / "parse_record.json").resolve()
     quality_report_path = (output_dir / "quality_report.json").resolve()
     result_path = (output_dir / "result.json").resolve()
@@ -785,6 +825,7 @@ def parse_pdf_with_aliyun_multimodal(
     )
     linear_index_path.write_text(json.dumps(linear_index_payload, ensure_ascii=False, indent=2), encoding="utf-8")
     reconstructed_markdown_path.write_text(reconstructed_markdown, encoding="utf-8")
+    reconstructed_raw_markdown_path.write_text(reconstructed_markdown, encoding="utf-8")
     parse_record_path.write_text(json.dumps(parse_record, ensure_ascii=False, indent=2), encoding="utf-8")
     quality_report_path.write_text(json.dumps(quality_report, ensure_ascii=False, indent=2), encoding="utf-8")
     chunk_manifest_path, chunks_jsonl_path = _write_chunks(output_dir, chunks_payload)
@@ -802,6 +843,7 @@ def parse_pdf_with_aliyun_multimodal(
         "chunk_manifest_path": str(chunk_manifest_path),
         "chunks_jsonl_path": str(chunks_jsonl_path),
         "reconstructed_markdown_path": str(reconstructed_markdown_path),
+        "reconstructed_raw_markdown_path": str(reconstructed_raw_markdown_path),
         "parse_record_path": str(parse_record_path),
         "quality_report_path": str(quality_report_path),
         "page_count": int(len(filtered_page_records)),

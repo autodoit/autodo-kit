@@ -60,6 +60,8 @@ class _FakeConfig:
     model = "qwen3-vl-plus"
     sdk_backend = "openai-compatible"
     region = "cn-beijing"
+    base_url = ""
+    routing_info = {}
 
 
 def test_parse_pdf_with_aliyun_multimodal_should_create_required_outputs(monkeypatch, tmp_path: Path) -> None:
@@ -330,11 +332,61 @@ def test_postprocess_aliyun_multimodal_parse_outputs_should_remove_cross_article
     )
 
     rewritten_text = structured_path.read_text(encoding="utf-8")
+    rewritten_payload = json.loads(rewritten_text)
     assert result["contamination_removed_block_count"] == 1
     assert result["contamination_filter_applied"] is True
     assert "学术出版生态" not in markdown_path.read_text(encoding="utf-8")
-    assert "学术出版生态" not in rewritten_text
+    assert "学术出版生态" not in str((rewritten_payload.get("text") or {}).get("full_text") or "")
+    raw_markdown_path = markdown_path.parent / "reconstructed_content_raw.md"
+    postprocessed_markdown_path = markdown_path.parent / "reconstructed_content_postprocessed.md"
+    assert raw_markdown_path.exists()
+    assert postprocessed_markdown_path.exists()
+    assert "学术出版生态" in raw_markdown_path.read_text(encoding="utf-8")
+    assert "学术出版生态" not in postprocessed_markdown_path.read_text(encoding="utf-8")
+    assert "学术出版生态" in str((rewritten_payload.get("text") or {}).get("raw_full_text") or "")
+    assert '"raw_full_text"' in rewritten_text
     assert Path(result["postprocess_audit_path"]).exists()
+
+
+def test_postprocess_should_prefer_review_packet_clean_body_when_available(monkeypatch, tmp_path: Path) -> None:
+    """后处理应优先使用按 elements 顺序重建出的 clean_body。"""
+
+    structured_path = (tmp_path / "normalized.structured.json").resolve()
+    markdown_path = (tmp_path / "reconstructed_content.md").resolve()
+    structured_path.write_text(
+        json.dumps(
+            {
+                "schema": "aok.pdf_structured.v3",
+                "source": {"title": "测试论文", "year": "2024"},
+                "text": {
+                    "full_text": "目录\n第一章\n第二章\n正文段落顺序混乱\n附录\n参考文献",
+                },
+            },
+            ensure_ascii=False,
+            indent=2,
+        ),
+        encoding="utf-8",
+    )
+    markdown_path.write_text("目录\n第一章\n第二章\n正文段落顺序混乱\n附录\n参考文献\n", encoding="utf-8")
+
+    monkeypatch.setattr(
+        "autodokit.tools.review_reading_packet_tools.build_review_reading_packet",
+        lambda *args, **kwargs: {"clean_body": "这是按 elements 排序后的正文。\n\n第二段正文。"},
+    )
+
+    result = postprocess_aliyun_multimodal_parse_outputs(
+        normalized_structured_path=structured_path,
+        reconstructed_markdown_path=markdown_path,
+        rewrite_structured=True,
+        rewrite_markdown=True,
+        enable_llm_contamination_filter=False,
+        enable_llm_basic_cleanup=False,
+        enable_llm_structure_resolution=False,
+    )
+
+    rewritten_payload = json.loads(structured_path.read_text(encoding="utf-8"))
+    assert result["processing_input_source"] == "review_packet_clean_body"
+    assert (rewritten_payload.get("text") or {}).get("full_text", "").startswith("这是按 elements 排序后的正文")
 
 
 def test_init_content_db_should_auto_migrate_legacy_schema(tmp_path: Path) -> None:

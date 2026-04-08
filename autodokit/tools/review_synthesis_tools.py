@@ -24,6 +24,10 @@ from autodokit.tools.pdf_structured_data_tools import (
     load_structured_data,
 )
 from autodokit.tools.reference_citation_tools import extract_reference_lines_from_attachment
+from autodokit.tools.review_reading_packet_tools import (
+    build_review_reading_packet,
+    resolve_review_text_by_priority,
+)
 
 
 DEFAULT_TOPIC = "未指定研究主题"
@@ -589,8 +593,26 @@ def extract_review_state_from_structured_file(
     payload = load_structured_data(Path(structured_json_path))
     extraction = extract_reference_lines_from_structured_data(payload)
     text_payload = payload.get("text") if isinstance(payload.get("text"), dict) else {}
-    return _build_review_state_from_payload(
-        {"full_text": text_payload.get("full_text")},
+
+    # 新版解析链优先从结构树/元素构造 clean_body，避免直接吃 full_text 噪声层。
+    packet_clean_body = ""
+    packet_manifest: Dict[str, Any] = {}
+    try:
+        packet = build_review_reading_packet(structured_json_path)
+        packet_clean_body = _stringify(packet.get("clean_body"))
+        packet_manifest = packet.get("asset_manifest") if isinstance(packet.get("asset_manifest"), dict) else {}
+    except Exception:
+        packet_clean_body = ""
+        packet_manifest = {}
+
+    text_resolution = resolve_review_text_by_priority(text_payload, clean_body=packet_clean_body)
+    effective_text = _stringify(text_resolution.get("selected_text"))
+    selected_source = _stringify(text_resolution.get("selected_source"))
+    if not selected_source:
+        selected_source = _stringify(packet_manifest.get("review_text_source"))
+
+    review_state = _build_review_state_from_payload(
+        {"full_text": effective_text},
         uid_literature=uid_literature,
         cite_key=cite_key,
         title=title,
@@ -604,6 +626,8 @@ def extract_review_state_from_structured_file(
         reference_line_details=list(extraction.get("reference_line_details") or []),
         pending_reason=_stringify(extraction.get("pending_reason")),
     )
+    review_state["full_text_source"] = selected_source or "empty"
+    return review_state
 
 
 def _resolve_global_config_path(workspace_root: Path, config_path: Path | None = None) -> Path | None:

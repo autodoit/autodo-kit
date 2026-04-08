@@ -11,8 +11,8 @@ import pandas as pd
 from autodokit.tools import append_aok_log_event, build_gate_review, load_json_or_py
 from autodokit.tools.bibliodb_sqlite import load_reading_state_df, upsert_reading_state_rows
 from autodokit.tools.contentdb_sqlite import CONTENT_DB_DIRECTORY_NAME, DEFAULT_CONTENT_DB_NAME, resolve_content_db_config
-from autodokit.tools.llm_clients import postprocess_aliyun_multimodal_parse_outputs
-from autodokit.tools.pdf_parse_asset_manager import ensure_multimodal_parse_asset
+from autodokit.tools.aliyun_multimodal_postprocess_tools import postprocess_aliyun_multimodal_parse_outputs
+from autodokit.tools.pdf_parse_asset_manager import ensure_multimodal_parse_asset, ensure_pdf_text_fallback_asset
 from autodokit.tools.atomic.task_aok.post_affair_git_commit import affair_auto_git_commit
 
 
@@ -65,6 +65,7 @@ def execute(config_path: Path) -> List[Path]:
 
     parse_model = _stringify(raw_cfg.get("parse_model")) or "auto"
     overwrite_parse_asset = bool(raw_cfg.get("overwrite_parse_asset", False))
+    allow_pdf_text_fallback_on_parse_failure = bool(raw_cfg.get("allow_pdf_text_fallback_on_parse_failure", True))
     enable_aliyun_postprocess = bool(raw_cfg.get("enable_aliyun_postprocess", True))
     enable_llm_basic_cleanup = bool(raw_cfg.get("enable_llm_basic_cleanup", True))
     basic_cleanup_llm_model = _stringify(raw_cfg.get("basic_cleanup_llm_model")) or "qwen3.5-flash"
@@ -172,18 +173,66 @@ def execute(config_path: Path) -> List[Path]:
                 }
             )
         except Exception as exc:
-            failures.append(f"{cite_key}: 深读失败: {exc}")
-            state_updates.append(
-                {
-                    "uid_literature": uid_literature,
-                    "cite_key": cite_key,
-                    "pending_deep_read": 1,
-                    "in_deep_read": 0,
-                    "deep_read_done": 0,
-                    "deep_read_decision": "parse_failed",
-                    "deep_read_reason": str(exc),
-                }
-            )
+            fallback_asset: Dict[str, Any] = {}
+            fallback_exc: Exception | None = None
+            if allow_pdf_text_fallback_on_parse_failure:
+                try:
+                    fallback_asset = ensure_pdf_text_fallback_asset(
+                        content_db=content_db,
+                        parse_level="non_review_deep",
+                        uid_literature=uid_literature,
+                        cite_key=cite_key,
+                        source_stage="A100",
+                        overwrite_existing=True,
+                    )
+                except Exception as fallback_error:
+                    fallback_exc = fallback_error
+
+            if fallback_asset:
+                state_updates.append(
+                    {
+                        "uid_literature": uid_literature,
+                        "cite_key": cite_key,
+                        "source_origin": source_origin,
+                        "pending_deep_read": 0,
+                        "in_deep_read": 0,
+                        "deep_read_done": 0,
+                        "deep_read_decision": "pdf_fallback_ready",
+                        "deep_read_reason": f"A100 多模态解析失败，已切换为原文 PDF 直读旁路。原始错误：{exc}",
+                    }
+                )
+                result_rows.append(
+                    {
+                        "uid_literature": uid_literature,
+                        "cite_key": cite_key,
+                        "structured_json": _stringify(fallback_asset.get("normalized_structured_path")),
+                        "asset_dir": _stringify(fallback_asset.get("asset_dir")),
+                        "parse_status": "fallback_ready",
+                        "postprocess_enabled": 0,
+                        "postprocess_ok": 0,
+                        "postprocess_removed_noise_lines": 0,
+                        "postprocess_llm_basic_cleanup_status": "skipped_pdf_text_fallback",
+                        "postprocess_llm_structure_status": "skipped_pdf_text_fallback",
+                        "postprocess_contamination_removed_block_count": 0,
+                        "postprocess_markdown_path": _stringify(fallback_asset.get("reconstructed_markdown_path")),
+                        "postprocess_audit_path": "",
+                    }
+                )
+                failures.append(f"{cite_key}: 多模态解析失败，已降级为原文 PDF 直读旁路: {exc}")
+            else:
+                reason = str(exc) if fallback_exc is None else f"{exc}; fallback 失败: {fallback_exc}"
+                failures.append(f"{cite_key}: 深读失败: {reason}")
+                state_updates.append(
+                    {
+                        "uid_literature": uid_literature,
+                        "cite_key": cite_key,
+                        "pending_deep_read": 1,
+                        "in_deep_read": 0,
+                        "deep_read_done": 0,
+                        "deep_read_decision": "parse_failed",
+                        "deep_read_reason": reason,
+                    }
+                )
 
     if state_updates:
         upsert_reading_state_rows(content_db, state_updates)
@@ -227,6 +276,7 @@ def execute(config_path: Path) -> List[Path]:
             "contamination_llm_model": contamination_llm_model,
             "contamination_llm_sdk_backend": contamination_llm_sdk_backend,
             "contamination_llm_region": contamination_llm_region,
+            "allow_pdf_text_fallback_on_parse_failure": allow_pdf_text_fallback_on_parse_failure,
         },
     )
     gate_path = output_dir / OUTPUT_GATE
@@ -243,17 +293,9 @@ def execute(config_path: Path) -> List[Path]:
             reasoning_summary="消费 literature_reading_state.pending_deep_read=1，仅完成 non_review_deep 解析资产准备并移交 A105。",
             gate_review=gate_review,
             gate_review_path=gate_path,
-            artifact_paths=[path for path in [index_path, gate_path] if path is not None],
-            payload={
-                "deep_parse_ready_count": len(result_rows),
-                "postprocess_success_count": postprocess_success_count,
-                "failure_count": len(failures),
-                "enable_llm_basic_cleanup": enable_llm_basic_cleanup,
-                "enable_llm_structure_resolution": enable_llm_structure_resolution,
-                "enable_llm_contamination_filter": enable_llm_contamination_filter,
-            },
+            artifact_paths=[str(index_path)],
         )
     except Exception:
         pass
 
-    return [index_path, gate_path]
+    return [index_path]

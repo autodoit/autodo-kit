@@ -430,6 +430,7 @@ from autodokit.tools.review_synthesis_tools import (
 )
 from autodokit.tools.review_reading_packet_tools import (
     build_review_reading_packet,
+    resolve_review_text_by_priority,
 )
 from autodokit.tools.pdf_structured_data_tools import (
     build_chunk_entries_from_structured_data,
@@ -563,6 +564,7 @@ _用户公开工具 = [
     "extract_review_state_from_structured_file",
     "sentence_line_from_review_state",
     "build_review_reading_packet",
+    "resolve_review_text_by_priority",
     "extract_pdf_elements_from_structured_data",
     "extract_pdf_elements_from_structured_file",
     "render_pdf_pages_to_png",
@@ -775,6 +777,7 @@ _开发者工具 = [
     "refine_review_state_with_llm",
     "sentence_line_from_review_state",
     "build_review_reading_packet",
+    "resolve_review_text_by_priority",
     "load_dispatch_map",
     "load_json_file",
     "resolve_config_path",

@@ -12,7 +12,7 @@ from autodokit.tools import append_aok_log_event, build_gate_review, knowledge_i
 from autodokit.tools.llm_clients import postprocess_aliyun_multimodal_parse_outputs
 from autodokit.tools.bibliodb_sqlite import load_reading_state_df, upsert_reading_state_rows
 from autodokit.tools.contentdb_sqlite import CONTENT_DB_DIRECTORY_NAME, DEFAULT_CONTENT_DB_NAME, resolve_content_db_config
-from autodokit.tools.pdf_parse_asset_manager import ensure_multimodal_parse_asset
+from autodokit.tools.pdf_parse_asset_manager import ensure_multimodal_parse_asset, ensure_pdf_text_fallback_asset
 from autodokit.tools.pdf_structured_data_tools import load_single_document_record
 from autodokit.tools.reading_state_tools import build_followup_candidate_state_row
 from autodokit.tools.storage_backend import load_knowledge_tables, load_reference_tables, persist_knowledge_tables, persist_reference_tables
@@ -122,7 +122,9 @@ def execute(config_path: Path) -> List[Path]:
 
     parse_ready_only = bool(raw_cfg.get("parse_ready_only", True))
     if parse_ready_only:
-        state_df = load_reading_state_df(content_db, flag_filters={"deep_read_decision": "parse_ready", "deep_read_done": 0})
+        state_df = load_reading_state_df(content_db, flag_filters={"deep_read_done": 0})
+        if not state_df.empty and "deep_read_decision" in state_df.columns:
+            state_df = state_df[state_df["deep_read_decision"].astype(str).isin(["parse_ready", "pdf_fallback_ready"])].reset_index(drop=True)
     else:
         state_df = load_reading_state_df(content_db, flag_filters={"pending_deep_read": 1, "deep_read_done": 0})
 
@@ -170,6 +172,7 @@ def execute(config_path: Path) -> List[Path]:
         reading_objective = _stringify(row.get("reading_objective"))
         manual_guidance = _stringify(row.get("manual_guidance"))
         source_origin = _stringify(row.get("source_origin")) or "auto"
+        deep_read_decision = _stringify(row.get("deep_read_decision"))
 
         upsert_reading_state_rows(
             content_db,
@@ -184,18 +187,30 @@ def execute(config_path: Path) -> List[Path]:
         )
 
         try:
-            parse_asset = ensure_multimodal_parse_asset(
-                content_db=content_db,
-                parse_level="non_review_deep",
-                uid_literature=uid_literature,
-                cite_key=cite_key,
-                source_stage="A100",
-                global_config_path=workspace_root / "config" / "config.json",
-                overwrite_existing=False,
-                model="auto",
-            )
+            if deep_read_decision == "pdf_fallback_ready":
+                parse_asset = ensure_pdf_text_fallback_asset(
+                    content_db=content_db,
+                    parse_level="non_review_deep",
+                    uid_literature=uid_literature,
+                    cite_key=cite_key,
+                    source_stage="A100",
+                    overwrite_existing=False,
+                )
+            else:
+                parse_asset = ensure_multimodal_parse_asset(
+                    content_db=content_db,
+                    parse_level="non_review_deep",
+                    uid_literature=uid_literature,
+                    cite_key=cite_key,
+                    source_stage="A100",
+                    global_config_path=workspace_root / "config" / "config.json",
+                    overwrite_existing=False,
+                    model="auto",
+                )
+
+            asset_backend = _stringify(parse_asset.get("backend"))
             postprocess_summary: Dict[str, Any] = {}
-            if enable_aliyun_postprocess:
+            if enable_aliyun_postprocess and asset_backend == "aliyun_multimodal":
                 postprocess_summary = postprocess_aliyun_multimodal_parse_outputs(
                     normalized_structured_path=_stringify(parse_asset.get("normalized_structured_path")),
                     reconstructed_markdown_path=_stringify(parse_asset.get("reconstructed_markdown_path")),
@@ -216,6 +231,12 @@ def execute(config_path: Path) -> List[Path]:
                     contamination_llm_region=contamination_llm_region,
                     config_path=workspace_root / "config" / "config.json",
                 )
+            elif asset_backend == "pdf_text_fallback":
+                postprocess_summary = {
+                    "llm_basic_cleanup_status": "skipped_pdf_text_fallback",
+                    "llm_structure_resolution_status": "skipped_pdf_text_fallback",
+                    "contamination_removed_block_count": 0,
+                }
             structured_json = _stringify(parse_asset.get("normalized_structured_path"))
             document = load_single_document_record(
                 uid=uid_literature,
@@ -309,6 +330,7 @@ def execute(config_path: Path) -> List[Path]:
                     "deep_read_note_path": str(note_path),
                     "discovered_candidate_count": len(discovered_rows),
                     "knowledge_uid": _stringify(note_info.get("uid_knowledge")),
+                    "asset_backend": asset_backend,
                     "postprocess_ok": int(bool(postprocess_summary) or (not enable_aliyun_postprocess)),
                     "postprocess_llm_basic_cleanup_status": _stringify(postprocess_summary.get("llm_basic_cleanup_status")),
                     "postprocess_llm_structure_status": _stringify(postprocess_summary.get("llm_structure_resolution_status")),

@@ -202,6 +202,55 @@ def _build_clean_body(full_text: str, *, title: str = "") -> tuple[str, List[Dic
     return clean_body, evidence_rows
 
 
+def resolve_review_text_by_priority(
+    text_payload: Dict[str, Any] | None,
+    *,
+    clean_body: str = "",
+) -> Dict[str, str]:
+    """按统一契约选择综述正文输入。
+
+    Args:
+        text_payload: 结构化产物中的 ``text`` 字段。
+        clean_body: 已构造好的结构化过滤正文。
+
+    Returns:
+        Dict[str, str]:
+            - selected_text: 选中的正文文本。
+            - selected_source: 文本来源（clean_body/raw_full_text/full_text/empty）。
+            - clean_body: 清洗正文。
+            - raw_full_text: 原始全文。
+            - full_text: 后处理全文。
+
+    Examples:
+        >>> resolve_review_text_by_priority({"raw_full_text": "A", "full_text": "B"})["selected_source"]
+        'raw_full_text'
+    """
+
+    payload = text_payload if isinstance(text_payload, dict) else {}
+    resolved_clean_body = _stringify(clean_body)
+    resolved_raw_full_text = _stringify(payload.get("raw_full_text"))
+    resolved_full_text = _stringify(payload.get("full_text"))
+
+    selected_text = resolved_clean_body
+    selected_source = "clean_body"
+    if not selected_text:
+        selected_text = resolved_raw_full_text
+        selected_source = "raw_full_text"
+    if not selected_text:
+        selected_text = resolved_full_text
+        selected_source = "full_text"
+    if not selected_text:
+        selected_source = "empty"
+
+    return {
+        "selected_text": selected_text,
+        "selected_source": selected_source,
+        "clean_body": resolved_clean_body,
+        "raw_full_text": resolved_raw_full_text,
+        "full_text": resolved_full_text,
+    }
+
+
 def build_review_reading_packet(
     structured_json_path: str | Path,
     *,
@@ -224,10 +273,12 @@ def build_review_reading_packet(
     text_payload = payload.get("text") if isinstance(payload.get("text"), dict) else {}
 
     title = _stringify(source.get("title"))
-    full_text = _stringify(text_payload.get("full_text"))
     clean_body, evidence_rows = _build_clean_body_from_elements(path, title=title)
+
+    resolved_text = resolve_review_text_by_priority(text_payload, clean_body=clean_body)
     if len(clean_body) < 500:
-        clean_body, evidence_rows = _build_clean_body(full_text, title=title)
+        clean_body, evidence_rows = _build_clean_body(resolved_text.get("selected_text", ""), title=title)
+        resolved_text = resolve_review_text_by_priority(text_payload, clean_body=clean_body)
     ref_extraction = extract_reference_lines_from_structured_data(payload)
     reference_rows = [_stringify(item) for item in list(ref_extraction.get("reference_lines") or []) if _stringify(item)]
 
@@ -253,6 +304,7 @@ def build_review_reading_packet(
             "extract_status": _stringify(ref_extraction.get("extract_status")),
             "extract_method": _stringify(ref_extraction.get("extract_method")),
             "needs_pdf_fallback": len(clean_body) < 300,
+            "review_text_source": _stringify(resolved_text.get("selected_source")),
         },
     }
 
@@ -275,4 +327,4 @@ def build_review_reading_packet(
     return packet
 
 
-__all__ = ["build_review_reading_packet"]
+__all__ = ["build_review_reading_packet", "resolve_review_text_by_priority"]

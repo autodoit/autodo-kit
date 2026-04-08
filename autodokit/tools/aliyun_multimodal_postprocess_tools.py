@@ -765,16 +765,30 @@ def postprocess_aliyun_multimodal_parse_outputs(
     text_payload = structured_payload.get("text") if isinstance(structured_payload.get("text"), dict) else {}
     raw_text = _stringify(text_payload.get("full_text"))
     source_context = _extract_source_context(structured_payload)
+    processing_source = "structured_full_text"
 
     markdown_file = Path(_stringify(reconstructed_markdown_path)).resolve() if _stringify(reconstructed_markdown_path) else None
     if (not raw_text) and markdown_file and markdown_file.exists() and markdown_file.is_file():
         raw_text = markdown_file.read_text(encoding="utf-8")
+        processing_source = "reconstructed_markdown"
 
     if not raw_text:
         raise ValueError("未找到可处理的正文文本（structured.text.full_text 与 reconstructed_content.md 均为空）")
 
+    processing_text = raw_text
+    try:
+        from autodokit.tools.review_reading_packet_tools import build_review_reading_packet
+
+        reading_packet = build_review_reading_packet(structured_file)
+        clean_body = _stringify(reading_packet.get("clean_body"))
+        if len(clean_body) >= 10:
+            processing_text = clean_body
+            processing_source = "review_packet_clean_body"
+    except Exception:
+        pass
+
     contamination = _filter_cross_article_contamination(
-        raw_text=raw_text,
+        raw_text=processing_text,
         title=source_context.get("title", ""),
         year=source_context.get("year", ""),
         enable_llm=enable_llm_contamination_filter,
@@ -785,7 +799,7 @@ def postprocess_aliyun_multimodal_parse_outputs(
         llm_region=contamination_llm_region,
     )
 
-    stage_text = _stringify(contamination.get("filtered_text") or raw_text)
+    stage_text = _stringify(contamination.get("filtered_text") or processing_text)
     basic_cleanup_info: Dict[str, Any] = {"status": "skipped", "runtime": {}}
     if enable_llm_basic_cleanup:
         try:
@@ -821,23 +835,35 @@ def postprocess_aliyun_multimodal_parse_outputs(
     result = clean_aliyun_multimodal_text(stage_text, keep_page_markers=keep_page_markers)
     cleaned_text = _stringify(result.get("cleaned_text"))
 
+    target_markdown = markdown_file or (structured_file.parent / "reconstructed_content.md")
+    raw_markdown_path = (structured_file.parent / "reconstructed_content_raw.md").resolve()
+    postprocessed_markdown_path = (structured_file.parent / "reconstructed_content_postprocessed.md").resolve()
+
     if rewrite_markdown:
-        target_markdown = markdown_file or (structured_file.parent / "reconstructed_content.md")
         target_markdown.parent.mkdir(parents=True, exist_ok=True)
+        raw_markdown_path.write_text(raw_text.rstrip() + "\n", encoding="utf-8")
+        postprocessed_markdown_path.write_text(cleaned_text + "\n", encoding="utf-8")
+        # 兼容既有读取入口：保留 reconstructed_content.md 指向后处理正文。
         target_markdown.write_text(cleaned_text + "\n", encoding="utf-8")
         result["postprocessed_markdown_path"] = str(target_markdown)
+        result["raw_markdown_path"] = str(raw_markdown_path)
+        result["postprocessed_markdown_alt_path"] = str(postprocessed_markdown_path)
     else:
         result["postprocessed_markdown_path"] = _stringify(markdown_file) if markdown_file else ""
+        result["raw_markdown_path"] = ""
+        result["postprocessed_markdown_alt_path"] = ""
 
     if rewrite_structured:
         if not isinstance(text_payload, dict):
             text_payload = {}
+        text_payload["raw_full_text"] = raw_text
         text_payload["full_text"] = cleaned_text
         structured_payload["text"] = text_payload
         metadata_payload = structured_payload.get("metadata") if isinstance(structured_payload.get("metadata"), dict) else {}
         metadata_payload["postprocess"] = {
             "applied": True,
             "tool": "aok_aliyun_multimodal_postprocess.v1",
+            "processing_input_source": processing_source,
             "contamination_filter_applied": bool(contamination.get("suspicious_block_count") or contamination.get("removed_block_count")),
             "llm_basic_cleanup_status": _stringify(basic_cleanup_info.get("status")),
             "llm_structure_resolution_status": _stringify(structure_resolution_info.get("status")),
@@ -850,6 +876,9 @@ def postprocess_aliyun_multimodal_parse_outputs(
             "line_count_after": int(result.get("line_count_after") or 0),
             "raw_char_count": int(result.get("raw_char_count") or 0),
             "cleaned_char_count": int(result.get("cleaned_char_count") or 0),
+            "raw_markdown_path": str(raw_markdown_path) if rewrite_markdown else "",
+            "postprocessed_markdown_path": str(postprocessed_markdown_path) if rewrite_markdown else "",
+            "compat_markdown_path": str(target_markdown) if rewrite_markdown else "",
         }
         structured_payload["metadata"] = metadata_payload
         structured_file.write_text(json.dumps(structured_payload, ensure_ascii=False, indent=2), encoding="utf-8")
@@ -859,6 +888,7 @@ def postprocess_aliyun_multimodal_parse_outputs(
     result["markdown_rewritten"] = bool(rewrite_markdown)
     result["postprocess_tool"] = "aok_aliyun_multimodal_postprocess.v1"
     result["document_title"] = source_context.get("title", "")
+    result["processing_input_source"] = processing_source
     result["contamination_filter_applied"] = bool(contamination.get("suspicious_block_count") or contamination.get("removed_block_count"))
     result["contamination_suspicious_block_count"] = int(contamination.get("suspicious_block_count") or 0)
     result["contamination_removed_block_count"] = int(contamination.get("removed_block_count") or 0)
@@ -874,7 +904,10 @@ def postprocess_aliyun_multimodal_parse_outputs(
         "postprocess_tool": result["postprocess_tool"],
         "normalized_structured_path": str(structured_file),
         "reconstructed_markdown_path": result.get("postprocessed_markdown_path", ""),
+        "reconstructed_markdown_raw_path": result.get("raw_markdown_path", ""),
+        "reconstructed_markdown_postprocessed_path": result.get("postprocessed_markdown_alt_path", ""),
         "document_context": source_context,
+        "processing_input_source": processing_source,
         "cleanup": {
             "removed_noise_lines": int(result.get("removed_noise_lines") or 0),
             "raw_char_count": int(result.get("raw_char_count") or 0),

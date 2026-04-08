@@ -91,3 +91,37 @@ def test_build_tree_linear_index_should_stitch_tree_elements_and_attachments() -
     assert linear_index["summary"]["entry_count"] >= 3
     assert "Introduction" in markdown_text
     assert "First paragraph." in markdown_text
+
+
+def test_build_elements_payload_should_prefer_canonical_page_index() -> None:
+    """当模型回传页号错误时，应优先使用 canonical_page_index。"""
+
+    source = {"title": "Demo Document", "backend": "multimodal_high_precision_v1"}
+    page_records = [
+        {"page_index": 0, "page_number": 1, "image_path": "D:/tmp/page_0001.png"},
+        {"page_index": 1, "page_number": 2, "image_path": "D:/tmp/page_0002.png"},
+    ]
+    page_results = [
+        {
+            "page_index": 0,
+            "canonical_page_index": 1,
+            "page_parse_status": "inspection_failed_fallback",
+            "elements": [
+                {
+                    "node_type": "paragraph",
+                    "text": "Fallback content on page 2.",
+                    "confidence": 0.2,
+                    "bbox": None,
+                    "heading_level": 0,
+                    "reading_order": 1,
+                }
+            ],
+        }
+    ]
+
+    elements_payload = build_elements_payload(source=source, page_records=page_records, page_results=page_results)
+    item = elements_payload["items"][0]
+
+    assert item["page_index"] == 1
+    assert item["page_number"] == 2
+    assert item["page_parse_status"] == "inspection_failed_fallback"
