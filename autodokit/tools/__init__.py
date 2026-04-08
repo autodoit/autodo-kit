@@ -457,6 +457,10 @@ from autodokit.tools.pdf_multimodal_tree_builder import (
     build_structure_tree as build_pdf_multimodal_structure_tree,
     render_reconstructed_markdown as render_pdf_multimodal_reconstructed_markdown,
 )
+from autodokit.tools.monkeyocr_windows_tools import (
+    prepare_monkeyocr_windows_runtime,
+    run_monkeyocr_windows_single_pdf,
+)
 from autodokit.tools.aok_pdf_aliyun_multimodal_parse import (
     build_aliyun_multimodal_chunks,
     generate_aok_pdf_parse_uid,
@@ -797,6 +801,8 @@ _开发者工具 = [
     "render_pdf_multimodal_reconstructed_markdown",
     "generate_aok_pdf_parse_uid",
     "resolve_aok_pdf_parse_output_dir",
+    "prepare_monkeyocr_windows_runtime",
+    "run_monkeyocr_windows_single_pdf",
     "build_aliyun_multimodal_chunks",
     "parse_pdf_with_aliyun_multimodal",
     "batch_manage_pdf_with_aliyun_multimodal",

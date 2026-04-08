@@ -258,6 +258,98 @@ result = migrate_workspace_paths(
 - `parse_reference_text(reference_text)`
 - `insert_placeholder_from_reference(table, reference_text, ...)`
 - `task_create_or_update(tasks, task, ...)`
+
+### 2.2 MonkeyOCR Windows GPU 解析工具
+
+本仓库把 Windows 原生 MonkeyOCR 单篇解析封装成两个可直接导入的工具函数：
+
+```python
+from autodokit.tools import prepare_monkeyocr_windows_runtime
+from autodokit.tools import run_monkeyocr_windows_single_pdf
+```
+
+#### `prepare_monkeyocr_windows_runtime(...)`
+
+用途：准备 Windows 原生运行时，包括安装 `huggingface_hub`、可选安装 `modelscope`、安装 `triton-windows<3.4`，并下载 MonkeyOCR 模型权重。
+
+典型参数：
+
+- `monkeyocr_root`：MonkeyOCR 仓库根目录。
+- `model_name`：模型名称，默认 `MonkeyOCR-pro-1.2B`。
+- `download_source`：`huggingface` 或 `modelscope`。
+- `python_executable`：Python 可执行文件路径，默认当前解释器。
+- `pip_index_url`：可选 pip 镜像地址。
+- `install_triton_windows`：是否安装 `triton-windows<3.4`。
+- `models_dir`：可选权重目录；若不传，默认使用 `monkeyocr_root/model_weight`。
+
+返回值要点：
+
+- `model_dir`：最终权重目录。
+- `official_model_dir`：官方下载目标目录。
+- `weights_ready`：是否已准备好三类关键权重目录。
+- `steps`：执行过的准备步骤。
+
+#### `run_monkeyocr_windows_single_pdf(...)`
+
+用途：在 Windows 上以 GPU 路线解析单篇 PDF，并把实时日志与产物返回给调用方。
+
+典型参数：
+
+- `input_pdf`：待解析 PDF 绝对路径。
+- `output_dir`：输出根目录。
+- `monkeyocr_root`：MonkeyOCR 仓库根目录。
+- `models_dir`：权重目录，默认使用 `monkeyocr_root/model_weight`。
+- `config_path`：本地配置文件路径，默认使用 `output_dir.parent/model_configs.local.yaml`。
+- `device`：`cuda`、`cpu` 或 `mps`，本次成功解析使用 `cuda`。
+- `gpu_visible_devices`：CUDA 可见设备号，默认 `0`。
+- `ensure_runtime`：是否自动执行运行时准备步骤。
+- `download_source`：权重下载源，默认 `huggingface`。
+- `pip_index_url`：可选 pip 镜像地址。
+- `log_path`：实时日志输出文件。
+- `stream_output`：是否在终端实时打印解析日志。
+
+返回值要点：
+
+- `status`：运行状态，成功时为 `SUCCEEDED`。
+- `device`：实际使用的设备。
+- `gpu_name`：识别到的 GPU 名称。
+- `model_name`：模型名称。
+- `input_pdf`：输入 PDF 的绝对路径。
+- `output_dir`：最终输出目录。
+- `artifacts`：产物字典，包含 markdown、content_list、middle_json、可视化 PDF、images 目录、日志与配置文件。
+
+示例：
+
+```python
+from pathlib import Path
+from autodokit.tools import run_monkeyocr_windows_single_pdf
+
+result = run_monkeyocr_windows_single_pdf(
+  input_pdf=Path(r"D:\workspace\sandbox\test monkey ocr\input\“双支柱”调控与银行系统性风险——基于SRISK指标的实证分析.pdf"),
+  output_dir=Path(r"D:\workspace\sandbox\test monkey ocr\output"),
+  monkeyocr_root=Path(r"D:\workspace\sandbox\MonkeyOCR-main"),
+  models_dir=Path(r"D:\workspace\sandbox\test monkey ocr\model_weight"),
+  config_path=Path(r"D:\workspace\sandbox\test monkey ocr\model_configs.local.yaml"),
+  log_path=Path(r"D:\workspace\sandbox\test monkey ocr\parse_direct_run.log"),
+  device="cuda",
+  gpu_visible_devices="0",
+  ensure_runtime=False,
+)
+```
+
+### 2.3 输出文件契约
+
+MonkeyOCR 单篇解析的输出契约建议统一如下：
+
+- `*.md`：面向人工阅读的最终解析文本。
+- `*_content_list.json`：适合程序消费的内容元素列表。
+- `*_middle.json`：中间层结构结果，适合排错与二次加工。
+- `*_model.pdf`、`*_layout.pdf`、`*_spans.pdf`：三类可视化核查文件。
+- `images/`：页面图片缓存。
+- `model_configs.local.yaml`：本次运行的配置快照。
+- `parse_direct_run.log`：实时日志文件。
+
+如果你在别的 Windows 11 设备上复现，建议优先复用这套参数组合：`device=cuda`、`gpu_visible_devices=0`、`triton-windows<3.4`、`MonkeyOCR-pro-1.2B`，并把 `models_dir` 指到本机权重目录。
 - `task_status_append(status_log, aok_task_uid, ...)`
 - `task_gate_decision_record(gate_decisions, aok_task_uid, ...)`
 - `task_handoff_record(handoffs, from_task_uid, to_task_uid, ...)`
