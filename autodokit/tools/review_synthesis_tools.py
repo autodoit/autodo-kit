@@ -17,13 +17,17 @@ from typing import Any, Dict, Iterable, List, Sequence, Tuple
 import pandas as pd
 
 from autodokit.tools.atomic.log_aok import append_aok_log_event, resolve_aok_log_db_path
-from autodokit.tools.llm_clients import AliyunLLMClient, load_aliyun_llm_config
+from autodokit.tools.llm_clients import AliyunLLMClient, build_aliyun_llm_runtime_payload, load_aliyun_llm_config
 from autodokit.tools.llm_parsing import parse_json_object_from_text
-from autodokit.tools.pdf_structured_data_tools import (
+from autodokit.tools.ocr.classic.pdf_structured_data_tools import (
     extract_reference_lines_from_structured_data,
     load_structured_data,
 )
 from autodokit.tools.reference_citation_tools import extract_reference_lines_from_attachment
+from autodokit.tools.review_reading_packet_tools import (
+    build_review_reading_packet,
+    resolve_review_text_by_priority,
+)
 
 
 DEFAULT_TOPIC = "未指定研究主题"
@@ -33,6 +37,29 @@ DEFAULT_SENTENCE_GROUP_KEYWORDS: Dict[str, Tuple[str, ...]] = {
     "research_method": ("梳理", "总结", "评述", "分析", "模型", "基于", "角度", "文献"),
     "core_findings": ("影响", "作用", "机制", "路径", "关系", "表明", "发现", "结果"),
     "future_directions": ("建议", "需要", "防范", "提高", "稳定", "至关重要", "应当", "未来"),
+    "mechanism_paths": ("机制", "路径", "传导", "渠道", "中介", "联动", "反馈", "链条"),
+    "controversy_points": ("争议", "差异", "分歧", "异质", "边界", "不一致", "不同"),
+    "limitation_points": ("不足", "局限", "缺乏", "仍需", "尚未", "难以", "受限"),
+    "supporting_evidence": ("表明", "发现", "结果", "显示", "证据", "实证", "研究发现"),
+}
+
+DEFAULT_REVIEW_STATE_FIELD_LIMITS: Dict[str, int] = {
+    "research_problem": 6,
+    "research_method": 6,
+    "core_findings": 10,
+    "future_directions": 8,
+    "mechanism_paths": 8,
+    "controversy_points": 6,
+    "limitation_points": 6,
+    "supporting_evidence": 10,
+}
+
+DEFAULT_EVIDENCE_CONSTRAINED_LINE_TARGETS: Dict[str, int] = {
+    "领域研究脉络.md": 5,
+    "核心成果.md": 5,
+    "未来方向.md": 5,
+    "领域知识框架.md": 4,
+    "创新点补写.md": 6,
 }
 
 DEFAULT_CONSENSUS_THEME_DEFS: Tuple[Tuple[str, Tuple[str, ...]], ...] = (
@@ -40,44 +67,6 @@ DEFAULT_CONSENSUS_THEME_DEFS: Tuple[Tuple[str, Tuple[str, ...]], ...] = (
     ("关键传导机制", ("机制", "路径", "传导", "中介")),
     ("治理与响应含义", ("防范", "治理", "应对", "建议")),
 )
-
-TOPIC_ANALYSIS_NOTE_REQUIREMENTS: Dict[str, Dict[str, Any]] = {
-    "trajectory_seed.md": {
-        "note_label": "研究脉络",
-        "goal": "围绕研究主题，归纳多篇综述的问题意识演进、机制主线变化和研究焦点转向。",
-        "focus": ["时间演进", "问题意识", "机制主线", "与当前课题的衔接"],
-    },
-    "core_findings.md": {
-        "note_label": "核心成果",
-        "goal": "围绕研究主题，提炼已经被多篇综述稳定支持的关键结论。",
-        "focus": ["稳定结论", "关键变量", "传导路径", "结论边界"],
-    },
-    "consensus_notes.md": {
-        "note_label": "共识点",
-        "goal": "围绕研究主题，筛出跨综述可交叉支持的共识判断。",
-        "focus": ["一致性判断", "支撑来源", "适用边界", "对当前课题的作用"],
-    },
-    "controversy_notes.md": {
-        "note_label": "争议点",
-        "goal": "围绕研究主题，识别真实争议而不是泛泛差异，并解释争议来源。",
-        "focus": ["争议命题", "分歧来源", "可能解释", "仍待检验的问题"],
-    },
-    "future_directions_notes.md": {
-        "note_label": "未来方向",
-        "goal": "围绕研究主题，把综述中的后续方向改写成真正有研究用途的后续阅读与研究建议。",
-        "focus": ["后续阅读", "机制补强", "识别深化", "变量与数据扩展"],
-    },
-    "knowledge_framework.md": {
-        "note_label": "知识框架",
-        "goal": "围绕研究主题，建立核心对象、作用机制、结果变量、边界条件和政策响应之间的结构关系。",
-        "focus": ["核心对象", "机制", "结果变量", "边界条件", "政策含义"],
-    },
-    "innovation_seed.md": {
-        "note_label": "创新点",
-        "goal": "围绕研究主题，把综述暴露的机制空白、证据边界和识别不足转化为可研究的创新切口。",
-        "focus": ["研究空白", "机制空白", "识别策略", "可执行创新点"],
-    },
-}
 
 NOISE_PATTERNS: Tuple[str, ...] = (
     r"REAL\s+ESTATE\s+ECONOMY",
@@ -98,364 +87,193 @@ MUST_READ_COLUMNS: List[str] = ["uid_literature", "cite_key", "title", "reason",
 GENERAL_READING_COLUMNS: List[str] = ["uid_literature", "cite_key", "title", "source_review", "status"]
 
 
-def _normalize_bullet_lines(values: Any, *, limit: int = 8) -> List[str]:
-    lines: List[str] = []
-    if isinstance(values, list):
-        candidates = values
-    elif values is None:
-        candidates = []
-    else:
-        candidates = [values]
+def normalize_review_state_field_limits(raw_limits: Dict[str, Any] | None = None) -> Dict[str, int]:
+    """规范化综述提炼字段配额。"""
 
-    for item in candidates:
-        text = sanitize_note_sentence(_stringify(item))
-        if not text:
+    limits = dict(DEFAULT_REVIEW_STATE_FIELD_LIMITS)
+    for field_name, raw_value in dict(raw_limits or {}).items():
+        if field_name not in limits:
             continue
-        if text.startswith("- "):
-            lines.append(text)
-        else:
-            lines.append(f"- {text}")
-        if len(lines) >= max(limit, 1):
-            break
-    return lines
+        try:
+            parsed = int(raw_value)
+        except Exception:
+            continue
+        limits[field_name] = max(1, parsed)
+    return limits
 
 
-def _topic_analysis_digest_lines(review_states: Sequence[Dict[str, Any]], *, max_items_per_section: int = 2) -> List[str]:
-    lines: List[str] = []
-    for state in review_states:
-        cite_key = _stringify(state.get("cite_key"))
-        title = _stringify(state.get("title")) or cite_key
-        year = _stringify(state.get("year")) or "未知年份"
-        lines.append(f"文献：{title} | cite_key={cite_key} | year={year}")
-        for section_name, key in (
-            ("研究问题", "research_problem"),
-            ("研究方法", "research_method"),
-            ("核心发现", "core_findings"),
-            ("未来方向", "future_directions"),
-            ("研究脉络", "trajectory_points"),
-            ("知识框架", "knowledge_framework_points"),
-        ):
-            sentence_objs = list(state.get(key) or [])[: max_items_per_section]
-            if not sentence_objs:
-                continue
-            lines.append(f"- {section_name}：")
-            for item in sentence_objs:
-                sentence = sanitize_note_sentence(_stringify(item.get("sentence")))
-                if sentence:
-                    lines.append(f"  - {sentence}")
-        lines.append("")
-    return lines
-
-
-def _build_topic_analysis_writer_prompt(
+def _build_review_state_from_sentences(
+    sentences: Sequence[Dict[str, Any]],
     *,
-    note_name: str,
-    topic: str,
-    provide_research_topic: bool,
-    review_states: Sequence[Dict[str, Any]],
-    feedback_lines: Sequence[str],
-    previous_draft_lines: Sequence[str],
-    off_topic_blocklist: Sequence[str],
-) -> str:
-    requirement = TOPIC_ANALYSIS_NOTE_REQUIREMENTS.get(
-        note_name,
-        {
-            "note_label": note_name,
-            "goal": "围绕研究主题撰写专题分析笔记。",
-            "focus": ["主题对齐", "证据依托", "分析深度"],
-        },
-    )
-    if provide_research_topic and _stringify(topic):
-        prompt_lines = [
-            "请你作为学术研究助理，基于多篇单篇综述标准笔记，为当前研究主题撰写专题分析笔记摘要。",
-            f"研究主题：{topic}",
-            f"分析笔记类型：{_stringify(requirement.get('note_label'))}",
-            f"本轮任务目标：{_stringify(requirement.get('goal'))}",
-            "写作要求：",
-            "1. 只围绕当前研究主题写，不要泛化到无关的宏观话题。",
-            "2. 只使用输入笔记中已经出现的证据与判断，不要编造。",
-            "3. 若发现输入中有明显无关、疑似串文或污染的内容，必须主动忽略。",
-            "4. 输出必须体现比较、归纳、抽象，不要只是原句改写。",
-            "5. 每一条都应是后续研究可继续使用的判断。",
-            f"6. 特别关注：{'、'.join([_stringify(item) for item in requirement.get('focus') or []])}",
-            "7. 输出只返回 JSON 对象，不要返回额外解释。",
-            '8. JSON 格式必须为：{"summary_lines": ["- ..."], "self_check": ["..."], "ignored_signals": ["..."]}',
-        ]
-    else:
-        prompt_lines = [
-            "请你作为学术研究助理，基于多篇单篇综述标准笔记，撰写综合分析笔记摘要。",
-            "当前模式：未提供研究主题，请只围绕输入综述做跨文献综合，不要自行假设外部课题。",
-            f"分析笔记类型：{_stringify(requirement.get('note_label'))}",
-            f"本轮任务目标：{_stringify(requirement.get('goal'))}",
-            "写作要求：",
-            "1. 当前没有提供研究主题，不要伪造一个主题，也不要把分析强行套到特定对象上。",
-            "2. 只使用输入笔记中已经出现的证据与判断，不要编造。",
-            "3. 若发现输入中有明显无关、疑似串文或污染的内容，必须主动忽略。",
-            "4. 输出必须体现比较、归纳、抽象，不要只是原句改写。",
-            "5. 每一条都应是后续研究可继续使用的判断。",
-            f"6. 特别关注：{'、'.join([_stringify(item) for item in requirement.get('focus') or []])}",
-            "7. 输出只返回 JSON 对象，不要返回额外解释。",
-            '8. JSON 格式必须为：{"summary_lines": ["- ..."], "self_check": ["..."], "ignored_signals": ["..."]}',
-        ]
-    if off_topic_blocklist:
-        prompt_lines.append(f"9. 对以下明显偏题信号保持严格排除：{'、'.join([_stringify(item) for item in off_topic_blocklist if _stringify(item)])}")
-    if previous_draft_lines:
-        prompt_lines.extend([
-            "上一轮草稿：",
-            *previous_draft_lines,
-        ])
-    if feedback_lines:
-        prompt_lines.extend([
-            "上一轮评审意见：",
-            *[f"- {_stringify(item)}" for item in feedback_lines if _stringify(item)],
-        ])
-    prompt_lines.extend([
-        "输入笔记摘要：",
-        *_topic_analysis_digest_lines(review_states),
-    ])
-    return "\n".join(prompt_lines)
+    keyword_map: Dict[str, Tuple[str, ...]] | None = None,
+    field_limits: Dict[str, Any] | None = None,
+) -> Dict[str, List[Dict[str, Any]]]:
+    """基于句子集合构造可供后续综合分析使用的 review_state 字段。"""
+
+    keyword_cfg = keyword_map or DEFAULT_SENTENCE_GROUP_KEYWORDS
+    limits = normalize_review_state_field_limits(field_limits)
+    output: Dict[str, List[Dict[str, Any]]] = {}
+    for field_name, limit in limits.items():
+        keywords = keyword_cfg.get(field_name) or ()
+        output[field_name] = pick_review_sentences(
+            list(sentences),
+            keywords,
+            limit=limit,
+            tail_bias=(field_name == "future_directions"),
+        )
+    return output
 
 
-def _build_topic_analysis_review_prompt(
-    *,
-    note_name: str,
-    topic: str,
-    provide_research_topic: bool,
-    draft_lines: Sequence[str],
-) -> str:
-    requirement = TOPIC_ANALYSIS_NOTE_REQUIREMENTS.get(note_name, {})
-    if provide_research_topic and _stringify(topic):
-        prompt_lines = [
-            "请你作为导师，对下面这份综合分析笔记摘要打分并给出可执行评语。",
-            f"研究主题：{topic}",
-            f"分析笔记类型：{_stringify(requirement.get('note_label') or note_name)}",
-            "评分维度：研究主题对齐度、证据依托度、分析深度、机制相关性、创新转化度、去污染能力、表达质量。",
-            "判分要求：",
-            "1. 如果内容偏题、空泛、只是综述原句改写、存在明显串文污染，必须降分。",
-            "2. 如果已经围绕主题做出清楚、有判断力的综合归纳，可以高分。",
-            "3. 评分采用 0-100 分。",
-            "4. 输出只返回 JSON 对象。",
-            '5. JSON 格式必须为：{"score": 0, "passed": false, "strengths": ["..."], "issues": ["..."], "revision_instructions": ["..."]}',
-            "待评审摘要：",
-            *draft_lines,
-        ]
-    else:
-        prompt_lines = [
-            "请你作为导师，对下面这份综合分析笔记摘要打分并给出可执行评语。",
-            "当前模式：未提供研究主题，请判断其是否忠实覆盖输入综述并形成稳定的跨文献综合。",
-            f"分析笔记类型：{_stringify(requirement.get('note_label') or note_name)}",
-            "评分维度：证据依托度、分析深度、机制相关性、创新转化度、去污染能力、表达质量。",
-            "判分要求：",
-            "1. 如果内容空泛、只是综述原句改写、存在明显串文污染，必须降分。",
-            "2. 如果已经基于输入材料做出清楚、有判断力的综合归纳，可以高分。",
-            "3. 评分采用 0-100 分。",
-            "4. 输出只返回 JSON 对象。",
-            '5. JSON 格式必须为：{"score": 0, "passed": false, "strengths": ["..."], "issues": ["..."], "revision_instructions": ["..."]}',
-            "待评审摘要：",
-            *draft_lines,
-        ]
-    return "\n".join(prompt_lines)
-
-
-def _parse_topic_analysis_review(parsed_obj: Dict[str, Any], *, min_score: int) -> Dict[str, Any]:
-    raw_score = _stringify(parsed_obj.get("score")) or "0"
-    try:
-        score = int(float(raw_score))
-    except Exception:
-        score = 0
-    score = max(0, min(100, score))
-    passed = bool(parsed_obj.get("passed", score >= min_score))
-    strengths = [_stringify(item) for item in parsed_obj.get("strengths") or [] if _stringify(item)]
-    issues = [_stringify(item) for item in parsed_obj.get("issues") or [] if _stringify(item)]
-    revision_instructions = [
-        _stringify(item) for item in parsed_obj.get("revision_instructions") or [] if _stringify(item)
-    ]
-    return {
-        "score": score,
-        "passed": passed,
-        "strengths": strengths,
-        "issues": issues,
-        "revision_instructions": revision_instructions,
+def _note_type_to_evidence_fields(note_name: str) -> List[str]:
+    mapping = {
+        "领域研究脉络.md": ["research_problem", "mechanism_paths", "core_findings"],
+        "核心成果.md": ["core_findings", "supporting_evidence", "mechanism_paths"],
+        "未来方向.md": ["future_directions", "limitation_points", "controversy_points"],
+        "领域知识框架.md": ["mechanism_paths", "core_findings", "research_method"],
+        "创新点补写.md": ["future_directions", "limitation_points", "controversy_points", "mechanism_paths"],
     }
+    return mapping.get(note_name, ["core_findings", "supporting_evidence"])
 
 
-def synthesize_topic_analysis_note(
+def generate_evidence_constrained_summary_lines(
+    note_name: str,
     review_states: Sequence[Dict[str, Any]],
     *,
-    note_name: str,
-    topic: str,
-    provide_research_topic: bool = True,
+    research_topic: str = "",
     workspace_root: str | Path,
     global_config_path: str | Path | None = None,
     api_key_file: str | Path | None = None,
-    writer_model: str | None = None,
-    reviewer_model: str | None = None,
-    min_score: int = 88,
-    max_rounds: int = 2,
-    off_topic_blocklist: Sequence[str] | None = None,
+    model: str | None = None,
+    line_target: int = 5,
+    max_evidence_per_review: int = 3,
     print_to_stdout: bool = False,
-) -> Dict[str, Any]:
-    """为综合分析笔记执行写作-评审-修订循环。"""
+) -> List[str]:
+    """基于证据包生成综合分析摘要行。
+
+    输出以 bullet lines 形式返回，供 A070 分析笔记回填使用。
+    """
 
     if not review_states:
-        return {
-            "summary_lines": [],
-            "review_result": {"score": 0, "passed": False, "strengths": [], "issues": ["无可用综述输入"], "revision_instructions": []},
-            "round_count": 0,
-            "writer_model": _stringify(writer_model),
-            "reviewer_model": _stringify(reviewer_model),
-            "used_llm": False,
-        }
+        return []
 
     workspace_root_path = Path(workspace_root)
-    topic_text = _stringify(topic) if provide_research_topic else ""
-    analysis_mode = "topic_guided" if topic_text else "topic_agnostic"
-    resolved_min_score = max(0, min(100, int(min_score or 0)))
-    resolved_max_rounds = max(1, int(max_rounds or 1))
-    blocklist = [_stringify(item) for item in off_topic_blocklist or [] if _stringify(item)]
-    writer_model_text = _stringify(writer_model) or "qwen3-max"
-    reviewer_model_text = _stringify(reviewer_model) or writer_model_text
-    log_db_path = resolve_aok_log_db_path(
+    llm_settings = _load_global_llm_settings(
         workspace_root_path,
         config_path=Path(global_config_path) if global_config_path else None,
     )
+    resolved_api_key_file = _stringify(api_key_file) or _stringify(llm_settings.get("aliyun_api_key_file"))
+    resolved_model = _stringify(model) or _stringify(llm_settings.get("synthesis_model")) or "auto"
+    evidence_fields = _note_type_to_evidence_fields(note_name)
+    target_count = max(2, int(line_target or 0))
+    per_review_limit = max(1, int(max_evidence_per_review or 0))
 
-    review_result = {"score": 0, "passed": False, "strengths": [], "issues": [], "revision_instructions": []}
-    summary_lines: List[str] = []
-    previous_draft_lines: List[str] = []
-    feedback_lines: List[str] = []
-    executed_round_count = 0
-    writer_client = None
-    reviewer_client = None
+    evidence_blocks: List[str] = []
+    for state in review_states:
+        cite_key = _stringify(state.get("cite_key"))
+        title = _stringify(state.get("title"))
+        year = _stringify(state.get("year"))
+        snippets: List[str] = []
+        for field_name in evidence_fields:
+            sentence_objs = list(state.get(field_name) or [])[:per_review_limit]
+            for item in sentence_objs:
+                sentence = sentence_to_academic_statement(_stringify(item.get("sentence")))
+                if not sentence:
+                    continue
+                snippets.append(f"- [{field_name}] {sentence} 见 {build_note_wikilink(cite_key)}。")
+        if not snippets:
+            continue
+        evidence_blocks.extend(
+            [
+                f"文献：{build_note_wikilink(cite_key)} | 标题：{title or cite_key} | 年份：{year or '未知'}",
+                *snippets,
+            ]
+        )
+
+    if not evidence_blocks:
+        return []
 
     try:
-        writer_cfg = load_aliyun_llm_config(
-            model=writer_model_text,
-            api_key_file=_stringify(api_key_file) or None,
+        llm_config = load_aliyun_llm_config(
+            model=resolved_model,
+            api_key_file=resolved_api_key_file or None,
+            affair_name="review_evidence_constrained_summary",
             config_path=Path(global_config_path) if global_config_path else None,
-            affair_name="a070_topic_analysis_writer",
             route_hints={
                 "task_type": "reasoning",
                 "budget_tier": "premium",
-                "input_chars": len("\n".join(_topic_analysis_digest_lines(review_states))),
-                "analysis_mode": analysis_mode,
+                "input_chars": sum(len(line) for line in evidence_blocks),
             },
         )
-        reviewer_cfg = load_aliyun_llm_config(
-            model=reviewer_model_text,
-            api_key_file=_stringify(api_key_file) or None,
-            config_path=Path(global_config_path) if global_config_path else None,
-            affair_name="a070_topic_analysis_reviewer",
-            route_hints={
-                "task_type": "reasoning",
-                "budget_tier": "premium",
-                "input_chars": len("\n".join(_topic_analysis_digest_lines(review_states))),
-                "analysis_mode": f"{analysis_mode}_review",
-            },
+        client = AliyunLLMClient(llm_config)
+        runtime_payload = build_aliyun_llm_runtime_payload(llm_config)
+        prompt = "\n".join(
+            [
+                f"你正在为 {note_name} 生成受证据约束的综合分析摘要。",
+                f"当前研究主题：{_stringify(research_topic) or DEFAULT_TOPIC}",
+                "只返回 JSON 对象，格式必须为：",
+                "{",
+                '  "summary_lines": ["- ..."]',
+                "}",
+                "要求：",
+                f"1. 只基于下方证据包生成 {target_count} 条左右摘要行；证据明显不足时可少于该数量。",
+                "2. 每条必须以 '- ' 开头。",
+                "3. 每条必须体现比较、归纳、排序、抽象中的至少一种分析动作，不要简单改写单句原文。",
+                "4. 每条必须至少保留一个来自证据包的 wikilink 引文，不得编造包外引用。",
+                "5. 若证据不足，不要瞎编，应明确写出‘当前综述证据不足以形成稳定判断’。",
+                "证据包：",
+                *evidence_blocks,
+            ]
         )
-        writer_client = AliyunLLMClient(writer_cfg)
-        reviewer_client = AliyunLLMClient(reviewer_cfg)
-
-        for round_index in range(1, resolved_max_rounds + 1):
-            executed_round_count = round_index
-            writer_prompt = _build_topic_analysis_writer_prompt(
-                note_name=note_name,
-                topic=topic_text,
-                provide_research_topic=bool(topic_text),
-                review_states=review_states,
-                feedback_lines=feedback_lines,
-                previous_draft_lines=previous_draft_lines,
-                off_topic_blocklist=blocklist,
-            )
-            writer_output = writer_client.generate_text(
-                prompt=writer_prompt,
-                system=(
-                    "你是学术研究写作助手，必须围绕当前研究主题输出结构化 JSON，不得偏题。"
-                    if topic_text
-                    else "你是学术研究写作助手，必须忠实基于输入综述输出结构化 JSON，不得擅自假设外部主题。"
-                ),
-                temperature=0.2,
-                max_tokens=4096,
-            )
-            writer_parsed, _ = parse_json_object_from_text(writer_output)
-            summary_lines = _normalize_bullet_lines(writer_parsed.get("summary_lines"), limit=8)
-            if not summary_lines:
-                summary_lines = _normalize_bullet_lines(writer_parsed.get("self_check"), limit=6)
-            if not summary_lines:
-                summary_lines = ["- 当前未形成稳定的综合分析摘要，需要人工复核。"]
-
-            review_prompt = _build_topic_analysis_review_prompt(
-                note_name=note_name,
-                topic=topic_text,
-                provide_research_topic=bool(topic_text),
-                draft_lines=summary_lines,
-            )
-            review_output = reviewer_client.generate_text(
-                prompt=review_prompt,
-                system=(
-                    "你是严格的学术导师，只输出 JSON，必须对主题偏离、证据不足和分析空泛严厉扣分。"
-                    if topic_text
-                    else "你是严格的学术导师，只输出 JSON，必须对证据不足、分析空泛和擅自假设外部主题严厉扣分。"
-                ),
-                temperature=0.1,
-                max_tokens=2048,
-            )
-            review_parsed, _ = parse_json_object_from_text(review_output)
-            review_result = _parse_topic_analysis_review(review_parsed, min_score=resolved_min_score)
-            previous_draft_lines = list(summary_lines)
-            feedback_lines = list(review_result.get("revision_instructions") or [])
-            if review_result["passed"] or review_result["score"] >= resolved_min_score:
-                break
-    except Exception as exc:
-        review_result = {
-            "score": 0,
-            "passed": False,
-            "strengths": [],
-            "issues": [f"主题化分析写作或评审失败：{exc}"],
-            "revision_instructions": [],
+        raw_output = client.generate_text(
+            prompt=prompt,
+            system="你是受证据约束的综述综合写作助手，只输出 JSON。",
+            temperature=0.2,
+            max_tokens=4096,
+        )
+        parsed_obj, _debug = parse_json_object_from_text(raw_output)
+        summary_lines = parsed_obj.get("summary_lines")
+        if not isinstance(summary_lines, list):
+            return []
+        cleaned: List[str] = []
+        seen: set[str] = set()
+        for raw_line in summary_lines:
+            line = _stringify(raw_line)
+            if not line:
+                continue
+            if not line.startswith("- "):
+                line = f"- {line.lstrip('- ').strip()}"
+            if line in seen:
+                continue
+            seen.add(line)
+            cleaned.append(line)
+        payload = {
+            "note_name": note_name,
+            "research_topic": _stringify(research_topic),
+            "line_target": target_count,
+            "generated_line_count": len(cleaned),
+            "evidence_block_count": len(evidence_blocks),
+            "llm_backend": _stringify(runtime_payload.get("llm_backend")),
+            "routing_info": runtime_payload.get("routing_info") or {},
         }
-        summary_lines = []
-
-    payload = {
-        "note_name": note_name,
-        "topic": topic_text,
-        "provide_research_topic": bool(topic_text),
-        "analysis_mode": analysis_mode,
-        "round_count": executed_round_count,
-        "score": int(review_result.get("score") or 0),
-        "passed": bool(review_result.get("passed")),
-        "writer_model": writer_client.model if writer_client else writer_model_text,
-        "reviewer_model": reviewer_client.model if reviewer_client else reviewer_model_text,
-        "issue_count": len(review_result.get("issues") or []),
-    }
-    try:
         append_aok_log_event(
-            event_type="A070_TOPIC_ANALYSIS_NOTE",
+            event_type="REVIEW_EVIDENCE_CONSTRAINED_SUMMARY",
             project_root=workspace_root_path,
-            log_db_path=log_db_path,
-            handler_kind="llm_native" if summary_lines else "local_script",
-            handler_name="synthesize_topic_analysis_note",
-            model_name=f"writer={payload['writer_model']};reviewer={payload['reviewer_model']}",
-            skill_names=["ar_A070_综述精读与研究脉络梳理_v5"],
-            reasoning_summary=(
-                "围绕研究主题执行综合分析笔记写作、导师评审与必要修订。"
-                if topic_text
-                else "在未提供研究主题的模式下执行综合分析笔记写作、导师评审与必要修订。"
+            log_db_path=resolve_aok_log_db_path(
+                workspace_root_path,
+                config_path=Path(global_config_path) if global_config_path else None,
             ),
+            handler_kind="llm_native",
+            handler_name="generate_evidence_constrained_summary_lines",
+            model_name=client.model,
+            skill_names=["ar_综述精读与研究脉络梳理_v5"],
+            reasoning_summary="基于单篇综述证据单元生成受证据约束的综合摘要行。",
             payload=payload,
         )
+        if print_to_stdout:
+            print(json.dumps(payload, ensure_ascii=False, indent=2))
+        return cleaned
     except Exception:
-        pass
-    if print_to_stdout:
-        print(json.dumps({"payload": payload, "review_result": review_result}, ensure_ascii=False, indent=2))
-    return {
-        "summary_lines": summary_lines,
-        "review_result": review_result,
-        "round_count": payload["round_count"],
-        "writer_model": payload["writer_model"],
-        "reviewer_model": payload["reviewer_model"],
-        "used_llm": bool(summary_lines),
-    }
+        return []
 
 
 def _stringify(value: Any) -> str:
@@ -685,11 +503,13 @@ def _build_review_state_from_payload(
     reference_lines: Sequence[str],
     reference_line_details: Sequence[Dict[str, Any]],
     pending_reason: str = "",
+    field_limits: Dict[str, Any] | None = None,
 ) -> Dict[str, Any]:
     """构造统一的综述 review state。"""
 
     full_text = _stringify(payload.get("full_text"))
     sentences = split_review_sentences(full_text)
+    state_fields = _build_review_state_from_sentences(sentences, keyword_map=keyword_map, field_limits=field_limits)
     return {
         "uid_literature": uid_literature,
         "cite_key": cite_key,
@@ -701,10 +521,7 @@ def _build_review_state_from_payload(
         "extract_method": extract_method,
         "full_text": full_text,
         "sentences": sentences,
-        "research_problem": pick_review_sentences(sentences, keyword_map["research_problem"], limit=2),
-        "research_method": pick_review_sentences(sentences, keyword_map["research_method"], limit=2),
-        "core_findings": pick_review_sentences(sentences, keyword_map["core_findings"], limit=3),
-        "future_directions": pick_review_sentences(sentences, keyword_map["future_directions"], limit=2, tail_bias=True),
+        **state_fields,
         "reference_lines": list(reference_lines),
         "reference_line_details": list(reference_line_details),
         "pending_reason": pending_reason,
@@ -720,6 +537,7 @@ def extract_review_state_from_attachment(
     title: str,
     year: str = "",
     sentence_group_keywords: Dict[str, Tuple[str, ...]] | None = None,
+    field_limits: Dict[str, Any] | None = None,
 ) -> Dict[str, Any]:
     """从附件构造单篇综述研读状态。
 
@@ -756,6 +574,7 @@ def extract_review_state_from_attachment(
         reference_lines=list(extraction.get("reference_lines") or []),
         reference_line_details=list(extraction.get("reference_line_details") or []),
         pending_reason=_stringify(extraction.get("pending_reason")),
+        field_limits=field_limits,
     )
 
 
@@ -774,8 +593,26 @@ def extract_review_state_from_structured_file(
     payload = load_structured_data(Path(structured_json_path))
     extraction = extract_reference_lines_from_structured_data(payload)
     text_payload = payload.get("text") if isinstance(payload.get("text"), dict) else {}
-    return _build_review_state_from_payload(
-        {"full_text": text_payload.get("full_text")},
+
+    # 新版解析链优先从结构树/元素构造 clean_body，避免直接吃 full_text 噪声层。
+    packet_clean_body = ""
+    packet_manifest: Dict[str, Any] = {}
+    try:
+        packet = build_review_reading_packet(structured_json_path)
+        packet_clean_body = _stringify(packet.get("clean_body"))
+        packet_manifest = packet.get("asset_manifest") if isinstance(packet.get("asset_manifest"), dict) else {}
+    except Exception:
+        packet_clean_body = ""
+        packet_manifest = {}
+
+    text_resolution = resolve_review_text_by_priority(text_payload, clean_body=packet_clean_body)
+    effective_text = _stringify(text_resolution.get("selected_text"))
+    selected_source = _stringify(text_resolution.get("selected_source"))
+    if not selected_source:
+        selected_source = _stringify(packet_manifest.get("review_text_source"))
+
+    review_state = _build_review_state_from_payload(
+        {"full_text": effective_text},
         uid_literature=uid_literature,
         cite_key=cite_key,
         title=title,
@@ -789,6 +626,8 @@ def extract_review_state_from_structured_file(
         reference_line_details=list(extraction.get("reference_line_details") or []),
         pending_reason=_stringify(extraction.get("pending_reason")),
     )
+    review_state["full_text_source"] = selected_source or "empty"
+    return review_state
 
 
 def _resolve_global_config_path(workspace_root: Path, config_path: Path | None = None) -> Path | None:
@@ -844,6 +683,7 @@ def refine_review_state_with_llm(
     api_key_file: str | Path | None = None,
     model: str | None = None,
     max_chars: int = 24000,
+    field_limits: Dict[str, Any] | None = None,
     print_to_stdout: bool = False,
 ) -> Dict[str, Any]:
     """使用单次独立 LLM 请求提炼单篇综述的 review_state。"""
@@ -865,6 +705,7 @@ def refine_review_state_with_llm(
     )
     truncated_text = full_text[: max(int(max_chars or 0), 1000)]
     original_sentences = list(review_state.get("sentences") or split_review_sentences(truncated_text))
+    normalized_limits = normalize_review_state_field_limits(field_limits)
 
     result = dict(review_state)
     result["llm_review_state"] = {
@@ -873,6 +714,8 @@ def refine_review_state_with_llm(
         "parse_failed": 0,
         "parse_failure_reason": "",
         "model_name": "",
+        "llm_backend": "",
+        "routing_info": {},
     }
 
     try:
@@ -888,6 +731,7 @@ def refine_review_state_with_llm(
             },
         )
         client = AliyunLLMClient(llm_config)
+        runtime_payload = build_aliyun_llm_runtime_payload(llm_config)
         prompt = "\n".join(
             [
                 "请基于下面单篇综述/述评/研究进展全文，提炼结构化阅读结果。",
@@ -896,12 +740,21 @@ def refine_review_state_with_llm(
                 '  "research_problem": ["..."],',
                 '  "research_method": ["..."],',
                 '  "core_findings": ["..."],',
-                '  "future_directions": ["..."]',
+                '  "future_directions": ["..."],',
+                '  "mechanism_paths": ["..."],',
+                '  "controversy_points": ["..."],',
+                '  "limitation_points": ["..."],',
+                '  "supporting_evidence": ["..."]',
                 "}",
                 "要求：",
-                "1. 每个字段返回 1-3 条句子。",
-                "2. 尽量复用原文句子，不要编造文中没有的信息。",
-                "3. 若某字段没有足够内容，返回空列表。",
+                "1. 每个字段尽量返回足够供后续综合分析使用的句子；若原文信息不足，可以少于上限。",
+                "2. 尽量复用原文句子或紧贴原文做最小必要改写，不要编造文中没有的信息。",
+                "3. `mechanism_paths` 用于保留机制链条、传导路径、中介或反馈表述。",
+                "4. `controversy_points` 用于保留争议、差异、异质性、边界不一致等表述。",
+                "5. `limitation_points` 用于保留不足、局限、未覆盖或需后续补充的表述。",
+                "6. `supporting_evidence` 用于保留最适合支撑后续综合分析的结果句、证据句和关键判断句。",
+                f"7. 配额上限：{json.dumps(normalized_limits, ensure_ascii=False)}。",
+                "8. 若某字段没有足够内容，返回空列表。",
                 f"标题：{_stringify(review_state.get('title')) or 'unknown'}",
                 f"年份：{_stringify(review_state.get('year')) or 'unknown'}",
                 f"cite_key：{_stringify(review_state.get('cite_key')) or 'unknown'}",
@@ -916,7 +769,7 @@ def refine_review_state_with_llm(
             max_tokens=4096,
         )
         parsed_obj, _debug = parse_json_object_from_text(raw_output)
-        for field_name in ["research_problem", "research_method", "core_findings", "future_directions"]:
+        for field_name in normalized_limits:
             llm_sentences = parsed_obj.get(field_name)
             if isinstance(llm_sentences, list):
                 result[field_name] = _coerce_sentence_objects(original_sentences, llm_sentences)
@@ -927,6 +780,8 @@ def refine_review_state_with_llm(
             "parse_failed": 0,
             "parse_failure_reason": "",
             "model_name": client.model,
+            "llm_backend": _stringify(runtime_payload.get("llm_backend")),
+            "routing_info": runtime_payload.get("routing_info") or {},
         }
     except Exception as exc:
         result["llm_review_state"] = {
@@ -935,7 +790,18 @@ def refine_review_state_with_llm(
             "parse_failed": 1,
             "parse_failure_reason": str(exc),
             "model_name": resolved_model,
+            "llm_backend": "",
+            "routing_info": {},
         }
+
+    fallback_fields = _build_review_state_from_sentences(
+        original_sentences,
+        keyword_map=DEFAULT_SENTENCE_GROUP_KEYWORDS,
+        field_limits=normalized_limits,
+    )
+    for field_name, sentence_objs in fallback_fields.items():
+        if not isinstance(result.get(field_name), list) or not result.get(field_name):
+            result[field_name] = sentence_objs
 
     payload = {
         "cite_key": _stringify(result.get("cite_key")),
@@ -944,6 +810,11 @@ def refine_review_state_with_llm(
         "parse_failed": int((result.get("llm_review_state") or {}).get("parse_failed") or 0),
         "parse_failure_reason": _stringify((result.get("llm_review_state") or {}).get("parse_failure_reason")),
         "input_chars": len(truncated_text),
+        "sentence_count": len(original_sentences),
+        "reference_line_count": len(result.get("reference_lines") or []),
+        "field_limits": normalized_limits,
+        "llm_backend": _stringify((result.get("llm_review_state") or {}).get("llm_backend")),
+        "routing_info": (result.get("llm_review_state") or {}).get("routing_info") or {},
     }
     append_aok_log_event(
         event_type="REVIEW_STATE_SINGLE_DOCUMENT",
@@ -1125,3 +996,4 @@ def build_review_general_reading_list(
             }
         )
     return pd.DataFrame(rows, columns=GENERAL_READING_COLUMNS)
+

@@ -38,7 +38,9 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Set, Tuple
 
-from autodokit.tools.llm_clients import AliyunDashScopeClient, load_aliyun_llm_config
+from autodokit.tools.atomic.task_aok.post_affair_git_commit import affair_auto_git_commit
+
+from autodokit.tools.llm_clients import invoke_aliyun_llm
 from autodokit.tools.llm_parsing import (
     LLMOutputParseError,
     extract_output_text_from_response_like_blob,
@@ -111,6 +113,7 @@ class KeywordSetConfig:
     dry_run: bool = False
     env_api_key_name: str = "DASHSCOPE_API_KEY"
     api_key_file: Optional[str] = None
+    llm_config_path: Optional[str] = None
     base_url: Optional[str] = None
     model_route: Optional[Dict[str, Any]] = None
     allow_fallback: bool = False  # 是否允许解析失败时退回 seeds（默认 False，避免静默失败）
@@ -151,6 +154,24 @@ def _resolve_output_filename(raw_value: Any, *, default_name: str) -> str:
 
     name = Path(raw_text).name.strip()
     return name or default_name
+
+
+def _resolve_llm_config_path(raw_value: Any, *, affair_config_path: Path) -> Optional[str]:
+    """解析统一路由所需的全局配置路径。"""
+
+    if raw_value is not None and str(raw_value).strip():
+        p = Path(str(raw_value).strip())
+        if not p.is_absolute():
+            p = (affair_config_path.parent / p).resolve()
+        return str(p)
+
+    # 默认尝试 workspace/config/config.json
+    candidate = (affair_config_path.parent.parent / "config.json").resolve()
+    if candidate.exists():
+        return str(candidate)
+
+    # 兜底回退到当前 affair 配置路径，保持行为可预测。
+    return str(affair_config_path)
 
 
 def _normalize_research_domains(value: Any) -> Optional[Dict[str, List[str]]]:
@@ -723,24 +744,61 @@ def _build_cartesian_keyword_pairs(
     return pairs
 
 
-def _call_llm(cfg: KeywordSetConfig) -> Tuple[List[Dict[str, Any]], List[str]]:
-    """调用阿里百炼生成按领域分组的关键词集合。"""
+def _invoke_llm_text(
+        *,
+        cfg: KeywordSetConfig,
+        prompt: str,
+        max_tokens: int = 2048,
+) -> Tuple[str, Dict[str, Any]]:
+    """通过统一路由门面调用 LLM，并返回文本与审计信息。"""
 
     route_hints: Dict[str, Any] = dict(cfg.model_route or {})
     route_hints.setdefault("input_chars", len(cfg.description or ""))
 
-    llm_cfg = load_aliyun_llm_config(
-        model=cfg.model,
+    result = invoke_aliyun_llm(
+        prompt=prompt,
+        max_tokens=max_tokens,
+        temperature=cfg.temperature,
         env_api_key_name=cfg.env_api_key_name,
         api_key_file=cfg.api_key_file,
-        base_url=cfg.base_url,
+        config_path=cfg.llm_config_path,
         affair_name="生成关键词集合",
         route_hints=route_hints,
     )
-    client = AliyunDashScopeClient(llm_cfg)
+
+    status = str(result.get("status") or "").upper()
+    if status != "PASS":
+        raise ValueError(
+            "LLM 路由调用失败："
+            + json.dumps(
+                {
+                    "status": result.get("status"),
+                    "selected_model": result.get("selected_model"),
+                    "attempts": result.get("attempts"),
+                    "error": result.get("error"),
+                },
+                ensure_ascii=False,
+            )
+        )
+
+    response = result.get("response") if isinstance(result.get("response"), dict) else {}
+    text = str(response.get("text") or "")
+    audit = {
+        "selected_model": result.get("selected_model"),
+        "attempts": result.get("attempts") or [],
+        "routing": response.get("routing") if isinstance(response.get("routing"), dict) else {},
+        "llm_backend": response.get("llm_backend"),
+        "llm_region": response.get("llm_region"),
+        "llm_base_url": response.get("llm_base_url"),
+    }
+    return text, audit
+
+
+def _call_llm(cfg: KeywordSetConfig) -> Tuple[List[Dict[str, Any]], List[str]]:
+    """调用阿里百炼生成按领域分组的关键词集合。"""
 
     prompt = _build_prompt(cfg)
-    raw = client.generate_text(prompt=prompt, temperature=cfg.temperature, max_tokens=2048)
+    raw, _audit = _invoke_llm_text(cfg=cfg, prompt=prompt, max_tokens=2048)
     parsed = _extract_json(raw) or {}
 
     domains = _parse_domains(parsed)
@@ -858,19 +916,6 @@ def _call_llm_domain_two_stage(cfg: KeywordSetConfig) -> Tuple[Dict[str, List[st
     if not cfg.research_domains:
         raise ValueError("research_domains 不能为空：两阶段生成依赖领域种子关键词")
 
-    route_hints: Dict[str, Any] = dict(cfg.model_route or {})
-    route_hints.setdefault("input_chars", len(cfg.description or ""))
-
-    llm_cfg = load_aliyun_llm_config(
-        model=cfg.model,
-        env_api_key_name=cfg.env_api_key_name,
-        api_key_file=cfg.api_key_file,
-        base_url=cfg.base_url,
-        affair_name="生成关键词集合",
-        route_hints=route_hints,
-    )
-    client = AliyunDashScopeClient(llm_cfg)
-
     domains_map: Dict[str, List[str]] = {}
     debug: Dict[str, Any] = {"by_domain": {}}
 
@@ -883,7 +928,7 @@ def _call_llm_domain_two_stage(cfg: KeywordSetConfig) -> Tuple[Dict[str, List[st
             description=cfg.description,
             max_keywords=max(10, int(cfg.max_keywords) // 2),
         )
-        raw_zh = client.generate_text(prompt=prompt_zh, temperature=cfg.temperature, max_tokens=2048)
+        raw_zh, audit_zh = _invoke_llm_text(cfg=cfg, prompt=prompt_zh, max_tokens=2048)
         raw_zh_for_parse = extract_output_text_from_response_like_blob(raw_zh) if is_likely_sdk_response_blob(raw_zh) else None
         raw_zh_clean = raw_zh_for_parse or raw_zh
 
@@ -909,7 +954,7 @@ def _call_llm_domain_two_stage(cfg: KeywordSetConfig) -> Tuple[Dict[str, List[st
             description=cfg.description,
             max_keywords=max(10, int(cfg.max_keywords) // 2),
         )
-        raw_en = client.generate_text(prompt=prompt_en, temperature=cfg.temperature, max_tokens=2048)
+        raw_en, audit_en = _invoke_llm_text(cfg=cfg, prompt=prompt_en, max_tokens=2048)
         raw_en_for_parse = extract_output_text_from_response_like_blob(raw_en) if is_likely_sdk_response_blob(raw_en) else None
         raw_en_clean = raw_en_for_parse or raw_en
 
@@ -941,6 +986,8 @@ def _call_llm_domain_two_stage(cfg: KeywordSetConfig) -> Tuple[Dict[str, List[st
             "picked_en_key": picked_en_key,
             "keywords_zh_count": len(keywords_zh),
             "keywords_en_count": len(keywords_en),
+            "llm_audit_zh": audit_zh,
+            "llm_audit_en": audit_en,
         }
 
         # 关键：不允许“静默退化”为 seeds，否则下游以为扩展成功但实际没有覆盖。
@@ -990,6 +1037,7 @@ def _domains_map_to_legacy_domains_list(domains_map: Dict[str, List[str]]) -> Li
     return out
 
 
+@affair_auto_git_commit("A030")
 def execute(config_path: Path) -> List[Path]:
     """调度器入口：生成关键词集合并写出到输出目录。"""
 
@@ -1042,6 +1090,10 @@ def execute(config_path: Path) -> List[Path]:
         dry_run=bool(affair_cfg.get("dry_run", False)),
         env_api_key_name=str(affair_cfg.get("env_api_key_name") or "DASHSCOPE_API_KEY"),
         api_key_file=affair_cfg.get("api_key_file"),
+        llm_config_path=_resolve_llm_config_path(
+            affair_cfg.get("llm_config_path"),
+            affair_config_path=config_path,
+        ),
         base_url=affair_cfg.get("base_url"),
         model_route=affair_cfg.get("model_route") if isinstance(affair_cfg.get("model_route"), dict) else None,
         allow_fallback=bool(affair_cfg.get("allow_fallback", False)),

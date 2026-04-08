@@ -8,13 +8,15 @@
 
 from __future__ import annotations
 
-from datetime import UTC, datetime
+from datetime import datetime
 import json
 import os
 import sqlite3
 import subprocess
 from pathlib import Path
 from typing import Any
+
+from ...time_utils import now_iso
 
 
 DEFAULT_TASK_LEDGER_DIR_NAME = "tasks"
@@ -24,7 +26,7 @@ DEFAULT_GITIGNORE_LOG_DB_ENTRY = "database/logs/aok_log.db"
 
 
 def _utc_now_iso() -> str:
-    return datetime.now(tz=UTC).isoformat()
+    return now_iso()
 
 
 def _resolve_workspace_root(workspace_root: str | Path) -> Path:

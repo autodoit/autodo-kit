@@ -1,8 +1,7 @@
-"""候选文献视图构建事务。"""
+﻿"""候选文献视图构建事务。"""
 
 from __future__ import annotations
 
-from datetime import UTC, datetime
 from hashlib import sha1
 import json
 from pathlib import Path
@@ -30,12 +29,13 @@ from autodokit.tools import (
     process_reference_citation,
     refine_reference_lines_with_llm,
 )
-from autodokit.tools.pdf_parse_asset_manager import ensure_multimodal_parse_asset
+from autodokit.tools.llm_clients import postprocess_aliyun_multimodal_parse_outputs
+from autodokit.tools.ocr.classic.pdf_parse_asset_manager import ensure_multimodal_parse_asset
 from autodokit.tools.bibliodb_sqlite import replace_tags_for_namespace, save_structured_state
 from autodokit.tools.bibliodb_sqlite import replace_tags_for_namespace, save_structured_state, upsert_reading_queue_rows
 from autodokit.tools.contentdb_sqlite import get_pdf_structured_variant_column, resolve_content_db_config, resolve_pdf_structured_variant_output_dir
-from autodokit.tools.pdf_to_structured_data_converter_local_pipeline_v2 import convert_pdf_to_structured_data_file as convert_pdf_to_structured_data_file_local_v2
-from autodokit.tools.pdf_to_structure_data_converter_use_babeldoc import convert_pdf_to_structured_data_file as convert_pdf_to_structured_data_file_babeldoc
+from autodokit.tools.ocr.classic.pdf_to_structured_data_converter_local_pipeline_v2 import convert_pdf_to_structured_data_file as convert_pdf_to_structured_data_file_local_v2
+from autodokit.tools.ocr.babeldoc.pdf_to_structure_data_converter_use_babeldoc import convert_pdf_to_structured_data_file as convert_pdf_to_structured_data_file_babeldoc
 from autodokit.tools.storage_backend import (
     load_knowledge_tables,
     load_reference_main_table,
@@ -43,10 +43,12 @@ from autodokit.tools.storage_backend import (
     persist_reference_main_table,
     persist_review_candidate_views,
 )
-from autodokit.tools.pdf_structured_data_tools import (
+from autodokit.tools.atomic.task_aok.post_affair_git_commit import affair_auto_git_commit
+from autodokit.tools.ocr.classic.pdf_structured_data_tools import (
     extract_reference_lines_from_structured_data,
     load_structured_data,
 )
+from autodokit.tools.time_utils import now_compact
 
 
 STRUCTURED_ATTACHMENT_HEADERS: Dict[str, List[str]] = {
@@ -122,7 +124,7 @@ def _build_scope_key(raw_cfg: Dict[str, Any]) -> str:
 def _build_run_uid(scope_key: str) -> str:
     """生成本轮 A05 运行 UID。"""
 
-    timestamp = datetime.now(tz=UTC).strftime("%Y%m%d%H%M%S")
+    timestamp = now_compact()
     return f"a05-{timestamp}-{sha1(scope_key.encode('utf-8')).hexdigest()[:8]}"
 
 
@@ -261,6 +263,22 @@ def _ensure_structured_reference_lines(
     api_key_file: str = "",
     parse_model: str = "",
     structured_babeldoc: Dict[str, Any] | None = None,
+    enable_aliyun_postprocess: bool = True,
+    enable_llm_basic_cleanup: bool = True,
+    basic_cleanup_llm_model: str = "qwen3.5-flash",
+    basic_cleanup_llm_sdk_backend: str | None = None,
+    basic_cleanup_llm_region: str = "cn-beijing",
+    enable_llm_structure_resolution: bool = True,
+    structure_llm_model: str = "qwen3.5-plus",
+    structure_llm_sdk_backend: str | None = None,
+    structure_llm_region: str = "cn-beijing",
+    enable_llm_contamination_filter: bool = True,
+    contamination_llm_model: str = "qwen3-max",
+    contamination_llm_sdk_backend: str | None = None,
+    contamination_llm_region: str = "cn-beijing",
+    postprocess_rewrite_structured: bool = True,
+    postprocess_rewrite_markdown: bool = True,
+    postprocess_keep_page_markers: bool = False,
 ) -> Tuple[pd.DataFrame, Dict[str, Any], List[str], List[Dict[str, Any]], bool]:
     """优先复用 structured 文件，缺失时按配置生成。"""
 
@@ -288,6 +306,28 @@ def _ensure_structured_reference_lines(
                 overwrite_existing=structured_overwrite,
                 model=parse_model or "auto",
             )
+            if enable_aliyun_postprocess:
+                postprocess_aliyun_multimodal_parse_outputs(
+                    normalized_structured_path=_stringify(parse_asset.get("normalized_structured_path")),
+                    reconstructed_markdown_path=_stringify(parse_asset.get("reconstructed_markdown_path")),
+                    rewrite_structured=postprocess_rewrite_structured,
+                    rewrite_markdown=postprocess_rewrite_markdown,
+                    keep_page_markers=postprocess_keep_page_markers,
+                    enable_llm_basic_cleanup=enable_llm_basic_cleanup,
+                    basic_cleanup_llm_model=basic_cleanup_llm_model,
+                    basic_cleanup_llm_sdk_backend=basic_cleanup_llm_sdk_backend,
+                    basic_cleanup_llm_region=basic_cleanup_llm_region,
+                    enable_llm_structure_resolution=enable_llm_structure_resolution,
+                    structure_llm_model=structure_llm_model,
+                    structure_llm_sdk_backend=structure_llm_sdk_backend,
+                    structure_llm_region=structure_llm_region,
+                    enable_llm_contamination_filter=enable_llm_contamination_filter,
+                    contamination_llm_model=contamination_llm_model,
+                    contamination_llm_sdk_backend=contamination_llm_sdk_backend,
+                    contamination_llm_region=contamination_llm_region,
+                    config_path=global_config_path,
+                    api_key_file=api_key_file or None,
+                )
             structured_path = Path(_stringify(parse_asset.get("normalized_structured_path"))).resolve()
             backend = "aliyun_multimodal"
             task_type = parse_level
@@ -421,7 +461,7 @@ def _extract_reference_lines_from_text(text: str) -> List[str]:
     """从全文文本提取参考文献行。"""
 
     try:
-        from autodokit.tools.pdf_elements_extractors import extract_references_from_full_text
+        from autodokit.tools.ocr.classic.pdf_elements_extractors import extract_references_from_full_text
 
         structured_refs, _status = extract_references_from_full_text(text)
         extracted = [
@@ -489,7 +529,7 @@ def _read_pdf_text(pdf_path: Path) -> str:
         pass
 
     try:
-        from autodokit.tools.pdf_elements_extractors import extract_text_with_rapidocr
+        from autodokit.tools.ocr.classic.pdf_elements_extractors import extract_text_with_rapidocr
 
         text, status, _meta = extract_text_with_rapidocr(pdf_path)
         if text.strip():
@@ -555,7 +595,7 @@ def _render_standard_note_body(
     if reference_lines:
         placeholder_refs.extend([f"- {item}" for item in reference_lines])
     else:
-        placeholder_refs.append("- 待 A06 扫描后回填")
+        placeholder_refs.append("- 待 A070 扫描后回填")
     batch_lines = ["- 待补充批次"]
     if batch_rows:
         batch_lines = [
@@ -573,22 +613,22 @@ def _render_standard_note_body(
             "- 当前综述回链：[[" + (_stringify(row.get("cite_key")) or _stringify(row.get("uid_literature"))) + "]]",
             "",
             "## 研究问题",
-            "- 待 A06 填充",
+            "- 待 A070 填充",
             "",
             "## 研究方法与证据",
-            "- 待 A06 填充",
+            "- 待 A070 填充",
             "",
             "## 核心发现",
-            "- 待 A06 填充",
+            "- 待 A070 填充",
             "",
             "## 阅读批次",
             *batch_lines,
             "",
             "## 共识与争议",
-            "- 待 A06 填充",
+            "- 待 A070 填充",
             "",
             "## 未来方向",
-            "- 待 A06 填充",
+            "- 待 A070 填充",
             "",
             "## 摘要摘录",
             abstract or "- 待补充",
@@ -610,13 +650,13 @@ def _render_composite_note(title: str, summary: str) -> str:
             f"> {summary}",
             "",
             "## 输入综述",
-            "- 待 A06 回填 `[[cite_key]]` 列表",
+            "- 待 A070 回填 `[[cite_key]]` 列表",
             "",
             "## 结构化提要",
-            "- 待 A06 填充",
+            "- 待 A070 填充",
             "",
             "## 证据回链",
-            "- 待 A06 填充 `[[cite_key]]`",
+            "- 待 A070 填充 `[[cite_key]]`",
         ]
     )
 
@@ -627,7 +667,7 @@ def _write_standard_note_references(note_path: Path, reference_entries: List[str
     text = note_path.read_text(encoding="utf-8") if note_path.exists() else ""
     marker = "## 参考文献列表"
     prefix, _, _ = text.partition(marker)
-    entries = reference_entries or ["- 待 A06 扫描后回填"]
+    entries = reference_entries or ["- 待 A070 扫描后回填"]
     new_text = prefix.rstrip() + "\n\n" + marker + "\n" + "\n".join(entries) + "\n"
     note_path.write_text(new_text, encoding="utf-8")
 
@@ -708,6 +748,22 @@ def _prepare_review_assets(
     reference_line_repair_model: str = "auto",
     placeholder_source: str = "placeholder_from_a065_review_scan",
     run_uid_prefix: str = "a065",
+    enable_aliyun_postprocess: bool = True,
+    enable_llm_basic_cleanup: bool = True,
+    basic_cleanup_llm_model: str = "qwen3.5-flash",
+    basic_cleanup_llm_sdk_backend: str | None = None,
+    basic_cleanup_llm_region: str = "cn-beijing",
+    enable_llm_structure_resolution: bool = True,
+    structure_llm_model: str = "qwen3.5-plus",
+    structure_llm_sdk_backend: str | None = None,
+    structure_llm_region: str = "cn-beijing",
+    enable_llm_contamination_filter: bool = True,
+    contamination_llm_model: str = "qwen3-max",
+    contamination_llm_sdk_backend: str | None = None,
+    contamination_llm_region: str = "cn-beijing",
+    postprocess_rewrite_structured: bool = True,
+    postprocess_rewrite_markdown: bool = True,
+    postprocess_keep_page_markers: bool = False,
 ) -> Dict[str, Any]:
     """预创建 A06 所需资产骨架并执行参考文献占位映射。"""
 
@@ -725,13 +781,13 @@ def _prepare_review_assets(
     reference_dump_path.write_text("", encoding="utf-8")
 
     composite_specs = [
-        (dirs["trajectories"] / "trajectory_seed.md", "trajectory_seed", "研究脉络种子，记录时间线与主题演进骨架。"),
-        (dirs["review_summaries"] / "core_findings.md", "core_findings", "核心发现汇总骨架。"),
-        (dirs["review_summaries"] / "consensus_notes.md", "consensus_notes", "综述共识汇总骨架。"),
-        (dirs["review_summaries"] / "controversy_notes.md", "controversy_notes", "综述争议汇总骨架。"),
-        (dirs["review_summaries"] / "future_directions_notes.md", "future_directions_notes", "未来研究方向骨架。"),
-        (dirs["frameworks"] / "knowledge_framework.md", "knowledge_framework", "领域知识框架骨架。"),
-        (dirs["matrices"] / "review_matrix.md", "review_matrix", "综述矩阵骨架，用于后续整理主题、方法与结论。"),
+        (dirs["trajectories"] / "领域研究脉络.md", "领域研究脉络", "研究脉络种子，记录时间线与主题演进骨架。"),
+        (dirs["review_summaries"] / "核心成果.md", "核心成果", "核心成果汇总骨架。"),
+        (dirs["review_summaries"] / "共识点.md", "共识点", "综述共识汇总骨架。"),
+        (dirs["review_summaries"] / "争议点.md", "争议点", "综述争议汇总骨架。"),
+        (dirs["review_summaries"] / "未来方向.md", "未来方向", "未来研究方向骨架。"),
+        (dirs["frameworks"] / "领域知识框架.md", "领域知识框架", "领域知识框架骨架。"),
+        (dirs["matrices"] / "综述矩阵.md", "综述矩阵", "综述矩阵骨架，用于后续整理主题、方法与结论。"),
     ]
 
     try:
@@ -744,7 +800,7 @@ def _prepare_review_assets(
 
     created_note_rows: List[Dict[str, Any]] = []
     validation_errors: List[str] = []
-    placeholder_run_uid = f"{run_uid_prefix}-{datetime.now(tz=UTC).strftime('%Y%m%d%H%M%S')}"
+    placeholder_run_uid = f"{run_uid_prefix}-{now_compact()}"
     for path, title, summary in composite_specs:
         knowledge_index, note_info, validation = _register_note(
             knowledge_index,
@@ -1077,6 +1133,7 @@ def _load_candidate_records(raw_cfg: Dict[str, Any]) -> List[Dict[str, Any]]:
     return []
 
 
+@affair_auto_git_commit("A050")
 def execute(config_path: Path) -> List[Path]:
     """事务执行入口。"""
 
@@ -1342,10 +1399,25 @@ def execute(config_path: Path) -> List[Path]:
         event_type="A050_REVIEW_CANDIDATE_VIEWS_BUILT",
         project_root=workspace_root,
         enabled=logging_enabled,
+        affair_code="A050",
         handler_name="候选文献视图构建",
         agent_names=["ar_A050_综述候选文献视图构建事务智能体_v5"],
         skill_names=["ar_A050_综述候选文献视图构建_v5", "m_ObsidianMarkdown_v1"],
         reasoning_summary="生成综述候选视图，并为 A060 预处理与 A070 研读准备输入资产。",
+        gate_review=gate_review,
+        gate_review_path=gate_path,
+        artifact_paths=[
+            index_path,
+            readable_path,
+            review_path,
+            queue_seed_path,
+            read_pool_path,
+            exit_view_path,
+            batch_path,
+            canonical_index_path,
+            canonical_readable_path,
+            gate_path,
+        ],
         payload={
             "review_candidate_count": len(review_candidate_pool_index),
             "read_pool_count": len(review_read_pool),

@@ -6,6 +6,7 @@ from pathlib import Path
 from typing import Any
 
 from autodokit.tools import load_json_or_py, write_affair_json_result
+from autodokit.tools.atomic.task_aok.post_affair_git_commit import affair_auto_git_commit
 
 
 def archive_publication(
@@ -44,6 +45,7 @@ def archive_publication(
     }
 
 
+@affair_auto_git_commit("A160")
 def execute(config_path: Path) -> list[Path]:
     """事务执行入口。
 

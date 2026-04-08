@@ -1,4 +1,4 @@
-"""AOK 工具统一导出入口。
+﻿"""AOK 工具统一导出入口。
 
 本模块采用“直调函数优先”的设计：
 
@@ -430,8 +430,9 @@ from autodokit.tools.review_synthesis_tools import (
 )
 from autodokit.tools.review_reading_packet_tools import (
     build_review_reading_packet,
+    resolve_review_text_by_priority,
 )
-from autodokit.tools.pdf_structured_data_tools import (
+from autodokit.tools.ocr.classic.pdf_structured_data_tools import (
     build_chunk_entries_from_structured_data,
     build_doc_record_from_structured_data,
     build_structured_data_payload,
@@ -442,30 +443,55 @@ from autodokit.tools.pdf_structured_data_tools import (
     load_structured_data,
     write_chunk_shards,
 )
-from autodokit.tools.pdf_structured_element_extractor_from_babeldoc import (
+from autodokit.tools.ocr.babeldoc.pdf_structured_element_extractor_from_babeldoc import (
     extract_pdf_elements_from_structured_data,
     extract_pdf_elements_from_structured_file,
 )
-from autodokit.tools.pdf_page_image_tools import (
+from autodokit.tools.ocr.classic.pdf_page_image_tools import (
     crop_image_by_normalized_bbox,
     render_pdf_pages_to_png,
 )
-from autodokit.tools.pdf_multimodal_tree_builder import (
+from autodokit.tools.ocr.aliyun_multimodal.pdf_multimodal_tree_builder import (
     build_elements_payload as build_pdf_multimodal_elements_payload,
     build_quality_report as build_pdf_multimodal_quality_report,
     build_tree_linear_index as build_pdf_multimodal_tree_linear_index,
     build_structure_tree as build_pdf_multimodal_structure_tree,
     render_reconstructed_markdown as render_pdf_multimodal_reconstructed_markdown,
 )
-from autodokit.tools.aok_pdf_aliyun_multimodal_parse import (
+from autodokit.tools.ocr.monkeyocr.monkeyocr_windows_tools import (
+    prepare_monkeyocr_windows_runtime,
+    run_monkeyocr_windows_single_pdf,
+)
+from autodokit.tools.ocr.aliyun_multimodal.aok_pdf_aliyun_multimodal_parse import (
     build_aliyun_multimodal_chunks,
     generate_aok_pdf_parse_uid,
     parse_pdf_with_aliyun_multimodal,
     resolve_aok_pdf_parse_output_dir,
 )
-from autodokit.tools.aok_pdf_aliyun_multimodal_batch_manage import (
+from autodokit.tools.ocr.aliyun_multimodal.aok_pdf_aliyun_multimodal_batch_manage import (
     batch_manage_pdf_with_aliyun_multimodal,
 )
+from autodokit.tools.workspace_path_migration import (
+    PathMapping,
+    migrate_workspace_paths,
+)
+def run_online_retrieval_router(payload: dict[str, Any]) -> dict[str, Any]:
+    """延迟加载在线检索路由器并执行路由调用。
+
+    这样做可以避免在模块导入时触发内部实现文件的顶级导入，从而
+    将 `run_online_retrieval_router` 作为用户可用的安全入口。
+    """
+    module = importlib.import_module("autodokit.tools.online_retrieval_literatures.online_retrieval_router")
+    route = getattr(module, "route")
+    return route(payload)
+
+
+def run_online_retrieval_from_bib(payload: dict[str, Any]) -> dict[str, Any]:
+    """根据 Bib 条目执行在线检索四项任务（通过路由层统一入口）。"""
+
+    module = importlib.import_module("autodokit.tools.bib_online_retrieval_tool")
+    runner = getattr(module, "run_online_retrieval_from_bib")
+    return runner(payload)
 
 
 _用户公开工具 = [
@@ -538,6 +564,7 @@ _用户公开工具 = [
     "extract_review_state_from_structured_file",
     "sentence_line_from_review_state",
     "build_review_reading_packet",
+    "resolve_review_text_by_priority",
     "extract_pdf_elements_from_structured_data",
     "extract_pdf_elements_from_structured_file",
     "render_pdf_pages_to_png",
@@ -552,6 +579,8 @@ _用户公开工具 = [
     "build_aliyun_multimodal_chunks",
     "parse_pdf_with_aliyun_multimodal",
     "batch_manage_pdf_with_aliyun_multimodal",
+    "PathMapping",
+    "migrate_workspace_paths",
     "build_structured_data_payload",
     "load_structured_data",
     "extract_reference_lines_from_structured_data",
@@ -653,6 +682,8 @@ _开发者工具 = [
     "run_aob_items_sync",
     "run_aob_external_templates_import",
     "run_aob_workspace_convert",
+    "PathMapping",
+    "migrate_workspace_paths",
     "parse_reference_text",
     "insert_placeholder_from_reference",
     "literature_upsert",
@@ -746,6 +777,7 @@ _开发者工具 = [
     "refine_review_state_with_llm",
     "sentence_line_from_review_state",
     "build_review_reading_packet",
+    "resolve_review_text_by_priority",
     "load_dispatch_map",
     "load_json_file",
     "resolve_config_path",
@@ -772,9 +804,13 @@ _开发者工具 = [
     "render_pdf_multimodal_reconstructed_markdown",
     "generate_aok_pdf_parse_uid",
     "resolve_aok_pdf_parse_output_dir",
+    "prepare_monkeyocr_windows_runtime",
+    "run_monkeyocr_windows_single_pdf",
     "build_aliyun_multimodal_chunks",
     "parse_pdf_with_aliyun_multimodal",
     "batch_manage_pdf_with_aliyun_multimodal",
+    "run_online_retrieval_router",
+    "run_online_retrieval_from_bib",
 ]
 
 
@@ -845,3 +881,4 @@ def get_tool(tool_name: str, *, scope: str = "user") -> Callable[..., Any]:
 
 
 __all__ = list(_用户公开工具)
+

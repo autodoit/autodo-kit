@@ -15,6 +15,7 @@ from autodokit.tools import (
     load_json_or_py,
 )
 from autodokit.tools.atomic.task_aok.git_snapshot_ledger import git_workspace_init
+from autodokit.tools.atomic.task_aok.post_affair_git_commit import affair_auto_git_commit
 from autodokit.tools.bibliodb_sqlite import init_db as init_references_db
 from autodokit.tools.contentdb_sqlite import (
     CONTENT_DB_DIRECTORY_NAME,
@@ -296,6 +297,7 @@ class ProjectInitializationEngine:
         }
 
 
+@affair_auto_git_commit("A010")
 def execute(config_path: Path) -> List[Path]:
     """事务执行入口。"""
 

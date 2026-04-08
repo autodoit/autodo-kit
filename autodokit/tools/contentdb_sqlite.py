@@ -8,13 +8,14 @@
 """
 from __future__ import annotations
 
-from datetime import UTC, datetime
 import os
 from pathlib import Path
 import sqlite3
 from typing import Mapping, Sequence
 
 import pandas as pd
+
+from autodokit.tools.time_utils import now_iso
 
 
 DEFAULT_CONTENT_DB_NAME = "content.db"
@@ -23,6 +24,81 @@ KNOWLEDGE_LINK_TABLE_NAME = "knowledge_literature_links"
 KNOWLEDGE_EVIDENCE_TABLE_NAME = "knowledge_evidence_links"
 KNOWLEDGE_NOTES_TABLE_NAME = "knowledge_notes"
 READING_STATE_TABLE_NAME = "literature_reading_state"
+READING_STATE_OVERVIEW_VIEW_NAME = "阅读状态总视图"
+READING_STATE_FILTER_VIEWS: tuple[tuple[str, str], ...] = (
+    ("待预处理文献清单", "IFNULL(pending_preprocess, 0) = 1"),
+    (
+        "补件待办文献清单",
+        "IFNULL(pending_preprocess, 0) = 1 AND IFNULL(preprocess_status, '') = 'missing_attachment'",
+    ),
+    ("已预处理文献清单", "IFNULL(preprocessed, 0) = 1"),
+    ("待泛读文献清单", "IFNULL(pending_rough_read, 0) = 1"),
+    ("正泛读文献清单", "IFNULL(in_rough_read, 0) = 1"),
+    ("已泛读文献清单", "IFNULL(rough_read_done, 0) = 1"),
+    (
+        "待批次汇总文献清单",
+        "IFNULL(rough_read_done, 0) = 1 AND IFNULL(analysis_batch_synced, 0) = 0",
+    ),
+    ("待研读文献清单", "IFNULL(pending_deep_read, 0) = 1"),
+    (
+        "待批判性研读文献清单",
+        "IFNULL(deep_read_decision, '') = 'parse_ready' AND IFNULL(deep_read_done, 0) = 0",
+    ),
+    ("正研读文献清单", "IFNULL(in_deep_read, 0) = 1"),
+    ("已研读文献清单", "IFNULL(deep_read_done, 0) = 1"),
+)
+READING_QUEUE_REQUIRED_COLUMNS: dict[str, str] = {
+    "queue_uid": "TEXT",
+    "stage": "TEXT",
+    "queue_status": "TEXT",
+    "priority": "REAL",
+    "theme_bucket": "TEXT",
+    "recommended_reason": "TEXT",
+    "source_stage": "TEXT",
+    "source_run_uid": "TEXT",
+    "task_batch_id": "TEXT",
+    "decision": "TEXT",
+    "decision_reason": "TEXT",
+    "is_current": "INTEGER",
+    "entered_at": "TEXT",
+    "completed_at": "TEXT",
+}
+READING_STATE_REQUIRED_COLUMNS: dict[str, str] = {
+    "cite_key": "TEXT",
+    "source_stage": "TEXT",
+    "source_uid_literature": "TEXT",
+    "source_cite_key": "TEXT",
+    "recommended_reason": "TEXT",
+    "theme_relation": "TEXT",
+    "source_origin": "TEXT",
+    "reading_objective": "TEXT",
+    "manual_guidance": "TEXT",
+    "pending_preprocess": "INTEGER",
+    "preprocessed": "INTEGER",
+    "preprocess_status": "TEXT",
+    "preprocess_note_path": "TEXT",
+    "standard_note_path": "TEXT",
+    "pending_rough_read": "INTEGER",
+    "in_rough_read": "INTEGER",
+    "rough_read_done": "INTEGER",
+    "rough_read_note_path": "TEXT",
+    "rough_read_decision": "TEXT",
+    "rough_read_reason": "TEXT",
+    "analysis_light_synced": "INTEGER",
+    "analysis_batch_synced": "INTEGER",
+    "pending_deep_read": "INTEGER",
+    "in_deep_read": "INTEGER",
+    "deep_read_done": "INTEGER",
+    "deep_read_count": "INTEGER",
+    "deep_read_note_path": "TEXT",
+    "deep_read_decision": "TEXT",
+    "deep_read_reason": "TEXT",
+    "analysis_formal_synced": "INTEGER",
+    "innovation_synced": "INTEGER",
+    "last_batch_id": "TEXT",
+    "created_at": "TEXT",
+    "updated_at": "TEXT",
+}
 PDF_STRUCTURED_VARIANT_SPECS: tuple[dict[str, str], ...] = (
     {
         "converter": "local_pipeline_v2",
@@ -53,10 +129,37 @@ PDF_STRUCTURED_VARIANT_PATH_COLUMNS: dict[str, str] = {
     spec["column"]: "TEXT"
     for spec in PDF_STRUCTURED_VARIANT_SPECS
 }
+LITERATURE_REQUIRED_COLUMNS: dict[str, str] = {
+    "clean_title": "TEXT",
+    "title_norm": "TEXT",
+    "authors": "TEXT",
+    "placeholder_reason": "TEXT",
+    "placeholder_status": "TEXT",
+    "placeholder_run_uid": "TEXT",
+    "source_type": "TEXT",
+    "origin_path": "TEXT",
+    "a05_scope_key": "TEXT",
+    "a05_is_review_candidate": "INTEGER",
+    "a05_in_read_pool": "INTEGER",
+    "a05_current_score": "REAL",
+    "a05_current_rank": "INTEGER",
+    "a05_current_status": "TEXT",
+    "a05_last_run_uid": "TEXT",
+    "a05_updated_at": "TEXT",
+    "structured_status": "TEXT",
+    "structured_abs_path": "TEXT",
+    "structured_backend": "TEXT",
+    "structured_task_type": "TEXT",
+    "structured_updated_at": "TEXT",
+    "structured_schema_version": "TEXT",
+    "structured_text_length": "INTEGER",
+    "structured_reference_count": "INTEGER",
+    **PDF_STRUCTURED_VARIANT_PATH_COLUMNS,
+}
 
 
 def _utc_now_iso() -> str:
-    return datetime.now(tz=UTC).isoformat()
+    return now_iso()
 
 
 def _quote_identifier(identifier: str) -> str:
@@ -235,6 +338,142 @@ def _create_index_if_table(conn: sqlite3.Connection, table_name: str, index_sql:
         conn.execute(index_sql)
 
 
+def _ensure_table_columns(conn: sqlite3.Connection, table_name: str, column_types: Mapping[str, str]) -> None:
+    if _sqlite_object_type(conn, table_name) != "table":
+        return
+    existing_columns = {
+        str(row[1]).strip()
+        for row in conn.execute(f"PRAGMA table_info({_quote_identifier(table_name)})")
+    }
+    for column_name, column_type in column_types.items():
+        normalized_name = str(column_name).strip()
+        if not normalized_name or normalized_name in existing_columns:
+            continue
+        normalized_type = str(column_type or "TEXT").strip() or "TEXT"
+        conn.execute(
+            f"ALTER TABLE {_quote_identifier(table_name)} ADD COLUMN {_quote_identifier(normalized_name)} {normalized_type}"
+        )
+        existing_columns.add(normalized_name)
+
+
+def _create_or_replace_view(conn: sqlite3.Connection, view_name: str, select_sql: str) -> None:
+    object_type = _sqlite_object_type(conn, view_name)
+    if object_type == "table":
+        raise sqlite3.OperationalError(f"对象 {view_name} 已存在且为表，无法覆盖为视图")
+    if object_type == "view":
+        conn.execute(f"DROP VIEW IF EXISTS {_quote_identifier(view_name)}")
+    conn.execute(f"CREATE VIEW {_quote_identifier(view_name)} AS\n{select_sql.strip()}")
+
+
+def _refresh_reading_state_views(conn: sqlite3.Connection) -> None:
+    overview_select_sql = f"""
+    WITH attachment_summary AS (
+        SELECT
+            uid_literature,
+            COUNT(*) AS attachment_count,
+            MAX(CASE WHEN COALESCE(is_primary, 0) = 1 THEN attachment_name ELSE '' END) AS primary_attachment_name,
+            MAX(CASE WHEN COALESCE(is_primary, 0) = 1 THEN storage_path ELSE '' END) AS primary_attachment_path,
+            MAX(CASE WHEN COALESCE(is_primary, 0) = 1 THEN status ELSE '' END) AS primary_attachment_status
+        FROM literature_attachments
+        GROUP BY uid_literature
+    ),
+    parse_summary AS (
+        SELECT
+            uid_literature,
+            MAX(CASE WHEN COALESCE(is_current, 0) = 1 THEN parse_level ELSE '' END) AS current_parse_level,
+            MAX(CASE WHEN COALESCE(is_current, 0) = 1 THEN parse_status ELSE '' END) AS current_parse_status,
+            MAX(CASE WHEN COALESCE(is_current, 0) = 1 THEN normalized_structured_path ELSE '' END) AS current_structured_path
+        FROM literature_parse_assets
+        GROUP BY uid_literature
+    )
+    SELECT
+        rs.uid_literature,
+        COALESCE(rs.cite_key, lit.cite_key) AS cite_key,
+        COALESCE(lit.title, '') AS title,
+        COALESCE(lit.first_author, '') AS first_author,
+        COALESCE(lit.year, '') AS year,
+        COALESCE(lit.entry_type, '') AS entry_type,
+        COALESCE(lit.source_type, '') AS source_type,
+        COALESCE(lit.has_fulltext, 0) AS has_fulltext,
+        COALESCE(lit.is_placeholder, 0) AS is_placeholder,
+        COALESCE(lit.placeholder_status, '') AS placeholder_status,
+        COALESCE(rs.source_stage, '') AS source_stage,
+        COALESCE(rs.source_origin, '') AS source_origin,
+        COALESCE(rs.recommended_reason, '') AS recommended_reason,
+        COALESCE(rs.theme_relation, '') AS theme_relation,
+        COALESCE(rs.reading_objective, '') AS reading_objective,
+        COALESCE(rs.manual_guidance, '') AS manual_guidance,
+        COALESCE(rs.pending_preprocess, 0) AS pending_preprocess,
+        COALESCE(rs.preprocessed, 0) AS preprocessed,
+        COALESCE(rs.preprocess_status, '') AS preprocess_status,
+        COALESCE(rs.preprocess_note_path, '') AS preprocess_note_path,
+        COALESCE(rs.standard_note_path, '') AS standard_note_path,
+        COALESCE(rs.pending_rough_read, 0) AS pending_rough_read,
+        COALESCE(rs.in_rough_read, 0) AS in_rough_read,
+        COALESCE(rs.rough_read_done, 0) AS rough_read_done,
+        COALESCE(rs.rough_read_note_path, '') AS rough_read_note_path,
+        COALESCE(rs.rough_read_decision, '') AS rough_read_decision,
+        COALESCE(rs.rough_read_reason, '') AS rough_read_reason,
+        COALESCE(rs.analysis_light_synced, 0) AS analysis_light_synced,
+        COALESCE(rs.analysis_batch_synced, 0) AS analysis_batch_synced,
+        COALESCE(rs.pending_deep_read, 0) AS pending_deep_read,
+        COALESCE(rs.in_deep_read, 0) AS in_deep_read,
+        COALESCE(rs.deep_read_done, 0) AS deep_read_done,
+        COALESCE(rs.deep_read_count, 0) AS deep_read_count,
+        COALESCE(rs.deep_read_note_path, '') AS deep_read_note_path,
+        COALESCE(rs.deep_read_decision, '') AS deep_read_decision,
+        COALESCE(rs.deep_read_reason, '') AS deep_read_reason,
+        COALESCE(rs.analysis_formal_synced, 0) AS analysis_formal_synced,
+        COALESCE(rs.innovation_synced, 0) AS innovation_synced,
+        COALESCE(rs.last_batch_id, '') AS last_batch_id,
+        COALESCE(att.attachment_count, 0) AS attachment_count,
+        COALESCE(att.primary_attachment_name, '') AS primary_attachment_name,
+        COALESCE(att.primary_attachment_path, '') AS primary_attachment_path,
+        COALESCE(att.primary_attachment_status, '') AS primary_attachment_status,
+        COALESCE(parse.current_parse_level, '') AS current_parse_level,
+        COALESCE(parse.current_parse_status, '') AS current_parse_status,
+        COALESCE(parse.current_structured_path, '') AS current_structured_path,
+        CASE
+            WHEN COALESCE(rs.pending_preprocess, 0) = 1 AND COALESCE(rs.preprocess_status, '') = 'missing_attachment' THEN '补件待办'
+            WHEN COALESCE(rs.pending_preprocess, 0) = 1 THEN '待预处理'
+            WHEN COALESCE(rs.pending_rough_read, 0) = 1 THEN '待泛读'
+            WHEN COALESCE(rs.in_rough_read, 0) = 1 THEN '正泛读'
+            WHEN COALESCE(rs.rough_read_done, 0) = 1 AND COALESCE(rs.analysis_batch_synced, 0) = 0 THEN '待批次汇总'
+            WHEN COALESCE(rs.pending_deep_read, 0) = 1 THEN '待研读'
+            WHEN COALESCE(rs.deep_read_decision, '') = 'parse_ready' AND COALESCE(rs.deep_read_done, 0) = 0 THEN '待批判性研读'
+            WHEN COALESCE(rs.in_deep_read, 0) = 1 THEN '正研读'
+            WHEN COALESCE(rs.deep_read_done, 0) = 1 THEN '已研读'
+            WHEN COALESCE(rs.preprocessed, 0) = 1 THEN '已预处理'
+            ELSE '未归类'
+        END AS current_list_name,
+        CASE
+            WHEN COALESCE(rs.pending_preprocess, 0) = 1 AND COALESCE(rs.preprocess_status, '') = 'missing_attachment' THEN 1
+            ELSE 0
+        END AS is_attachment_backlog,
+        COALESCE(rs.created_at, '') AS created_at,
+        COALESCE(rs.updated_at, '') AS updated_at
+    FROM {READING_STATE_TABLE_NAME} AS rs
+    LEFT JOIN literatures AS lit
+        ON lit.uid_literature = rs.uid_literature
+    LEFT JOIN attachment_summary AS att
+        ON att.uid_literature = rs.uid_literature
+    LEFT JOIN parse_summary AS parse
+        ON parse.uid_literature = rs.uid_literature
+    ORDER BY COALESCE(rs.updated_at, '') DESC, COALESCE(lit.year, '') DESC, COALESCE(rs.cite_key, lit.cite_key, rs.uid_literature)
+    """
+    _create_or_replace_view(conn, READING_STATE_OVERVIEW_VIEW_NAME, overview_select_sql)
+
+    quoted_overview_name = _quote_identifier(READING_STATE_OVERVIEW_VIEW_NAME)
+    for view_name, where_clause in READING_STATE_FILTER_VIEWS:
+        view_sql = f"""
+        SELECT *
+        FROM {quoted_overview_name}
+        WHERE {where_clause}
+        ORDER BY updated_at DESC, year DESC, cite_key, uid_literature
+        """
+        _create_or_replace_view(conn, view_name, view_sql)
+
+
 def init_content_db(db_path: str | Path) -> Path:
     """初始化统一内容主库。"""
 
@@ -291,6 +530,7 @@ def init_content_db(db_path: str | Path) -> Path:
             )
             """
         )
+        _ensure_table_columns(conn, "literatures", LITERATURE_REQUIRED_COLUMNS)
         _create_index_if_table(conn, "literatures", "CREATE INDEX IF NOT EXISTS idx_lit_uid ON literatures(uid_literature)")
         _create_index_if_table(conn, "literatures", "CREATE INDEX IF NOT EXISTS idx_lit_cite ON literatures(cite_key)")
         _create_index_if_table(conn, "literatures", "CREATE INDEX IF NOT EXISTS idx_lit_author_year ON literatures(first_author, year)")
@@ -393,6 +633,7 @@ def init_content_db(db_path: str | Path) -> Path:
             )
             """
         )
+        _ensure_table_columns(conn, "literature_reading_queue", READING_QUEUE_REQUIRED_COLUMNS)
         _create_index_if_table(conn, "literature_reading_queue", "CREATE INDEX IF NOT EXISTS idx_reading_queue_stage_current ON literature_reading_queue(stage, is_current)")
         _create_index_if_table(conn, "literature_reading_queue", "CREATE INDEX IF NOT EXISTS idx_reading_queue_item ON literature_reading_queue(stage, uid_literature, cite_key)")
 
@@ -406,6 +647,9 @@ def init_content_db(db_path: str | Path) -> Path:
                 source_cite_key TEXT,
                 recommended_reason TEXT,
                 theme_relation TEXT,
+                source_origin TEXT,
+                reading_objective TEXT,
+                manual_guidance TEXT,
                 pending_preprocess INTEGER,
                 preprocessed INTEGER,
                 preprocess_status TEXT,
@@ -435,6 +679,7 @@ def init_content_db(db_path: str | Path) -> Path:
             )
             """
         )
+        _ensure_table_columns(conn, READING_STATE_TABLE_NAME, READING_STATE_REQUIRED_COLUMNS)
         _create_index_if_table(conn, READING_STATE_TABLE_NAME, f"CREATE INDEX IF NOT EXISTS idx_reading_state_preprocess ON {READING_STATE_TABLE_NAME}(pending_preprocess, preprocessed)")
         _create_index_if_table(conn, READING_STATE_TABLE_NAME, f"CREATE INDEX IF NOT EXISTS idx_reading_state_rough ON {READING_STATE_TABLE_NAME}(pending_rough_read, rough_read_done)")
         _create_index_if_table(conn, READING_STATE_TABLE_NAME, f"CREATE INDEX IF NOT EXISTS idx_reading_state_deep ON {READING_STATE_TABLE_NAME}(pending_deep_read, deep_read_done)")
@@ -603,6 +848,8 @@ def init_content_db(db_path: str | Path) -> Path:
             KNOWLEDGE_EVIDENCE_TABLE_NAME,
             f"CREATE INDEX IF NOT EXISTS idx_ke_uid_type ON {KNOWLEDGE_EVIDENCE_TABLE_NAME}(uid_knowledge, evidence_type)",
         )
+
+        _refresh_reading_state_views(conn)
 
         conn.commit()
     return resolved

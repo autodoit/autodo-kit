@@ -1,4 +1,4 @@
-"""单篇精读占位引文调试脚本。
+﻿"""单篇精读占位引文调试脚本。
 
 该脚本用于重新验证 `单篇精读` 事务的无 LLM 路径与占位引文插入流程：
 - 自动从测试用文献目录挑选若干篇 Markdown 文献；
@@ -18,7 +18,7 @@ import pandas as pd
 
 from autodokit.affairs.单篇精读.affair import execute
 from autodokit.tools.bibliodb_sqlite import persist_reference_main_table
-from autodokit.tools.pdf_structured_data_tools import build_structured_data_payload
+from autodokit.tools.ocr.classic.pdf_structured_data_tools import build_structured_data_payload
 
 
 def _repo_root() -> Path:
@@ -273,3 +273,4 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
+

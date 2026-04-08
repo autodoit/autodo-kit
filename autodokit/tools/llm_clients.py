@@ -1,4 +1,4 @@
-"""LLM 客户端封装与智能路由。
+﻿"""LLM 客户端封装与智能路由。
 
 本模块用于统一封装阿里百炼（DashScope）调用，提供以下能力：
 - 统一读取 API Key（不在仓库中硬编码密钥）。
@@ -1044,7 +1044,7 @@ def _resolve_model_and_backend(
         )
         resolved_model = plan.primary_model
         resolved_backend = plan.sdk_backend
-        resolved_base_url = base_url or plan.base_url
+        resolved_base_url = base_url or (plan.base_url if resolved_backend == "openai-compatible" else "")
         routing_info = {
             "mode": "auto",
             "task_type": plan.task_type,
@@ -1062,7 +1062,11 @@ def _resolve_model_and_backend(
     inferred_task_type = _infer_task_type_from_affair_name(affair_name)
     looks_like_vision = bool(hints.get("need_vision", False)) or hints.get("task_type") == "vision" or ("vl" in model_text.lower())
     resolved_backend = backend_from_arg or backend_hint or ("openai-compatible" if looks_like_vision else "dashscope")
-    resolved_base_url = base_url or _REGION_BASE_URL_MAP.get(region_norm, _REGION_BASE_URL_MAP["cn-beijing"])
+    resolved_base_url = base_url or (
+        _REGION_BASE_URL_MAP.get(region_norm, _REGION_BASE_URL_MAP["cn-beijing"])
+        if resolved_backend == "openai-compatible"
+        else ""
+    )
     routing_info = {
         "mode": "manual",
         "task_type": "vision" if looks_like_vision else inferred_task_type,
@@ -1192,6 +1196,24 @@ class AliyunLLMClient:
         return self._config.model
 
     @property
+    def sdk_backend(self) -> SdkBackend:
+        """返回当前调用后端。"""
+
+        return self._config.sdk_backend
+
+    @property
+    def region(self) -> str:
+        """返回当前地域。"""
+
+        return self._config.region
+
+    @property
+    def base_url(self) -> str:
+        """返回当前 base_url。"""
+
+        return str(self._config.base_url or "")
+
+    @property
     def routing_info(self) -> Dict[str, Any]:
         """返回路由信息。
 
@@ -1210,26 +1232,13 @@ class AliyunLLMClient:
         max_tokens: int,
         extra: Optional[Dict[str, Any]],
     ) -> str:
-        """使用 DashScope SDK 生成文本。
-
-        Args:
-            prompt: 用户提示词。
-            system: 系统提示词。
-            temperature: 温度参数。
-            max_tokens: 最大生成 token。
-            extra: 额外参数。
-
-        Returns:
-            模型输出文本。
-        """
+        """使用 DashScope SDK 生成文本。"""
 
         try:
             import dashscope  # type: ignore
             from dashscope import Generation  # type: ignore
         except Exception as exc:
-            raise RuntimeError(
-                "未安装 dashscope SDK。请执行 `uv pip install dashscope`。"
-            ) from exc
+            raise RuntimeError("未安装 dashscope SDK。请执行 `uv pip install dashscope`。") from exc
 
         try:
             dashscope.api_key = self._config.api_key  # type: ignore[attr-defined]
@@ -1238,6 +1247,8 @@ class AliyunLLMClient:
 
         if self._config.base_url:
             os.environ["DASHSCOPE_BASE_URL"] = self._config.base_url
+        else:
+            os.environ.pop("DASHSCOPE_BASE_URL", None)
 
         messages: List[Dict[str, str]] = []
         if system:
@@ -1286,25 +1297,12 @@ class AliyunLLMClient:
         max_tokens: int,
         extra: Optional[Dict[str, Any]],
     ) -> str:
-        """使用 OpenAI 兼容接口生成文本。
-
-        Args:
-            prompt: 用户提示词。
-            system: 系统提示词。
-            temperature: 温度参数。
-            max_tokens: 最大生成 token。
-            extra: 额外参数。
-
-        Returns:
-            模型输出文本。
-        """
+        """使用 OpenAI 兼容接口生成文本。"""
 
         try:
             from openai import OpenAI  # type: ignore
         except Exception as exc:
-            raise RuntimeError(
-                "未安装 openai SDK。请执行 `uv pip install openai`。"
-            ) from exc
+            raise RuntimeError("未安装 openai SDK。请执行 `uv pip install openai`。") from exc
 
         if not self._config.base_url:
             raise RuntimeError("openai-compatible 后端需要提供 base_url。")
@@ -1352,9 +1350,7 @@ class AliyunLLMClient:
         try:
             from openai import OpenAI  # type: ignore
         except Exception as exc:
-            raise RuntimeError(
-                "未安装 openai SDK。请执行 `uv pip install openai`。"
-            ) from exc
+            raise RuntimeError("未安装 openai SDK。请执行 `uv pip install openai`。") from exc
 
         if not self._config.base_url:
             raise RuntimeError("openai-compatible 后端需要提供 base_url。")
@@ -1405,21 +1401,7 @@ class AliyunLLMClient:
         max_tokens: int = 2048,
         extra: Optional[Dict[str, Any]] = None,
     ) -> str:
-        """生成文本。
-
-        Args:
-            prompt: 用户提示词。
-            system: 系统提示词。
-            temperature: 采样温度。
-            max_tokens: 最大生成 token 数。
-            extra: 额外参数透传。
-
-        Returns:
-            模型生成文本。
-
-        Raises:
-            RuntimeError: SDK 未安装或调用失败。
-        """
+        """生成文本。"""
 
         backend = self._config.sdk_backend
         if backend == "dashscope":
@@ -1452,10 +1434,7 @@ class AliyunLLMClient:
         max_tokens: int = 4096,
         extra: Optional[Dict[str, Any]] = None,
     ) -> str:
-        """生成带图片输入的多模态文本。
-
-        说明：当前仅对 openai-compatible 后端开放，避免影响既有纯文本调用路径。
-        """
+        """生成带图片输入的多模态文本。"""
 
         if not image_paths:
             raise ValueError("image_paths 不能为空")
@@ -1475,6 +1454,47 @@ class AliyunLLMClient:
             max_tokens=max_tokens,
             extra=extra,
         )
+
+
+def build_aliyun_llm_runtime_payload(
+    config_or_client: AliyunLLMConfig | AliyunLLMClient,
+) -> Dict[str, Any]:
+    """导出当前 LLM 运行时元数据。"""
+
+    if isinstance(config_or_client, AliyunLLMClient):
+        config = config_or_client._config
+    else:
+        config = config_or_client
+
+    return {
+        "llm_model": str(config.model or ""),
+        "llm_backend": str(config.sdk_backend or ""),
+        "llm_region": str(config.region or ""),
+        "llm_base_url": str(config.base_url or ""),
+        "routing_info": dict(config.routing_info or {}),
+    }
+
+
+def postprocess_aliyun_multimodal_parse_outputs(*args: Any, **kwargs: Any) -> Dict[str, Any]:
+    """通过统一 LLM 工具入口执行阿里百炼多模态解析后处理。
+
+    Args:
+        *args: 透传给底层后处理工具的参数。
+        **kwargs: 透传给底层后处理工具的参数。
+
+    Returns:
+        后处理执行摘要。
+
+    Raises:
+        各底层实现可能抛出的文件、配置或解析异常。
+
+    Examples:
+        >>> postprocess_aliyun_multimodal_parse_outputs(normalized_structured_path='...')
+    """
+
+    from autodokit.tools.ocr.aliyun_multimodal.aliyun_multimodal_postprocess_tools import postprocess_aliyun_multimodal_parse_outputs as _impl
+
+    return _impl(*args, **kwargs)
 
 
 def invoke_aliyun_llm(
@@ -1523,7 +1543,7 @@ def invoke_aliyun_llm(
                 api_key_file=api_key_file,
                 config_path=config_path,
                 sdk_backend=plan.sdk_backend,
-                base_url=plan.base_url,
+                base_url=(plan.base_url if plan.sdk_backend == "openai-compatible" else None),
                 region=resolved_intent.region,
                 affair_name=affair_name,
                 route_hints=route_hints,
@@ -1543,6 +1563,7 @@ def invoke_aliyun_llm(
                 "attempts": attempts,
                 "response": {
                     "text": text,
+                    **build_aliyun_llm_runtime_payload(cfg),
                     "routing": {
                         "task_type": plan.task_type,
                         "quality_tier": plan.quality_tier,
@@ -1571,3 +1592,4 @@ def invoke_aliyun_llm(
 
 # 为兼容历史调用名，保留别名。
 AliyunDashScopeClient = AliyunLLMClient
+

@@ -31,9 +31,10 @@ import pandas as pd
 from autodokit.tools.llm_clients import AliyunDashScopeClient, load_aliyun_llm_config
 from autodokit.tools import load_json_or_py
 from autodokit.tools.bibliodb import init_empty_table, insert_placeholder_from_reference
+from autodokit.tools.llm_clients import postprocess_aliyun_multimodal_parse_outputs
 from autodokit.tools.contentdb_sqlite import infer_workspace_root_from_content_db, resolve_content_db_config
-from autodokit.tools.pdf_parse_asset_manager import ensure_multimodal_parse_asset
-from autodokit.tools.pdf_structured_data_tools import load_single_document_record
+from autodokit.tools.ocr.classic.pdf_parse_asset_manager import ensure_multimodal_parse_asset
+from autodokit.tools.ocr.classic.pdf_structured_data_tools import load_single_document_record
 from autodokit.tools.storage_backend import load_reference_main_table, persist_reference_main_table
 
 
@@ -300,6 +301,13 @@ def execute(config_path: Path) -> List[Path]:
             overwrite_existing=bool(merged.get("overwrite_parse_asset", False)),
             model=str(merged.get("parse_model") or merged.get("structured_model") or "auto"),
         )
+        postprocess_aliyun_multimodal_parse_outputs(
+            normalized_structured_path=str(parse_asset.get("normalized_structured_path") or ""),
+            reconstructed_markdown_path=str(parse_asset.get("reconstructed_markdown_path") or ""),
+            rewrite_structured=True,
+            rewrite_markdown=True,
+            keep_page_markers=False,
+        )
         cfg.input_structured_json = str(parse_asset.get("normalized_structured_path") or "")
 
     doc = _read_target_doc_from_inputs(
@@ -382,4 +390,5 @@ def execute(config_path: Path) -> List[Path]:
     )
     written_paths.insert(0, out_path)
     return written_paths
+
 

@@ -1,4 +1,4 @@
-"""PDF 转结构化数据：本地流水线 v2（不依赖 BabelDOC）。
+﻿"""PDF 转结构化数据：本地流水线 v2（不依赖 BabelDOC）。
 
 本模块实现“方案 2：常规转换”的本地流水线：
 - 优先使用 PyMuPDF（fitz）做文本块提取（可带 bbox）与图片导出；
@@ -20,12 +20,12 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Dict, Optional
 
-from autodokit.tools.pdf_elements_extractors import (
+from autodokit.tools.ocr.classic.pdf_elements_extractors import (
     extract_images_with_pymupdf,
     extract_references_from_full_text,
     extract_text_with_rapidocr,
 )
-from autodokit.tools.pdf_structured_data_tools import build_structured_data_payload
+from autodokit.tools.ocr.classic.pdf_structured_data_tools import build_structured_data_payload
 
 
 @dataclass(frozen=True)
@@ -338,4 +338,5 @@ def convert_pdf_to_structured_data_file(
         encoding=encoding,
     )
     return output_path
+
 

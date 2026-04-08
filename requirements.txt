@@ -1,0 +1,25 @@
+# 根据 `autodokit/` 源码导入与 `pyproject.toml` 整理的运行依赖。
+# 说明：`autodoengine` 在源码中仅作为兼容回退导入，但当前索引中不存在，故未纳入本文件。
+# 说明：`playwright` 安装后如需浏览器驱动，还需执行：`python -m playwright install`。
+
+aoc
+BabelDOC
+bibtexparser>=1.4.0
+bitarray
+dashscope>=1.20.0
+markitdown
+numpy
+openai>=1.40.0
+pandas>=3.0.1
+pdfminer.six>=20250506
+Pillow
+playwright>=1.58.0
+pymupdf>=1.26.4
+pypdf
+pyroaring
+python-docx
+rapidocr-onnxruntime>=1.4.4
+scikit-learn
+scipy
+simpleeval>=0.9.13
+

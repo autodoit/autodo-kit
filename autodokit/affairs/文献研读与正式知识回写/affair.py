@@ -1,4 +1,4 @@
-"""A100 文献研读与正式知识回写事务。"""
+﻿"""A100 文献精解析资产化事务。"""
 
 from __future__ import annotations
 
@@ -8,16 +8,15 @@ from typing import Any, Dict, List
 
 import pandas as pd
 
-from autodokit.tools import append_aok_log_event, build_gate_review, knowledge_index_sync_from_note, knowledge_note_register, load_json_or_py, process_reference_citation
+from autodokit.tools import append_aok_log_event, build_gate_review, load_json_or_py
 from autodokit.tools.bibliodb_sqlite import load_reading_state_df, upsert_reading_state_rows
 from autodokit.tools.contentdb_sqlite import CONTENT_DB_DIRECTORY_NAME, DEFAULT_CONTENT_DB_NAME, resolve_content_db_config
-from autodokit.tools.pdf_parse_asset_manager import ensure_multimodal_parse_asset
-from autodokit.tools.pdf_structured_data_tools import load_single_document_record
-from autodokit.tools.reading_state_tools import ANALYSIS_NOTE_SPECS, append_markdown_section, build_followup_candidate_state_row, ensure_markdown_note, resolve_analysis_note_paths
-from autodokit.tools.storage_backend import load_knowledge_tables, load_reference_tables, persist_knowledge_tables, persist_reference_tables
+from autodokit.tools.ocr.aliyun_multimodal.aliyun_multimodal_postprocess_tools import postprocess_aliyun_multimodal_parse_outputs
+from autodokit.tools.ocr.classic.pdf_parse_asset_manager import ensure_multimodal_parse_asset, ensure_pdf_text_fallback_asset
+from autodokit.tools.atomic.task_aok.post_affair_git_commit import affair_auto_git_commit
 
 
-OUTPUT_INDEX = "a100_deep_reading_index.csv"
+OUTPUT_INDEX = "a100_deep_parse_index.csv"
 OUTPUT_GATE = "gate_review.json"
 
 
@@ -27,10 +26,6 @@ def _stringify(value: Any) -> str:
     if pd.isna(value):
         return ""
     return str(value).strip()
-
-
-def _safe_file_stem(text: str) -> str:
-    return "".join(character if character not in "\\/:*?\"<>|" else "_" for character in _stringify(text)) or "untitled"
 
 
 def _resolve_workspace_root(config_path: Path, raw_cfg: Dict[str, Any]) -> Path:
@@ -51,52 +46,7 @@ def _resolve_output_dir(config_path: Path, raw_cfg: Dict[str, Any]) -> Path:
     return output_dir
 
 
-def _generate_local_deep_note(*, title: str, cite_key: str, text: str) -> str:
-    normalized = " ".join(str(text or "").split())
-    sample = normalized[:2500]
-    fragments = [fragment.strip() for fragment in sample.replace("。", "。\n").splitlines() if fragment.strip()]
-    bullets = [f"- {fragment}" for fragment in fragments[:6]] or ["- 未抽取到可用正文。"]
-    return "\n".join(
-        [
-            f"# {title}",
-            "",
-            f"- cite_key: {cite_key}",
-            "",
-            "## 深读证据摘录",
-            *bullets,
-            "",
-            "## 正式修订建议",
-            "- 基于当前深读证据更新五类分析笔记。",
-            "- 如发现新线索，可回流到 A080 待预处理清单。",
-            "",
-        ]
-    )
-
-
-def _extract_reference_lines(text: str) -> List[str]:
-    lines = [line.strip() for line in str(text or "").splitlines() if line.strip()]
-    if not lines:
-        return []
-    start_index = -1
-    for index, line in enumerate(lines):
-        lowered = line.lower().strip("# ")
-        if lowered in {"references", "reference", "参考文献"}:
-            start_index = index + 1
-            break
-    if start_index < 0:
-        return []
-    results: List[str] = []
-    seen: set[str] = set()
-    for line in lines[start_index:]:
-        if line.startswith("#"):
-            break
-        if len(line) < 20 or line in seen:
-            continue
-        seen.add(line)
-        results.append(line)
-    return results[:12]
-
-
+@affair_auto_git_commit("A100")
 def execute(config_path: Path) -> List[Path]:
     raw_cfg = load_json_or_py(config_path)
     workspace_root = _resolve_workspace_root(config_path, raw_cfg)
@@ -109,36 +59,39 @@ def execute(config_path: Path) -> List[Path]:
     assert content_db is not None
 
     state_df = load_reading_state_df(content_db, flag_filters={"pending_deep_read": 1})
-    existing_state_df = load_reading_state_df(content_db)
-    existing_state_by_uid = {
-        _stringify(row.get("uid_literature")): row.to_dict()
-        for _, row in existing_state_df.fillna("").iterrows()
-        if _stringify(row.get("uid_literature"))
-    }
     max_items = int(raw_cfg.get("max_items") or 3)
     if max_items > 0:
         state_df = state_df.head(max_items).reset_index(drop=True)
-    analysis_note_paths = resolve_analysis_note_paths(workspace_root, raw_cfg)
-    innovation_note_path = Path(_stringify(raw_cfg.get("innovation_note_path")) or workspace_root / "knowledge" / "innovation_pool" / "A100_创新点补写.md")
-    if not innovation_note_path.is_absolute():
-        raise ValueError(f"innovation_note_path 必须为绝对路径: {innovation_note_path}")
-    ensure_markdown_note(innovation_note_path, "A100 创新点补写")
 
-    literatures_df, attachments_df, _ = load_reference_tables(db_path=content_db)
-    knowledge_index_df, knowledge_attachments_df, _ = load_knowledge_tables(db_path=content_db)
     parse_model = _stringify(raw_cfg.get("parse_model")) or "auto"
     overwrite_parse_asset = bool(raw_cfg.get("overwrite_parse_asset", False))
+    allow_pdf_text_fallback_on_parse_failure = bool(raw_cfg.get("allow_pdf_text_fallback_on_parse_failure", True))
+    enable_aliyun_postprocess = bool(raw_cfg.get("enable_aliyun_postprocess", True))
+    enable_llm_basic_cleanup = bool(raw_cfg.get("enable_llm_basic_cleanup", True))
+    basic_cleanup_llm_model = _stringify(raw_cfg.get("basic_cleanup_llm_model")) or "qwen3.5-flash"
+    basic_cleanup_llm_sdk_backend = _stringify(raw_cfg.get("basic_cleanup_llm_sdk_backend")) or None
+    basic_cleanup_llm_region = _stringify(raw_cfg.get("basic_cleanup_llm_region")) or "cn-beijing"
+    enable_llm_structure_resolution = bool(raw_cfg.get("enable_llm_structure_resolution", True))
+    structure_llm_model = _stringify(raw_cfg.get("structure_llm_model")) or "qwen3.5-plus"
+    structure_llm_sdk_backend = _stringify(raw_cfg.get("structure_llm_sdk_backend")) or None
+    structure_llm_region = _stringify(raw_cfg.get("structure_llm_region")) or "cn-beijing"
+    enable_llm_contamination_filter = bool(raw_cfg.get("enable_llm_contamination_filter", True))
+    contamination_llm_model = _stringify(raw_cfg.get("contamination_llm_model")) or "qwen3-max"
+    contamination_llm_sdk_backend = _stringify(raw_cfg.get("contamination_llm_sdk_backend")) or None
+    contamination_llm_region = _stringify(raw_cfg.get("contamination_llm_region")) or "cn-beijing"
+    postprocess_rewrite_structured = bool(raw_cfg.get("postprocess_rewrite_structured", True))
+    postprocess_rewrite_markdown = bool(raw_cfg.get("postprocess_rewrite_markdown", True))
+    postprocess_keep_page_markers = bool(raw_cfg.get("postprocess_keep_page_markers", False))
 
     result_rows: List[Dict[str, Any]] = []
     state_updates: List[Dict[str, Any]] = []
     failures: List[str] = []
-
-    deep_note_dir = workspace_root / "knowledge" / "standard_notes"
-    deep_note_dir.mkdir(parents=True, exist_ok=True)
+    postprocess_success_count = 0
 
     for _, row in state_df.fillna("").iterrows():
         uid_literature = _stringify(row.get("uid_literature"))
         cite_key = _stringify(row.get("cite_key")) or uid_literature
+        source_origin = _stringify(row.get("source_origin")) or "auto"
         upsert_reading_state_rows(
             content_db,
             [
@@ -148,6 +101,7 @@ def execute(config_path: Path) -> List[Path]:
                     "pending_deep_read": 0,
                     "in_deep_read": 1,
                     "deep_read_done": 0,
+                    "deep_read_decision": "in_parse",
                 }
             ],
         )
@@ -162,120 +116,124 @@ def execute(config_path: Path) -> List[Path]:
                 overwrite_existing=overwrite_parse_asset,
                 model=parse_model,
             )
-            structured_json = _stringify(parse_asset.get("normalized_structured_path"))
-            document = load_single_document_record(
-                uid=uid_literature,
-                doc_id="",
-                structured_json_path=structured_json,
-                structured_dir="",
-                content_db=str(content_db),
-            )
-            title = _stringify(document.get("title")) or cite_key
-            full_text = _stringify(document.get("text"))
-            note_path = deep_note_dir / f"deep_reading_{_safe_file_stem(cite_key)}.md"
-            note_body = _generate_local_deep_note(title=title, cite_key=cite_key, text=full_text)
-            note_info = knowledge_note_register(
-                note_path=note_path,
-                title=title,
-                note_type="knowledge_note",
-                status="draft",
-                tags=["aok/deep_read", "a100"],
-                aliases=[cite_key],
-                evidence_uids=[uid_literature],
-                uid_literature=uid_literature,
-                cite_key=cite_key,
-                body=note_body,
-            )
-            knowledge_index_df, _ = knowledge_index_sync_from_note(knowledge_index_df, note_path, workspace_root=workspace_root)
-
-            for key, spec in ANALYSIS_NOTE_SPECS.items():
-                append_markdown_section(
-                    analysis_note_paths[key],
-                    spec["title"],
-                    [f"- A100 正式修订：{cite_key}《{title}》已完成深读并补入正式证据。"],
+            postprocess_summary: Dict[str, Any] = {}
+            if enable_aliyun_postprocess:
+                postprocess_summary = postprocess_aliyun_multimodal_parse_outputs(
+                    normalized_structured_path=_stringify(parse_asset.get("normalized_structured_path")),
+                    reconstructed_markdown_path=_stringify(parse_asset.get("reconstructed_markdown_path")),
+                    rewrite_structured=postprocess_rewrite_structured,
+                    rewrite_markdown=postprocess_rewrite_markdown,
+                    keep_page_markers=postprocess_keep_page_markers,
+                    enable_llm_basic_cleanup=enable_llm_basic_cleanup,
+                    basic_cleanup_llm_model=basic_cleanup_llm_model,
+                    basic_cleanup_llm_sdk_backend=basic_cleanup_llm_sdk_backend,
+                    basic_cleanup_llm_region=basic_cleanup_llm_region,
+                    enable_llm_structure_resolution=enable_llm_structure_resolution,
+                    structure_llm_model=structure_llm_model,
+                    structure_llm_sdk_backend=structure_llm_sdk_backend,
+                    structure_llm_region=structure_llm_region,
+                    enable_llm_contamination_filter=enable_llm_contamination_filter,
+                    contamination_llm_model=contamination_llm_model,
+                    contamination_llm_sdk_backend=contamination_llm_sdk_backend,
+                    contamination_llm_region=contamination_llm_region,
+                    config_path=workspace_root / "config" / "config.json",
                 )
-            append_markdown_section(
-                innovation_note_path,
-                "A100 创新点补写",
-                [f"- {cite_key}《{title}》：可从深读证据中抽取新的创新点或机制线索。"],
-            )
-
-            reference_lines = _extract_reference_lines(full_text)
-            discovered_rows: List[Dict[str, Any]] = []
-            for reference_text in reference_lines:
-                try:
-                    literatures_df, result = process_reference_citation(
-                        literatures_df,
-                        reference_text,
-                        workspace_root=workspace_root,
-                        global_config_path=workspace_root / "config" / "config.json",
-                        source="placeholder_from_a100_deep_read",
-                        print_to_stdout=False,
-                    )
-                except Exception:
-                    continue
-                target_uid = _stringify(result.get("matched_uid_literature"))
-                target_cite_key = _stringify(result.get("matched_cite_key"))
-                if target_uid and target_uid != uid_literature:
-                    candidate_row = build_followup_candidate_state_row(
-                        uid_literature=target_uid,
-                        cite_key=target_cite_key,
-                        source_stage="A100",
-                        source_uid_literature=uid_literature,
-                        source_cite_key=cite_key,
-                        recommended_reason=f"A100 从 {cite_key} 深读参考文献发现新候选",
-                        theme_relation="a100_reference_discovery",
-                        existing_state=existing_state_by_uid.get(target_uid),
-                    )
-                    if candidate_row is None:
-                        continue
-                    discovered_rows.append(candidate_row)
-                    existing_state_by_uid[target_uid] = candidate_row
-
-            deep_read_count = int(row.get("deep_read_count") or 0) + 1
+                postprocess_success_count += 1
+            structured_json = _stringify(parse_asset.get("normalized_structured_path"))
             state_updates.append(
                 {
                     "uid_literature": uid_literature,
                     "cite_key": cite_key,
+                    "source_origin": source_origin,
                     "pending_deep_read": 0,
                     "in_deep_read": 0,
-                    "deep_read_done": 1,
-                    "deep_read_count": deep_read_count,
-                    "deep_read_note_path": str(note_path),
-                    "deep_read_decision": "completed",
-                    "deep_read_reason": "已完成正式深读与知识回写",
-                    "analysis_formal_synced": 1,
-                    "innovation_synced": 1,
+                    "deep_read_done": 0,
+                    "deep_read_decision": "parse_ready",
+                    "deep_read_reason": (
+                        "A100 已完成 non_review_deep 解析资产准备，"
+                        "等待 A105 执行批判性研读与标准笔记写回。"
+                    ),
                 }
             )
-            state_updates.extend(discovered_rows)
             result_rows.append(
                 {
                     "uid_literature": uid_literature,
                     "cite_key": cite_key,
-                    "title": title,
                     "structured_json": structured_json,
-                    "deep_read_note_path": str(note_path),
-                    "discovered_candidate_count": len(discovered_rows),
-                    "knowledge_uid": _stringify(note_info.get("uid_knowledge")),
+                    "asset_dir": _stringify(parse_asset.get("asset_dir")),
+                    "parse_status": _stringify(parse_asset.get("parse_status")) or "ready",
+                    "postprocess_enabled": int(enable_aliyun_postprocess),
+                    "postprocess_ok": int(bool(postprocess_summary) or (not enable_aliyun_postprocess)),
+                    "postprocess_removed_noise_lines": int(postprocess_summary.get("removed_noise_lines") or 0),
+                    "postprocess_llm_basic_cleanup_status": _stringify(postprocess_summary.get("llm_basic_cleanup_status")),
+                    "postprocess_llm_structure_status": _stringify(postprocess_summary.get("llm_structure_resolution_status")),
+                    "postprocess_contamination_removed_block_count": int(postprocess_summary.get("contamination_removed_block_count") or 0),
+                    "postprocess_markdown_path": _stringify(postprocess_summary.get("postprocessed_markdown_path")),
+                    "postprocess_audit_path": _stringify(postprocess_summary.get("postprocess_audit_path")),
                 }
             )
         except Exception as exc:
-            failures.append(f"{cite_key}: 深读失败: {exc}")
-            state_updates.append(
-                {
-                    "uid_literature": uid_literature,
-                    "cite_key": cite_key,
-                    "pending_deep_read": 1,
-                    "in_deep_read": 0,
-                    "deep_read_done": 0,
-                    "deep_read_decision": "failed",
-                    "deep_read_reason": str(exc),
-                }
-            )
+            fallback_asset: Dict[str, Any] = {}
+            fallback_exc: Exception | None = None
+            if allow_pdf_text_fallback_on_parse_failure:
+                try:
+                    fallback_asset = ensure_pdf_text_fallback_asset(
+                        content_db=content_db,
+                        parse_level="non_review_deep",
+                        uid_literature=uid_literature,
+                        cite_key=cite_key,
+                        source_stage="A100",
+                        overwrite_existing=True,
+                    )
+                except Exception as fallback_error:
+                    fallback_exc = fallback_error
 
-    persist_reference_tables(literatures_df=literatures_df, attachments_df=attachments_df, db_path=content_db)
-    persist_knowledge_tables(index_df=knowledge_index_df, attachments_df=knowledge_attachments_df, db_path=content_db)
+            if fallback_asset:
+                state_updates.append(
+                    {
+                        "uid_literature": uid_literature,
+                        "cite_key": cite_key,
+                        "source_origin": source_origin,
+                        "pending_deep_read": 0,
+                        "in_deep_read": 0,
+                        "deep_read_done": 0,
+                        "deep_read_decision": "pdf_fallback_ready",
+                        "deep_read_reason": f"A100 多模态解析失败，已切换为原文 PDF 直读旁路。原始错误：{exc}",
+                    }
+                )
+                result_rows.append(
+                    {
+                        "uid_literature": uid_literature,
+                        "cite_key": cite_key,
+                        "structured_json": _stringify(fallback_asset.get("normalized_structured_path")),
+                        "asset_dir": _stringify(fallback_asset.get("asset_dir")),
+                        "parse_status": "fallback_ready",
+                        "postprocess_enabled": 0,
+                        "postprocess_ok": 0,
+                        "postprocess_removed_noise_lines": 0,
+                        "postprocess_llm_basic_cleanup_status": "skipped_pdf_text_fallback",
+                        "postprocess_llm_structure_status": "skipped_pdf_text_fallback",
+                        "postprocess_contamination_removed_block_count": 0,
+                        "postprocess_markdown_path": _stringify(fallback_asset.get("reconstructed_markdown_path")),
+                        "postprocess_audit_path": "",
+                    }
+                )
+                failures.append(f"{cite_key}: 多模态解析失败，已降级为原文 PDF 直读旁路: {exc}")
+            else:
+                reason = str(exc) if fallback_exc is None else f"{exc}; fallback 失败: {fallback_exc}"
+                failures.append(f"{cite_key}: 深读失败: {reason}")
+                state_updates.append(
+                    {
+                        "uid_literature": uid_literature,
+                        "cite_key": cite_key,
+                        "pending_deep_read": 1,
+                        "in_deep_read": 0,
+                        "deep_read_done": 0,
+                        "deep_read_decision": "parse_failed",
+                        "deep_read_reason": reason,
+                    }
+                )
+
     if state_updates:
         upsert_reading_state_rows(content_db, state_updates)
 
@@ -285,14 +243,41 @@ def execute(config_path: Path) -> List[Path]:
 
     gate_review = build_gate_review(
         node_uid="A100",
-        node_name="文献研读与正式知识回写",
-        summary=f"完成深读 {len(result_rows)} 篇；失败 {len(failures)} 篇。",
-        checks=[{"name": "deep_read_count", "value": len(result_rows)}, {"name": "failure_count", "value": len(failures)}],
-        artifacts=[str(index_path), str(innovation_note_path)],
+        node_name="文献精解析资产化",
+        summary=(
+            f"完成 deep parse 准备 {len(result_rows)} 篇；"
+            f"后处理成功 {postprocess_success_count} 篇；失败 {len(failures)} 篇。"
+        ),
+        checks=[
+            {"name": "deep_parse_ready_count", "value": len(result_rows)},
+            {"name": "postprocess_success_count", "value": postprocess_success_count},
+            {"name": "failure_count", "value": len(failures)},
+        ],
+        artifacts=[str(index_path)],
         recommendation="pass" if result_rows else "retry_current",
         score=max(45.0, 93.0 - len(failures) * 10.0),
         issues=failures,
-        metadata={"workspace_root": str(workspace_root), "content_db": str(content_db)},
+        metadata={
+            "workspace_root": str(workspace_root),
+            "content_db": str(content_db),
+            "enable_aliyun_postprocess": enable_aliyun_postprocess,
+            "postprocess_rewrite_structured": postprocess_rewrite_structured,
+            "postprocess_rewrite_markdown": postprocess_rewrite_markdown,
+            "postprocess_keep_page_markers": postprocess_keep_page_markers,
+            "enable_llm_basic_cleanup": enable_llm_basic_cleanup,
+            "basic_cleanup_llm_model": basic_cleanup_llm_model,
+            "basic_cleanup_llm_sdk_backend": basic_cleanup_llm_sdk_backend,
+            "basic_cleanup_llm_region": basic_cleanup_llm_region,
+            "enable_llm_structure_resolution": enable_llm_structure_resolution,
+            "structure_llm_model": structure_llm_model,
+            "structure_llm_sdk_backend": structure_llm_sdk_backend,
+            "structure_llm_region": structure_llm_region,
+            "enable_llm_contamination_filter": enable_llm_contamination_filter,
+            "contamination_llm_model": contamination_llm_model,
+            "contamination_llm_sdk_backend": contamination_llm_sdk_backend,
+            "contamination_llm_region": contamination_llm_region,
+            "allow_pdf_text_fallback_on_parse_failure": allow_pdf_text_fallback_on_parse_failure,
+        },
     )
     gate_path = output_dir / OUTPUT_GATE
     gate_path.write_text(json.dumps(gate_review, ensure_ascii=False, indent=2), encoding="utf-8")
@@ -301,13 +286,17 @@ def execute(config_path: Path) -> List[Path]:
         append_aok_log_event(
             event_type="A100_DEEP_READING_COMPLETED",
             project_root=workspace_root,
-            handler_name="文献研读与正式知识回写",
+            affair_code="A100",
+            handler_name="文献精解析资产化",
             agent_names=["ar_A100_文献研读与正式知识回写事务智能体_v6"],
             skill_names=[],
-            reasoning_summary="消费 literature_reading_state.pending_deep_read=1，完成正式深读、分析笔记修订与创新点补写。",
-            payload={"deep_read_count": len(result_rows), "failure_count": len(failures)},
+            reasoning_summary="消费 literature_reading_state.pending_deep_read=1，仅完成 non_review_deep 解析资产准备并移交 A105。",
+            gate_review=gate_review,
+            gate_review_path=gate_path,
+            artifact_paths=[str(index_path)],
         )
     except Exception:
         pass
 
-    return [index_path, gate_path, innovation_note_path]
+    return [index_path]
+

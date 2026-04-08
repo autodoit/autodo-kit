@@ -7,7 +7,6 @@ SQLite 存储层与 CSV 互导能力，方便把文献库持久化到 `database/
 """
 from __future__ import annotations
 
-from datetime import UTC, datetime
 import hashlib
 import json
 from pathlib import Path
@@ -16,6 +15,8 @@ import sqlite3
 from typing import Any, Dict, List, Optional, Sequence
 
 import pandas as pd
+
+from autodokit.tools.time_utils import now_iso
 
 from .contentdb_sqlite import (
     KNOWLEDGE_LINK_TABLE_NAME,
@@ -90,6 +91,9 @@ READING_STATE_COLUMNS: Dict[str, str] = {
     "source_cite_key": "TEXT",
     "recommended_reason": "TEXT",
     "theme_relation": "TEXT",
+    "source_origin": "TEXT",
+    "reading_objective": "TEXT",
+    "manual_guidance": "TEXT",
     "pending_preprocess": "INTEGER",
     "preprocessed": "INTEGER",
     "preprocess_status": "TEXT",
@@ -293,7 +297,7 @@ def init_db(db_path: Path) -> None:
 
 
 def _utc_now_iso() -> str:
-    return datetime.utcnow().isoformat() + "Z"
+    return now_iso()
 
 
 def _stringify(value: Any) -> str:

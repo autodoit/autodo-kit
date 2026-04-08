@@ -64,9 +64,18 @@ def build_elements_payload(
     page_map = {int(item.get("page_index") or 0): item for item in page_records}
     items: List[Dict[str, Any]] = []
     counter = 0
+    page_status_summary: Counter[str] = Counter()
     for page_result in page_results:
-        page_index = int(page_result.get("page_index") or 0)
+        raw_page_index = page_result.get("canonical_page_index", page_result.get("page_index"))
+        try:
+            page_index = int(raw_page_index)
+        except (TypeError, ValueError):
+            page_index = 0
+        page_status = str(page_result.get("page_parse_status") or "")
+        if page_status:
+            page_status_summary[page_status] += 1
         page_info = page_map.get(page_index) or {}
+        page_number = int(page_info.get("page_number") or (page_index + 1))
         for order, raw_element in enumerate(page_result.get("elements") or [], start=1):
             counter += 1
             node_type = normalize_node_type(raw_element.get("node_type"))
@@ -76,14 +85,17 @@ def build_elements_payload(
                     "node_id": f"element_{counter:05d}",
                     "node_type": node_type,
                     "page_index": page_index,
-                    "page_number": int(page_index + 1),
+                    "page_number": page_number,
                     "bbox": bbox,
                     "reading_order": int(raw_element.get("reading_order") or order),
                     "text": str(raw_element.get("text") or "").strip(),
                     "confidence": float(raw_element.get("confidence") or 0.0),
+                    "page_parse_status": page_status,
+                    "page_parse_completeness": str(page_result.get("page_parse_completeness") or ""),
+                    "page_parse_error": str(page_result.get("page_parse_error") or ""),
                     "source_ref": {
                         "page_image_path": str(page_info.get("image_path") or ""),
-                        "page_number": int(page_index + 1),
+                        "page_number": page_number,
                     },
                     "heading_level": int(raw_element.get("heading_level") or 0),
                 }
@@ -99,6 +111,7 @@ def build_elements_payload(
             "element_count": int(len(items)),
             "by_type": dict(summary),
             "page_count": int(len(page_records)),
+            "page_parse_status_counts": dict(page_status_summary),
         },
     }
 

@@ -9,6 +9,7 @@ from typing import Any, Dict, List
 import pandas as pd
 
 from autodokit.tools import build_gate_review, build_research_trajectory, load_json_or_py
+from autodokit.tools.atomic.task_aok.post_affair_git_commit import affair_auto_git_commit
 
 
 def _load_items(raw_cfg: Dict[str, Any]) -> List[Dict[str, Any]]:
@@ -22,6 +23,7 @@ def _load_items(raw_cfg: Dict[str, Any]) -> List[Dict[str, Any]]:
     return []
 
 
+@affair_auto_git_commit("A120")
 def execute(config_path: Path) -> List[Path]:
     """事务执行入口。"""
 

@@ -1,0 +1,29 @@
+{
+  "rules": {
+    "skip_books_for_download": true,
+    "skip_books_for_html_extract": true,
+    "skip_cnki_thesis_html_extract": true,
+    "book_type_tokens": [
+      "著作",
+      "专著",
+      "图书",
+      "book",
+      "books",
+      "monograph",
+      "monographs",
+      "textbook",
+      "handbook"
+    ],
+    "cnki_thesis_tokens": [
+      "学位论文",
+      "博士",
+      "硕士",
+      "博士学位",
+      "硕士学位",
+      "dissertation",
+      "thesis",
+      "cmfd",
+      "cdfd"
+    ]
+  }
+}

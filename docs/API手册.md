@@ -33,6 +33,9 @@ autodo-kit 对外公开的是“事务内容 + 事务工具 + 本地运行时 AP
 | 批次分析已同步 | `analysis_batch_synced` | A095 | A095 | 当前条目已进入 A095 批次汇总。 |
 | 正式分析已同步 | `analysis_formal_synced` | - | A100 | 五类分析笔记已完成正式修订。 |
 | 创新点已同步 | `innovation_synced` | - | A100 | 创新点笔记已完成更新。 |
+| 条目来源类型 | `source_origin` | A080/A090/A100 | A080 | 标记 `human`/`auto`/`legacy_queue`/`recovery`。 |
+| 阅读目标 | `reading_objective` | A090/A100 | A080 | 逐文献的阅读目标说明。 |
+| 用户提示语 | `manual_guidance` | A090/A100 | A080 | 逐文献阅读指令，用于影响粗读/深读输出。 |
 
 ### 0.2 当前实现流程
 
@@ -44,6 +47,79 @@ autodo-kit 对外公开的是“事务内容 + 事务工具 + 本地运行时 AP
 6. 若新候选已完成预处理（`preprocessed=1`），则直接进入 `pending_rough_read=1`。
 7. 若新候选尚未完成预处理，则进入 `pending_preprocess=1`。
 8. 若新候选已经 `rough_read_done=1`，则不再重复回到待泛读清单。
+
+### 0.3 human_seed_contract（A080/A090/A100 共用）
+
+为什么 A080/A090/A100 都允许写 `seed_items`：
+
+1. 统一契约：三个节点读取同一配置结构，便于同一批 seed 在不同轮次复用，不需要按节点维护三套格式。
+2. 人工纠偏：真实运行中人工干预常发生在中途；允许在 A090/A100 继续补 seed，可避免“必须回到 A080 才能加单”的流程阻塞。
+3. 职责不变：虽然都可写，但节点仍按状态机消费；A080 只做预处理落位，A090 只做泛读，A100 只做深读，不会越权。
+4. 审计一致：`source_origin`、`manual_guidance`、`reading_objective` 在同一状态表回写，便于追溯“谁在何阶段加了什么种子”。
+
+建议在事务配置中统一提供以下结构：
+
+| 字段 | 类型 | 说明 |
+| --- | --- | --- |
+| `human_seed_contract.enabled` | bool | 是否启用人工 seed。 |
+| `human_seed_contract.default_target_stage` | string | 默认目标阶段，`rough_read` 或 `deep_read`。 |
+| `human_seed_contract.on_ambiguous` | string | cite_key 命中多条时策略，建议 `manual_review`。 |
+| `human_seed_contract.on_missing` | string | cite_key 未命中时策略，建议 `route_to_a040`。 |
+| `human_seed_contract.manual_guidance` | string | 全局默认提示语，可被条目覆盖。 |
+| `human_seed_contract.reading_objective` | string | 全局默认阅读目标，可被条目覆盖。 |
+| `human_seed_contract.seed_items` | array | 人工 seed 条目数组。 |
+
+`seed_items` 单条建议字段：
+
+| 字段 | 类型 | 说明 |
+| --- | --- | --- |
+| `cite_key` | string | 目标文献引用键。 |
+| `target_stage` | string | `rough_read` 或 `deep_read`。 |
+| `manual_guidance` | string | 该文献的个性化阅读提示语。 |
+| `reading_objective` | string | 该文献的个性化阅读目标。 |
+| `priority` | number | 可选优先级。 |
+| `tags` | array of strings | 可选标签，例如 `method_transfer`。 |
+
+科学学科（Science of Science）示例模板：
+
+```json
+{
+  "human_seed_contract": {
+    "enabled": true,
+    "default_target_stage": "rough_read",
+    "on_ambiguous": "manual_review",
+    "on_missing": "route_to_a040",
+    "manual_guidance": "优先抽取研究问题、识别策略与可迁移的方法线索。",
+    "reading_objective": "围绕科研产出、合作网络与资助机制构建可复用证据链。",
+    "seed_items": [
+      {
+        "cite_key": "wang-2021-funding-and-team-science",
+        "target_stage": "deep_read",
+        "manual_guidance": "重点读识别策略与内生性处理，判断能否迁移到当前课题。",
+        "reading_objective": "提炼资助政策影响科研合作产出的可检验机制。",
+        "priority": 95,
+        "tags": ["method_transfer", "identification", "mechanism_focus"]
+      },
+      {
+        "cite_key": "liu-2019-citation-network-dynamics",
+        "target_stage": "rough_read",
+        "manual_guidance": "先看网络构建口径与数据清洗流程，记录可复用字段定义。",
+        "reading_objective": "补齐引文网络指标构造与预处理步骤。",
+        "priority": 80,
+        "tags": ["data_cleaning", "empirical_reference", "network_metrics"]
+      },
+      {
+        "cite_key": "chen-2023-ai-and-scientific-discovery",
+        "target_stage": "rough_read",
+        "manual_guidance": "关注 AI 工具介入科研发现流程的证据类型与边界条件。",
+        "reading_objective": "为创新点池提供可讨论的机制假说。",
+        "priority": 70,
+        "tags": ["innovation_support", "hypothesis_generation"]
+      }
+    ]
+  }
+}
+```
 
 ## 1. 桥接入口
 
@@ -98,6 +174,72 @@ autodo-kit 对外公开的是“事务内容 + 事务工具 + 本地运行时 AP
 
 用途：按 `graph_uid` 从本地图注册表加载图配置，或直接按 `graph_path` 读取。
 
+### 1.8 autodokit.tools.workspace_path_migration.migrate_workspace_paths(...)
+
+用途：在工作区迁移到新设备或新目录后，统一扫描并重写旧绝对路径。
+
+典型参数：
+
+- `workspace_root`：目标工作区根目录。
+- `mappings`：路径映射列表，元素为 `PathMapping(old_root, new_root)`。
+- `dry_run`：是否只预览不写入。
+- `inventory_only`：是否仅扫描并输出命中清单。
+- `scan_dirs`：需要扫描的工作区目录（默认包括 `config`、`steps`、`knowledge`、`views`、`batches`）。
+- `sqlite_rel_paths`：需要处理的 SQLite 相对路径（默认包括 `database/content/content.db`、`database/logs/aok_log.db`、`database/tasks/tasks.db`）。
+- `excluded_prefixes`：默认排除前缀之外的额外排除项。
+
+相关结构：
+
+- `PathMapping(old_root, new_root)`：路径映射配置。
+
+行为说明：
+
+- `inventory_only=True` 时只输出命中路径清单，不做写入。
+- 默认会排除 `.copilot`、`C:/Windows`、`C:/Program Files` 以及外部盘前缀，减少误改风险。
+- 工具会遍历 JSON、CSV、文本文件以及 SQLite 的文本列，匹配命中的旧绝对路径并按映射替换。
+- 对于不在映射前缀内的外部路径，默认保持不变。
+
+推荐调用示例：
+
+```python
+from autodokit.tools import PathMapping, migrate_workspace_paths
+
+result = migrate_workspace_paths(
+  workspace_root=r"D:/Research/workspace",
+  mappings=[
+    PathMapping(
+      old_root=r"C:/Users/Ethan/CoreFiles/ProjectsFile/AcademicResearch-auto-workflow/workspace",
+      new_root=r"D:/Research/workspace",
+    ),
+    PathMapping(
+      old_root=r"C:/Users/Ethan/CoreFiles/ProjectsFile/AcademicResearch-auto-workflow",
+      new_root=r"D:/Research",
+    ),
+  ],
+  inventory_only=True,
+)
+```
+
+### 1.9 autodokit.tools.run_online_retrieval_from_bib(...)
+
+用途：根据 Bib 文件批量执行在线检索四项任务，并把中文/英文检索、下载、HTML 结构化抽取结果汇总到输出目录。
+
+典型参数：
+
+- `bib_path`：Bib 文件路径。
+- `output_dir`：批处理输出目录。
+- `max_pages`：中英文检索最大翻页数。
+- `en_per_page`：英文检索每页返回条数。
+- `en_sources`：英文来源列表。
+- `max_entries`：可选，仅处理前 N 条 Bib 记录。
+- `use_llm_matching`：是否启用阿里百炼小模型做英文候选匹配。
+- `llm_api_key_file`：百炼 API Key 文件路径。
+
+说明：
+
+- 该工具属于通用批处理工具，不隶属于 `online_retrieval_literatures/` 目录。
+- 工具内部仍然通过 `run_online_retrieval_router(...)` 进入在线检索三层结构，保持路由统一入口不变。
+
 ## 2. autodokit.tools 导出
 
 `autodokit.tools` 采用“按函数直接调用”的公开方式，并按对象分为用户 API 与开发者 API。
@@ -116,6 +258,98 @@ autodo-kit 对外公开的是“事务内容 + 事务工具 + 本地运行时 AP
 - `parse_reference_text(reference_text)`
 - `insert_placeholder_from_reference(table, reference_text, ...)`
 - `task_create_or_update(tasks, task, ...)`
+
+### 2.2 MonkeyOCR Windows GPU 解析工具
+
+本仓库把 Windows 原生 MonkeyOCR 单篇解析封装成两个可直接导入的工具函数：
+
+```python
+from autodokit.tools import prepare_monkeyocr_windows_runtime
+from autodokit.tools import run_monkeyocr_windows_single_pdf
+```
+
+#### `prepare_monkeyocr_windows_runtime(...)`
+
+用途：准备 Windows 原生运行时，包括安装 `huggingface_hub`、可选安装 `modelscope`、安装 `triton-windows<3.4`，并下载 MonkeyOCR 模型权重。
+
+典型参数：
+
+- `monkeyocr_root`：MonkeyOCR 仓库根目录。
+- `model_name`：模型名称，默认 `MonkeyOCR-pro-1.2B`。
+- `download_source`：`huggingface` 或 `modelscope`。
+- `python_executable`：Python 可执行文件路径，默认当前解释器。
+- `pip_index_url`：可选 pip 镜像地址。
+- `install_triton_windows`：是否安装 `triton-windows<3.4`。
+- `models_dir`：可选权重目录；若不传，默认使用 `monkeyocr_root/model_weight`。
+
+返回值要点：
+
+- `model_dir`：最终权重目录。
+- `official_model_dir`：官方下载目标目录。
+- `weights_ready`：是否已准备好三类关键权重目录。
+- `steps`：执行过的准备步骤。
+
+#### `run_monkeyocr_windows_single_pdf(...)`
+
+用途：在 Windows 上以 GPU 路线解析单篇 PDF，并把实时日志与产物返回给调用方。
+
+典型参数：
+
+- `input_pdf`：待解析 PDF 绝对路径。
+- `output_dir`：输出根目录。
+- `monkeyocr_root`：MonkeyOCR 仓库根目录。
+- `models_dir`：权重目录，默认使用 `monkeyocr_root/model_weight`。
+- `config_path`：本地配置文件路径，默认使用 `output_dir.parent/model_configs.local.yaml`。
+- `device`：`cuda`、`cpu` 或 `mps`，本次成功解析使用 `cuda`。
+- `gpu_visible_devices`：CUDA 可见设备号，默认 `0`。
+- `ensure_runtime`：是否自动执行运行时准备步骤。
+- `download_source`：权重下载源，默认 `huggingface`。
+- `pip_index_url`：可选 pip 镜像地址。
+- `log_path`：实时日志输出文件。
+- `stream_output`：是否在终端实时打印解析日志。
+
+返回值要点：
+
+- `status`：运行状态，成功时为 `SUCCEEDED`。
+- `device`：实际使用的设备。
+- `gpu_name`：识别到的 GPU 名称。
+- `model_name`：模型名称。
+- `input_pdf`：输入 PDF 的绝对路径。
+- `output_dir`：最终输出目录。
+- `artifacts`：产物字典，包含 markdown、content_list、middle_json、可视化 PDF、images 目录、日志与配置文件。
+
+示例：
+
+```python
+from pathlib import Path
+from autodokit.tools import run_monkeyocr_windows_single_pdf
+
+result = run_monkeyocr_windows_single_pdf(
+  input_pdf=Path(r"D:\workspace\sandbox\test monkey ocr\input\“双支柱”调控与银行系统性风险——基于SRISK指标的实证分析.pdf"),
+  output_dir=Path(r"D:\workspace\sandbox\test monkey ocr\output"),
+  monkeyocr_root=Path(r"D:\workspace\sandbox\MonkeyOCR-main"),
+  models_dir=Path(r"D:\workspace\sandbox\test monkey ocr\model_weight"),
+  config_path=Path(r"D:\workspace\sandbox\test monkey ocr\model_configs.local.yaml"),
+  log_path=Path(r"D:\workspace\sandbox\test monkey ocr\parse_direct_run.log"),
+  device="cuda",
+  gpu_visible_devices="0",
+  ensure_runtime=False,
+)
+```
+
+### 2.3 输出文件契约
+
+MonkeyOCR 单篇解析的输出契约建议统一如下：
+
+- `*.md`：面向人工阅读的最终解析文本。
+- `*_content_list.json`：适合程序消费的内容元素列表。
+- `*_middle.json`：中间层结构结果，适合排错与二次加工。
+- `*_model.pdf`、`*_layout.pdf`、`*_spans.pdf`：三类可视化核查文件。
+- `images/`：页面图片缓存。
+- `model_configs.local.yaml`：本次运行的配置快照。
+- `parse_direct_run.log`：实时日志文件。
+
+如果你在别的 Windows 11 设备上复现，建议优先复用这套参数组合：`device=cuda`、`gpu_visible_devices=0`、`triton-windows<3.4`、`MonkeyOCR-pro-1.2B`，并把 `models_dir` 指到本机权重目录。
 - `task_status_append(status_log, aok_task_uid, ...)`
 - `task_gate_decision_record(gate_decisions, aok_task_uid, ...)`
 - `task_handoff_record(handoffs, from_task_uid, to_task_uid, ...)`
@@ -136,6 +370,7 @@ autodo-kit 对外公开的是“事务内容 + 事务工具 + 本地运行时 AP
 - `batch_rewrite_obsidian_note_timestamps(note_paths=None, note_dir=None, target_timezone='Asia/Shanghai', ...)`
  - `build_cnki_result(...)`
  - `local_reference_lookup_and_materialize(...)`：本地参考文献清单检索与占位补录工具。
+- `run_online_retrieval_from_bib(...)`：按 Bib 批量触发在线检索四项任务的通用工具。
   用途：把一段参考文献清单文本解析为单条引文，逐条在本地 `content.db` 的 `literatures` 表中做匹配；未命中时插入占位条目并写回数据库。
 
   函数签名（概要）：
@@ -189,6 +424,48 @@ autodo-kit 对外公开的是“事务内容 + 事务工具 + 本地运行时 AP
 - `resolve_model_plan(...)`：根据任务语义、质量/成本/时延/风险档位输出主模型与回退链。
 - `invoke_aliyun_llm(...)`：按路由计划执行主模型调用，失败时按回退链重试，并返回统一 `attempts` 审计结构。
 - `load_aliyun_llm_config(...)`：在 `model=auto/smart` 时内部走统一路由，不建议业务层自行实现选模分支。
+
+### 2.1.1 在线检索文献模块
+
+在线检索文献能力已统一收口到 `autodokit.tools.online_retrieval_literatures` 目录，对外正式入口只有：
+
+- `run_online_retrieval_router(payload)`
+
+调用约束：
+
+1. 用户侧不要直接调用 `zh_cnki_*`、`en_open_access_*`、`open_access_literature_retrieval` 等子模块。
+2. 所有在线检索相关配置文件都应维护在 `autodokit/tools/online_retrieval_literatures/` 目录。
+3. 默认规则配置文件是 `autodokit/tools/online_retrieval_literatures/config.json`，由 router 自动注入到下游执行器。
+4. 若需要覆盖默认规则，只能通过 router payload 显式传入 `retrieval_rules`，不要在子模块里单独分叉。
+
+三层结构（2026-04 起）：
+
+1. 路由层：`online_retrieval_router.py`，负责统一入口、规则注入和 debug 编排。
+2. 解析层：`online_retrieval_resolver.py`，负责把 `entries` / `records` / `seed_items` / `cite_keys` / `pdf_paths` 统一转换为可执行载荷。
+3. 功能层：`online_retrieval_service.py` + `zh_cnki_*` / `en_open_access_*` 执行器，负责实际检索、下载、抽取。
+
+新增输入契约（兼容旧 payload）：
+
+- `seed_items`: `list[dict]`，每项可含 `cite_key`、`pdf_path`、`title`、`detail_url`。
+- `cite_keys`: `list[str]`，用于批量输入文献引用键。
+- `pdf_paths`: `list[str]`，用于批量输入 PDF 绝对路径。
+- `content_db` / `content_db_path`: `str`，可选；提供后会优先尝试从 `literatures` 表补齐 `title` / `pdf_path`。
+- `workspace_root`: `str`，当未显式提供 `content_db` 时，解析层会尝试使用 `<workspace_root>/database/content/content.db`。
+
+解析策略说明：
+
+- `zh_cnki batch download/html_extract`：若未传 `entries`，会自动尝试由 `seed_items` / `cite_keys` / `pdf_paths` 解析生成。
+- `zh_cnki single download/html_extract`：若未传 `zh_query`（或 `query`）且未传 `detail_url`，会自动从解析结果补齐首条候选。
+- `en_open_access single/batch download`：若未传 `record`（或 `records`），会自动由种子输入构造最小 `record` 载荷。
+
+典型场景：
+
+- 中文 CNKI 题录检索
+- 中文 CNKI 单篇/批量 PDF 下载
+- 中文 CNKI 单篇/批量 HTML 抽取
+- 英文开放源题录检索与全文下载
+- 学校数据库导航与超星门户相关流程
+- 本地 `cite_key`/PDF 清单驱动的在线补检索（解析层先归一，再由功能层执行）
 
 路由治理与回归补充（P5 起生效）：
 
@@ -301,6 +578,35 @@ autodo-kit 对外公开的是“事务内容 + 事务工具 + 本地运行时 AP
 - `report.md`
 - 每个 job 一个独立子目录
 
+#### 阿里百炼多模态解析后处理统一入口（llm_clients）
+
+用途：对阿里百炼多模态解析生成的 `reconstructed_content.md` 与 `normalized.structured.json` 做统一后处理、污染块剥离与轻量文本清洗。
+
+推荐入口：
+
+- `from autodokit.tools.llm_clients import postprocess_aliyun_multimodal_parse_outputs`
+
+说明：
+
+- 事务层与业务脚本不要直接导入 `autodokit.tools.ocr.aliyun_multimodal.aliyun_multimodal_postprocess_tools`；统一通过 `llm_clients.py` 的门面函数调用。
+- A060、A100 以及其它直接生成阿里百炼解析资产的 AOK 事务，都会在解析完成后自动调用该入口。
+- `autodokit.tools.__init__` 不再对外公开该函数，避免绕过统一门面。
+
+最小示例：
+
+```python
+from autodokit.tools.llm_clients import postprocess_aliyun_multimodal_parse_outputs
+
+summary = postprocess_aliyun_multimodal_parse_outputs(
+  normalized_structured_path=r"D:\outputs\paper\normalized.structured.json",
+  reconstructed_markdown_path=r"D:\outputs\paper\reconstructed_content.md",
+  rewrite_structured=True,
+  rewrite_markdown=True,
+  keep_page_markers=False,
+)
+print(summary["postprocessed_markdown_path"])
+```
+
 ### 2.2.3 AOK 日志数据库工具（autodokit.tools.atomic.log_aok）
 
 用途：提供 AOK 运行日志的 SQLite 初始化、校验、写入、查询与修复能力；日志后端异常时保持业务侧“非阻塞”。
@@ -360,6 +666,31 @@ if repair_result["status"] == "PASS":
     payload={"status": "ok"},
   )
 ```
+
+## 2.2.4 AOK 全局日志配置（config）
+
+建议在 `workspace/config/config.json` 中提供最小 `logging` 配置：
+
+```json
+{
+  "logging": {
+    "enabled": true,
+    "snapshot_mode": "log_only"
+  },
+  "paths": {
+    "log_db_path": "workspace/database/logs/aok_log.db",
+    "runtime_dir": "workspace/runtime",
+    "logs_dir": "workspace/logs"
+  }
+}
+```
+
+`logging.snapshot_mode` 可选值与含义：
+
+- `"log_only"`：仅写入结构化 SQLite 日志，不保存运行时快照（默认）。
+- `"log_and_snapshot"`：写入 SQLite 日志并同时保存运行时快照到 `runtime_dir`（用于故障复现、审计与局部回放）。
+
+注意：`runtime_dir` 仅在 `snapshot_mode` 为 `log_and_snapshot` 且 `logging.enabled=true` 时被创建与写入。
 
 ## 2.3 AOB 工具统一执行 API（autodokit.tools.aob_tools）
 
@@ -1029,7 +1360,7 @@ print(outputs)
 - `demos/scripts/demo_tool_developer_get_tool_call.py`：开发者工具按名称读取并调用。
 - `demos/scripts/demo_tool_cli_call.py`：通过 `python -m autodokit.tools.adapters.cli` 调用工具。
 
-## 6. 内容主库新契约补记
+# 6. 内容主库新契约补记
 
 自 content.db 极简重构完成后，以下规则是新项目默认口径：
 
@@ -1037,3 +1368,44 @@ print(outputs)
 - 任何名为 `view` 的下游产物，默认都应理解为 CSV 导出物或阶段快照，而不是数据库视图。
 - A010 初始化脚本 `C:\Users\Ethan\.copilot\skills\A010_项目初始化_v5\scripts\generate_config.py` 会在初始化完成后写入自检结果，确保 `content.db` 零视图。
 - `review_read_pool_current_view`、`review_candidate_current_view`、`review_priority_current_view` 等旧 current view 仅保留在历史文档中，不再作为新项目运行时契约。
+
+## 7. 附录：AOK CLI 工具（aok_tool）简介
+
+项目内新增了轻量命令行工具包 `tools/aok_tool`，用于对 AOK 运行时日志与阅读队列执行常见检查与写入操作。工具目的是提供一个可复用的本地运维入口，便于脚本化操作与审计。
+
+安装位置（仓库内）：
+
+- `tools/aok_tool/aok.py` — 主入口，支持子命令 `write-log` 与 `list-queue`。
+- `tools/aok_tool/__init__.py` — 包标记。
+- `tools/aok_tool/README.md` — 使用说明与示例。
+
+主要子命令：
+
+- `write-log`：把一段文本写入 AOK 日志数据库（`workspace/database/logs/aok_log.db`），可通过 `--message` 传入字符串，或 `--message-file` 指定文件，或从标准输入读取。
+  - 典型示例：
+    - `python tools/aok_tool/aok.py write-log --workspace workspace --message "已完成 A080，准备启动 A090"`
+    - `python tools/aok_tool/aok.py write-log --workspace workspace --message-file ./notes/summary.txt`
+
+- `list-queue`：读取工作区内容数据库（`workspace/database/content/content.db`）并按阶段列出候选队列简要视图（JSON 输出）。支持 `--stage` 指定阶段（如 `A060`、`A080`、`A090`），`--limit` 控制返回数量。
+  - 典型示例：
+    - `python tools/aok_tool/aok.py list-queue --workspace workspace --stage A060 --limit 10`
+
+参数约定：
+
+- `--workspace` / `-w`：工作区根目录（相对于仓库根）；如果省略，工具尝试使用当前工作目录的 `workspace/` 子目录。
+- `--stage`：阅读队列阶段（`A060`/`A080`/`A090`/`A100` 等）。
+- `--message` / `--message-file`：写日志时使用。
+
+行为说明：
+
+- `write-log` 会使用 `autodokit.tools.atomic.log_aok` 的填写契约（`append_aok_log_event`）进行写入，优先尊重 `workspace/config/config.json` 中的 `paths.log_db_path` 配置。
+- 工具对数据库不可用的情况保持容错：尝试修复或返回友好错误，而非抛出未捕获异常。
+- `list-queue` 只是只读视图，默认不修改 `content.db`。
+
+建议：将常用检查脚本或 CI 步骤调用该工具，以保持日志写入与队列检查的一致性。工具为轻量运维入口，不替代事务级别的事务实现。
+
+若需把该工具注册为可执行模块（`python -m tools.aok_tool.aok` 或打包后 `pip install -e .`），可在仓库级 packaging/CI 中加入对应条目。
+
+--
+
+

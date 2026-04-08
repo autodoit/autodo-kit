@@ -1,4 +1,4 @@
-"""PDF 解析资产管理工具。
+﻿"""PDF 解析资产管理工具。
 
 负责把阿里百炼多模态解析结果注册为统一可复用的解析资产，并补写
 兼容旧消费者的 `aok.pdf_structured.v3` 文件入口。
@@ -10,7 +10,7 @@ import json
 from pathlib import Path
 from typing import Any, Dict
 
-from autodokit.tools.aok_pdf_aliyun_multimodal_parse import parse_pdf_with_aliyun_multimodal
+from autodokit.tools.ocr.aliyun_multimodal.aok_pdf_aliyun_multimodal_parse import parse_pdf_with_aliyun_multimodal
 from autodokit.tools.bibliodb_sqlite import (
     load_attachments_df,
     load_literatures_df,
@@ -19,7 +19,8 @@ from autodokit.tools.bibliodb_sqlite import (
     upsert_parse_asset_rows,
 )
 from autodokit.tools.contentdb_sqlite import infer_workspace_root_from_content_db
-from autodokit.tools.pdf_structured_data_tools import build_structured_data_payload
+from autodokit.tools.ocr.classic.pdf_elements_extractors import extract_text_with_rapidocr
+from autodokit.tools.ocr.classic.pdf_structured_data_tools import build_structured_data_payload
 
 
 def _stringify(value: Any) -> str:
@@ -155,6 +156,54 @@ def _resolve_output_root(content_db: Path, parse_level: str) -> Path:
     return output_root.resolve()
 
 
+def _extract_text_with_pymupdf(pdf_path: Path) -> tuple[str, Dict[str, Any]]:
+    try:
+        import fitz  # type: ignore
+    except Exception as exc:  # pragma: no cover
+        return "", {
+            "backend": "pymupdf_text",
+            "enabled": False,
+            "error": f"未安装 PyMuPDF（pymupdf）：{exc}",
+            "page_count": 0,
+            "recognized_pages": 0,
+        }
+
+    doc = fitz.open(str(pdf_path))
+    page_count = int(doc.page_count)
+    page_texts: list[str] = []
+    recognized_pages = 0
+    try:
+        for page_index in range(page_count):
+            page = doc.load_page(page_index)
+            page_text = str(page.get_text("text") or "").strip()
+            if page_text:
+                recognized_pages += 1
+                page_texts.append(f"[Page {page_index + 1}]\n\n{page_text}")
+    finally:
+        doc.close()
+
+    return "\n\n".join(page_texts).strip(), {
+        "backend": "pymupdf_text",
+        "enabled": True,
+        "page_count": page_count,
+        "recognized_pages": recognized_pages,
+    }
+
+
+def _extract_pdf_text_fallback(pdf_path: Path) -> tuple[str, Dict[str, Any]]:
+    text, meta = _extract_text_with_pymupdf(pdf_path)
+    if text:
+        return text, meta
+
+    ocr_text, ocr_status, ocr_meta = extract_text_with_rapidocr(pdf_path)
+    return ocr_text, {
+        "backend": "rapidocr",
+        "enabled": bool(ocr_status.enabled),
+        "disabled_reason": _stringify(ocr_status.disabled_reason),
+        **ocr_meta,
+    }
+
+
 def _select_existing_asset(
     content_db: Path,
     *,
@@ -243,6 +292,123 @@ def build_normalized_structured_from_multimodal_result(
     structured_path = (output_dir / "normalized.structured.json").resolve()
     structured_path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
     return structured_path
+
+
+def ensure_pdf_text_fallback_asset(
+    *,
+    content_db: str | Path,
+    parse_level: str,
+    uid_literature: str = "",
+    cite_key: str = "",
+    doc_id: str = "",
+    source_stage: str = "",
+    overwrite_existing: bool = False,
+) -> Dict[str, Any]:
+    """从原文 PDF 直接生成轻量结构化 fallback 资产。"""
+
+    content_db_path = Path(content_db).resolve()
+    literature_row = _resolve_literature_row(
+        content_db_path,
+        uid_literature=uid_literature,
+        cite_key=cite_key,
+        doc_id=doc_id,
+    )
+    resolved_uid = _stringify(literature_row.get("uid_literature"))
+    resolved_cite_key = _stringify(literature_row.get("cite_key"))
+
+    if not overwrite_existing:
+        existing = _select_existing_asset(
+            content_db_path,
+            parse_level=parse_level,
+            uid_literature=resolved_uid,
+            cite_key=resolved_cite_key,
+        )
+        if existing is not None and _stringify(existing.get("backend")) == "pdf_text_fallback":
+            return existing
+
+    pdf_path = _resolve_pdf_path(content_db_path, literature_row)
+    output_root = _resolve_output_root(content_db_path, parse_level)
+    output_name = _safe_stem(resolved_cite_key or resolved_uid or pdf_path.stem)
+    output_dir = (output_root / output_name).resolve()
+    output_dir.mkdir(parents=True, exist_ok=True)
+
+    fallback_text, fallback_meta = _extract_pdf_text_fallback(pdf_path)
+    reconstructed_markdown_path = (output_dir / "reconstructed_content_pdf_text_fallback.md").resolve()
+    reconstructed_markdown_path.write_text(fallback_text, encoding="utf-8")
+
+    artifacts = {
+        "asset_dir": str(output_dir),
+        "reconstructed_markdown_path": str(reconstructed_markdown_path),
+        "fallback_mode": "original_pdf_direct_read",
+    }
+    payload = build_structured_data_payload(
+        pdf_path=pdf_path,
+        backend="pdf_text_fallback",
+        backend_family="pdf_text_fallback",
+        task_type=parse_level,
+        full_text=fallback_text,
+        extract_error="" if fallback_text else "pdf_text_fallback 未抽取到可用正文",
+        text_meta=fallback_meta,
+        uid_literature=resolved_uid,
+        cite_key=resolved_cite_key,
+        title=_stringify(literature_row.get("title")),
+        year=_stringify(literature_row.get("year")),
+        artifacts=artifacts,
+        capabilities={
+            "parse_level": parse_level,
+            "fallback_mode": "original_pdf_direct_read",
+        },
+        extra_fields={
+            "pdf_text_fallback_asset": {
+                "source_stage": _stringify(source_stage),
+                "output_dir": str(output_dir),
+            }
+        },
+    )
+    normalized_structured_path = (output_dir / "normalized.structured.json").resolve()
+    normalized_structured_path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+
+    parse_asset_row = {
+        "uid_literature": resolved_uid,
+        "cite_key": resolved_cite_key,
+        "parse_level": parse_level,
+        "source_stage": _stringify(source_stage),
+        "backend": "pdf_text_fallback",
+        "task_type": parse_level,
+        "asset_dir": str(output_dir),
+        "normalized_structured_path": str(normalized_structured_path),
+        "reconstructed_markdown_path": str(reconstructed_markdown_path),
+        "linear_index_path": "",
+        "chunk_manifest_path": "",
+        "chunks_jsonl_path": "",
+        "parse_record_path": "",
+        "quality_report_path": "",
+        "parse_status": "ready",
+        "llm_model": "",
+        "llm_backend": "",
+        "last_run_uid": output_name,
+    }
+    upsert_parse_asset_rows(content_db_path, [parse_asset_row])
+    save_structured_state(
+        content_db_path,
+        uid_literature=resolved_uid,
+        structured_status="ready",
+        structured_abs_path=str(normalized_structured_path),
+        structured_backend="pdf_text_fallback",
+        structured_task_type=parse_level,
+        structured_updated_at=_stringify((payload.get("parse_profile") or {}).get("created_at")),
+        structured_schema_version=_stringify(payload.get("schema")),
+        structured_text_length=len(_stringify((payload.get("text") or {}).get("full_text"))),
+        structured_reference_count=len(payload.get("references") or []),
+    )
+
+    current = _select_existing_asset(
+        content_db_path,
+        parse_level=parse_level,
+        uid_literature=resolved_uid,
+        cite_key=resolved_cite_key,
+    )
+    return current or parse_asset_row
 
 
 def ensure_multimodal_parse_asset(
@@ -366,5 +532,6 @@ def ensure_multimodal_parse_asset(
 
 __all__ = [
     "build_normalized_structured_from_multimodal_result",
+    "ensure_pdf_text_fallback_asset",
     "ensure_multimodal_parse_asset",
 ]

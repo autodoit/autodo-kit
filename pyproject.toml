@@ -1,6 +1,6 @@
 [project]
 name = "autodo-kit"
-version = "0.1.0"
+version = "0.2.0"
 description = "工具包：适配通用任务事务工作流系统的通用事务集合与各领域预置的事务集合及其相关内部工具集。"
 authors = [
     { name = "Ethan Lin", email = "ElementsPhoenix@outlook.com" },

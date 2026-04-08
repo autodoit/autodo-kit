@@ -8,18 +8,18 @@ from __future__ import annotations
 
 import json
 from dataclasses import dataclass
-from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 from autodokit.tools import load_json_or_py
 from autodokit.tools.bibliodb_sqlite import load_literatures_df, replace_chunk_set_records
 from autodokit.tools.contentdb_sqlite import resolve_content_db_config
-from autodokit.tools.pdf_structured_data_tools import (
+from autodokit.tools.ocr.classic.pdf_structured_data_tools import (
     build_chunk_entries_from_structured_data,
     load_structured_data,
     write_chunk_shards,
 )
+from autodokit.tools.time_utils import now_compact
 
 
 @dataclass
@@ -42,7 +42,7 @@ def _build_chunks_uid(raw_value: str) -> str:
     text = str(raw_value or "").strip()
     if text:
         return text
-    return f"chunks-{datetime.now(tz=UTC).strftime('%Y%m%d%H%M%S')}"
+    return f"chunks-{now_compact()}"
 
 
 def _collect_structured_paths(*, structured_dir: Optional[str], content_db: Optional[str]) -> List[Path]:
@@ -207,5 +207,6 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
+
 
 

@@ -12,6 +12,7 @@ from autodokit.tools import append_aok_log_event, build_gate_review, load_json_o
 from autodokit.tools.bibliodb_sqlite import load_reading_state_df, upsert_reading_state_rows
 from autodokit.tools.contentdb_sqlite import CONTENT_DB_DIRECTORY_NAME, DEFAULT_CONTENT_DB_NAME, resolve_content_db_config
 from autodokit.tools.reading_state_tools import ANALYSIS_NOTE_SPECS, append_markdown_section, resolve_analysis_note_paths
+from autodokit.tools.atomic.task_aok.post_affair_git_commit import affair_auto_git_commit
 
 
 OUTPUT_SUMMARY = "a095_batch_summary.md"
@@ -44,6 +45,7 @@ def _resolve_output_dir(config_path: Path, raw_cfg: Dict[str, Any]) -> Path:
     return output_dir
 
 
+@affair_auto_git_commit("A095")
 def execute(config_path: Path) -> List[Path]:
     raw_cfg = load_json_or_py(config_path)
     workspace_root = _resolve_workspace_root(config_path, raw_cfg)
@@ -106,10 +108,14 @@ def execute(config_path: Path) -> List[Path]:
         append_aok_log_event(
             event_type="A095_BATCH_SUMMARY_COMPLETED",
             project_root=workspace_root,
+            affair_code="A095",
             handler_name="泛读批次分析汇总",
             agent_names=["ar_A095_泛读批次分析汇总事务智能体_v1"],
             skill_names=[],
             reasoning_summary="对 rough_read_done=1 且 analysis_batch_synced=0 的文献做批次汇总补写。",
+            gate_review=gate_review,
+            gate_review_path=gate_path,
+            artifact_paths=[summary_path, gate_path],
             payload={"batch_item_count": len(state_updates)},
         )
     except Exception:

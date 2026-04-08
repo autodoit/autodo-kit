@@ -23,6 +23,7 @@ import unicodedata
 
 import pandas as pd
 from bibtexparser import loads as bibtex_loads
+from autodokit.tools.atomic.task_aok.post_affair_git_commit import affair_auto_git_commit
 
 # 归一化规则列表：在此列表中出现的规则会被应用
 # 可用规则说明：
@@ -945,6 +946,7 @@ def _run_and_write_all_outputs(config_path: Path) -> List[Path]:
     return written_files
 
 
+@affair_auto_git_commit("A020")
 def execute(config_path: Path) -> List[Path]:
     """供调度器调用的入口：执行并返回写出的文件清单。
 

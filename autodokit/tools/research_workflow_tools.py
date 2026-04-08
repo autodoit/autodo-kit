@@ -11,11 +11,12 @@
 
 from __future__ import annotations
 
-from datetime import UTC, datetime
 from hashlib import sha1
 from typing import Any, Dict, Iterable, List, Tuple
 
 import pandas as pd
+
+from autodokit.tools.time_utils import now_iso, now_year
 
 
 REVIEW_KEYWORDS: tuple[str, ...] = (
@@ -76,9 +77,9 @@ DEFAULT_INNOVATION_POOL_COLUMNS: List[str] = [
 
 
 def _utc_now_iso() -> str:
-    """返回 UTC ISO 时间字符串。"""
+    """返回 ISO 时间字符串（默认北京时间）。"""
 
-    return datetime.now(tz=UTC).isoformat()
+    return now_iso()
 
 
 def _stringify(value: Any) -> str:
@@ -124,7 +125,7 @@ def _estimate_candidate_score(row: pd.Series) -> float:
     year_text = _stringify(row.get("year"))
     if year_text.isdigit():
         year = int(year_text)
-        current_year = datetime.now(tz=UTC).year
+        current_year = now_year()
         if year >= current_year - 3:
             score += 15.0
         elif year <= current_year - 10:
@@ -228,7 +229,7 @@ def filter_literature_for_topic(
     normalized_terms = _normalize_term_list(topic_terms)
     normalized_groups = _normalize_term_groups(topic_keyword_groups)
     if recent_years is not None and max_year is None:
-        max_year = datetime.now(tz=UTC).year
+        max_year = now_year()
     if recent_years is not None and min_year is None and max_year is not None:
         min_year = max_year - max(int(recent_years), 0)
 
@@ -460,7 +461,7 @@ def build_non_review_candidate_views(
         top_k=top_k,
     )
     readable_table = build_candidate_readable_view(index_table, literature_table, extra_fields=extra_fields)
-    current_year = datetime.now(tz=UTC).year
+    current_year = now_year()
     classical_uid: List[str] = []
     frontier_uid: List[str] = []
     counterexample_uid: List[str] = []

@@ -20,6 +20,7 @@ from autodokit.affairs.候选文献视图构建.affair import (
     _resolve_workspace_root,
 )
 from autodokit.tools import append_aok_log_event, batch_rewrite_obsidian_note_timestamps, build_gate_review, load_json_or_py
+from autodokit.tools.atomic.task_aok.post_affair_git_commit import affair_auto_git_commit
 from autodokit.tools.bibliodb_sqlite import load_reading_queue_df, upsert_reading_queue_rows
 from autodokit.tools.storage_backend import load_reference_main_table
 
@@ -69,6 +70,7 @@ def _build_review_pool_from_queue(content_db: Path, literature_table: pd.DataFra
     return merged.fillna("")
 
 
+@affair_auto_git_commit("A065")
 def execute(config_path: Path) -> List[Path]:
     raw_cfg = load_json_or_py(config_path)
     if not isinstance(raw_cfg, dict):
@@ -228,10 +230,21 @@ def execute(config_path: Path) -> List[Path]:
         event_type="A065_REVIEW_REFERENCE_PREPROCESSING_COMPLETED",
         project_root=workspace_root,
         enabled=logging_enabled,
+        affair_code="A065",
         handler_name="综述参考文献预处理与笔记骨架",
         agent_names=["ar_A065_综述参考文献预处理与笔记骨架事务智能体_v5"],
         skill_names=["ar_A065_综述参考文献预处理与笔记骨架_v5", "m_ObsidianMarkdown_v1"],
         reasoning_summary="承接 A060 解析资产，完成参考文献处理与笔记骨架生成并推进到 A080。",
+        gate_review=gate_review,
+        gate_review_path=gate_path,
+        artifact_paths=[
+            prepared_assets["created_notes_path"],
+            prepared_assets["mapping_path"],
+            prepared_assets["reference_scan_status_path"],
+            prepared_assets["reference_dump_path"],
+            prepared_assets["quality_summary_path"],
+            gate_path,
+        ],
         payload={
             "review_read_pool_count": len(review_read_pool),
             "batch_count": int(review_reading_batches['batch_id'].nunique()) if not review_reading_batches.empty and 'batch_id' in review_reading_batches.columns else 0,

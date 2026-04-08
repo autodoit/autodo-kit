@@ -10,7 +10,6 @@
 
 from __future__ import annotations
 
-from datetime import UTC, datetime
 from hashlib import sha1
 from pathlib import Path
 import sqlite3
@@ -20,6 +19,7 @@ from typing import Any, Callable, Dict, List, Tuple
 import pandas as pd
 
 from ...contentdb_sqlite import CONTENT_DB_DIRECTORY_NAME, DEFAULT_CONTENT_DB_NAME, resolve_content_db_path
+from ...time_utils import now_iso
 
 
 DEFAULT_AOK_TASK_COLUMNS: List[str] = [
@@ -172,7 +172,7 @@ def _utc_now_iso() -> str:
         True
     """
 
-    return datetime.now(tz=UTC).isoformat()
+    return now_iso()
 
 
 def _stringify(value: Any) -> str:

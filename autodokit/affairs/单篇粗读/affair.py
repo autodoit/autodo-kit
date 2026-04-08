@@ -1,4 +1,4 @@
-"""单篇文献粗读事务。
+﻿"""单篇文献粗读事务。
 
 该事务用于在“单篇精读”之前做快速预处理：
 - 读取目标文献的 structured 结果；
@@ -28,9 +28,10 @@ import pandas as pd
 
 from autodokit.tools import load_json_or_py
 from autodokit.tools.bibliodb import init_empty_table, insert_placeholder_from_reference
+from autodokit.tools.llm_clients import postprocess_aliyun_multimodal_parse_outputs
 from autodokit.tools.contentdb_sqlite import infer_workspace_root_from_content_db, resolve_content_db_config
-from autodokit.tools.pdf_parse_asset_manager import ensure_multimodal_parse_asset
-from autodokit.tools.pdf_structured_data_tools import load_single_document_record
+from autodokit.tools.ocr.classic.pdf_parse_asset_manager import ensure_multimodal_parse_asset
+from autodokit.tools.ocr.classic.pdf_structured_data_tools import load_single_document_record
 from autodokit.tools.storage_backend import load_reference_main_table, persist_reference_main_table
 
 
@@ -277,6 +278,13 @@ def execute(config_path: Path) -> List[Path]:
             overwrite_existing=bool(raw_cfg.get("overwrite_parse_asset", False)),
             model=str(raw_cfg.get("parse_model") or raw_cfg.get("structured_model") or "auto"),
         )
+        postprocess_aliyun_multimodal_parse_outputs(
+            normalized_structured_path=str(parse_asset.get("normalized_structured_path") or ""),
+            reconstructed_markdown_path=str(parse_asset.get("reconstructed_markdown_path") or ""),
+            rewrite_structured=True,
+            rewrite_markdown=True,
+            keep_page_markers=False,
+        )
         cfg.input_structured_json = str(parse_asset.get("normalized_structured_path") or "")
 
     doc = _read_target_doc_from_inputs(
@@ -363,3 +371,4 @@ def execute(config_path: Path) -> List[Path]:
     written_paths.insert(0, json_path)
     written_paths.insert(0, markdown_path)
     return written_paths
+

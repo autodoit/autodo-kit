@@ -9,6 +9,7 @@ from typing import Any, Literal
 from uuid import uuid4
 
 from autodokit.tools import load_json_or_py
+from autodokit.tools.atomic.task_aok.post_affair_git_commit import affair_auto_git_commit
 
 ObjectType = Literal["literature", "dataset"]
 SourceType = Literal["offline", "online"]
@@ -119,6 +120,7 @@ def default_retrieval_handler(payload: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+@affair_auto_git_commit("A040")
 def execute(config_path: Path) -> list[Path]:
     """事务执行入口。"""
 

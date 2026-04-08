@@ -1,14 +1,14 @@
-"""PDF 结构化结果与分块工具。"""
+﻿"""PDF 结构化结果与分块工具。"""
 
 from __future__ import annotations
 
 import json
 import re
-from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional, Sequence
 
-from autodokit.tools.pdf_elements_extractors import extract_references_from_full_text
+from autodokit.tools.ocr.classic.pdf_elements_extractors import extract_references_from_full_text
+from autodokit.tools.time_utils import now_iso
 
 
 STRUCTURED_SCHEMA_VERSION = "aok.pdf_structured.v3"
@@ -22,7 +22,7 @@ def _stringify(value: Any) -> str:
 
 
 def _utc_now_iso() -> str:
-    return datetime.now(tz=UTC).isoformat()
+    return now_iso()
 
 
 def normalize_full_text(text: str) -> str:
