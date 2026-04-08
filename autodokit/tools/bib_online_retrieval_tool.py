@@ -167,6 +167,10 @@ class BibRetrievalConfig:
     keep_browser_open: bool = False
     use_llm_matching: bool = False
     llm_api_key_file: str = ""
+    school_library_nav_url: str = ""
+    school_subject_categories: tuple[str, ...] = ("经济学", "管理学", "综合")
+    school_max_databases: int = 12
+    school_max_databases_per_record: int = 2
 
 
 def _safe_route(payload: dict[str, Any]) -> dict[str, Any]:
@@ -183,6 +187,52 @@ def _safe_route(payload: dict[str, Any]) -> dict[str, Any]:
 
 def _build_query(title: str, year: str, first_author: str) -> str:
     return _normalize_text(f"{title} {year} {first_author}")
+
+
+def _classify_entry_language(entry: dict[str, Any], title: str) -> str:
+    language = _normalize_text(entry.get("language")).lower()
+    if _is_probably_chinese(title) or _is_probably_chinese(str(entry.get("author") or "")):
+        return "zh"
+    if any(token in language for token in ["zh", "zh-cn", "chinese", "cn"]):
+        return "zh"
+    if any(token in language for token in ["en", "english"]):
+        return "en"
+    return "en"
+
+
+def _build_seed_record(entry: dict[str, Any], *, title: str, year: str, first_author: str, cite_key: str) -> dict[str, Any]:
+    doi = _normalize_text(entry.get("doi"))
+    url = _normalize_text(entry.get("url"))
+    return {
+        "source": "bib_seed",
+        "source_id": cite_key,
+        "title": title,
+        "year": year,
+        "doi": doi,
+        "journal": _normalize_text(entry.get("journal")),
+        "authors": [item.strip() for item in str(entry.get("author") or "").split(" and ") if item.strip()],
+        "abstract": _normalize_text(entry.get("abstract")),
+        "landing_url": url,
+        "pdf_url": "",
+        "bibtex_key": cite_key,
+        "raw": {
+            "seed_first_author": first_author,
+            "seed_note": "from_bib_entry",
+        },
+    }
+
+
+def _extract_portal_final_result(portal_retry: dict[str, Any]) -> dict[str, Any]:
+    results = list(portal_retry.get("results") or [])
+    if not results:
+        return {}
+    first = dict(results[0] or {})
+    final_result = dict(first.get("final_result") or {})
+    return final_result if isinstance(final_result, dict) else {}
+
+
+def _build_skipped(status_reason: str) -> dict[str, Any]:
+    return {"status": "SKIPPED", "reason": status_reason}
 
 
 def _resolve_selected_record(
@@ -217,101 +267,206 @@ def _resolve_selected_record(
     return _pick_best_record_heuristic(metadata_records, title=title, year=year, first_author=first_author), "heuristic"
 
 
-def _process_entry(entry: dict[str, Any], config: BibRetrievalConfig, index: int) -> dict[str, Any]:
+def _process_entry(
+    entry: dict[str, Any],
+    config: BibRetrievalConfig,
+    index: int,
+    *,
+    school_catalog: dict[str, Any] | None,
+) -> dict[str, Any]:
     cite_key = str(entry.get("ID") or f"entry_{index}")
     title = _normalize_text(entry.get("title"))
     year = _normalize_text(entry.get("year"))
     author_field = str(entry.get("author") or "")
     first_author = _first_author(author_field)
-    language = str(entry.get("language") or "")
+    entry_language = _classify_entry_language(entry, title)
     query = _build_query(title, year, first_author)
     entry_dir = (config.output_dir / f"{index:03d}_{_slug(cite_key)}").resolve()
     entry_dir.mkdir(parents=True, exist_ok=True)
 
-    zh_search = _safe_route(
-        {
-            "source": "zh_cnki",
-            "mode": "search",
-            "action": "metadata",
-            "zh_query": query,
-            "max_pages": config.max_pages,
-            "zh_output_dir": str((entry_dir / "zh_cnki").resolve()),
-            "allow_manual_intervention": config.allow_manual_intervention,
-            "keep_browser_open": config.keep_browser_open,
-        }
-    )
-    zh_download = _safe_route(
-        {
-            "source": "zh_cnki",
-            "mode": "single",
-            "action": "download",
-            "entries": [{"title": title, "cite_key": cite_key}],
-            "zh_query": query,
-            "title": title,
-            "date": year,
-            "zh_output_dir": str((entry_dir / "zh_cnki").resolve()),
-            "allow_manual_intervention": config.allow_manual_intervention,
-            "keep_browser_open": config.keep_browser_open,
-        }
-    )
-    zh_html = _safe_route(
-        {
-            "source": "zh_cnki",
-            "mode": "single",
-            "action": "html_extract",
-            "entries": [{"title": title, "cite_key": cite_key}],
-            "query": query,
-            "output_dir": str((entry_dir / "zh_cnki_html").resolve()),
-            "allow_manual_intervention": config.allow_manual_intervention,
-            "keep_browser_open": config.keep_browser_open,
-        }
-    )
+    zh_search: dict[str, Any] = _build_skipped("english_entry_skip_cnki")
+    zh_download: dict[str, Any] = _build_skipped("english_entry_skip_cnki")
+    zh_html: dict[str, Any] = _build_skipped("english_entry_skip_cnki")
+    en_search: dict[str, Any] = _build_skipped("chinese_entry_skip_en")
+    en_download: dict[str, Any] = _build_skipped("chinese_entry_skip_en")
+    en_html: dict[str, Any] = _build_skipped("chinese_entry_skip_en")
+    selected_record: dict[str, Any] | None = None
+    match_method = "none"
+    en_portal_retry: dict[str, Any] = _build_skipped("chinese_entry_skip_en")
+    en_portal_first_status = "SKIPPED"
+    en_fallback_used = False
 
-    en_query = query if not _is_probably_chinese(title) and language.lower().startswith("en") else _normalize_text(f"{title} {first_author}")
-    en_search = _safe_route(
-        {
-            "source": "en_open_access",
-            "mode": "search",
-            "action": "metadata",
-            "query": en_query,
-            "max_pages": config.max_pages,
-            "per_page": config.en_per_page,
-            "sources": list(config.en_sources),
-            "output_dir": str((entry_dir / "en_open_access").resolve()),
-        }
-    )
-
-    selected_record, match_method = _resolve_selected_record(
-        en_search,
-        title=title,
-        year=year,
-        first_author=first_author,
-        config=config,
-    )
-
-    en_download_payload: dict[str, Any] = {
-        "source": "en_open_access",
-        "mode": "single",
-        "action": "download",
-        "output_dir": str((entry_dir / "en_open_access_download").resolve()),
-    }
-    en_html_payload: dict[str, Any] = {
-        "source": "en_open_access",
-        "mode": "single",
-        "action": "html_extract",
-        "output_dir": str((entry_dir / "en_open_access_html").resolve()),
-        "html_request_timeout": 20,
-    }
-    if selected_record:
-        en_download_payload["record"] = selected_record
-        en_html_payload["record"] = selected_record
+    if entry_language == "zh":
+        zh_search = _safe_route(
+            {
+                "source": "zh_cnki",
+                "mode": "search",
+                "action": "metadata",
+                "zh_query": query,
+                "max_pages": config.max_pages,
+                "zh_output_dir": str((entry_dir / "zh_cnki").resolve()),
+                "allow_manual_intervention": config.allow_manual_intervention,
+                "keep_browser_open": config.keep_browser_open,
+            }
+        )
+        zh_download = _safe_route(
+            {
+                "source": "zh_cnki",
+                "mode": "single",
+                "action": "download",
+                "entries": [{"title": title, "cite_key": cite_key}],
+                "zh_query": query,
+                "title": title,
+                "date": year,
+                "zh_output_dir": str((entry_dir / "zh_cnki").resolve()),
+                "allow_manual_intervention": config.allow_manual_intervention,
+                "keep_browser_open": config.keep_browser_open,
+            }
+        )
+        zh_html = _safe_route(
+            {
+                "source": "zh_cnki",
+                "mode": "single",
+                "action": "html_extract",
+                "entries": [{"title": title, "cite_key": cite_key}],
+                "query": query,
+                "output_dir": str((entry_dir / "zh_cnki_html").resolve()),
+                "allow_manual_intervention": config.allow_manual_intervention,
+                "keep_browser_open": config.keep_browser_open,
+            }
+        )
     else:
-        seed = {"title": title, "cite_key": cite_key}
-        en_download_payload["seed_items"] = [seed]
-        en_html_payload["seed_items"] = [seed]
+        seed_record = _build_seed_record(entry, title=title, year=year, first_author=first_author, cite_key=cite_key)
+        selected_databases = list((school_catalog or {}).get("selected") or [])
+        en_portal_retry = _safe_route(
+            {
+                "source": "en_open_access",
+                "mode": "retry",
+                "action": "chaoxing_portal",
+                "failed_records": [seed_record],
+                "selected_databases": selected_databases,
+                "library_nav_url": config.school_library_nav_url,
+                "catalog_language": "英文",
+                "subject_categories": list(config.school_subject_categories),
+                "max_databases": config.school_max_databases,
+                "max_databases_per_record": config.school_max_databases_per_record,
+                "output_dir": str((entry_dir / "en_portal_retry").resolve()),
+            }
+        )
+        portal_final = _extract_portal_final_result(en_portal_retry)
+        portal_final_status = str(
+            portal_final.get("status")
+            or ((portal_final.get("result") or {}).get("status") if isinstance(portal_final.get("result"), dict) else "")
+            or ""
+        )
+        en_portal_first_status = portal_final_status or str(en_portal_retry.get("status") or "BLOCKED")
 
-    en_download = _safe_route(en_download_payload)
-    en_html = _safe_route(en_html_payload)
+        if en_portal_first_status == "PASS":
+            en_download = {
+                "status": "PASS",
+                "strategy": "school_portal_first",
+                "portal_retry_summary": en_portal_retry,
+                "portal_final_result": portal_final,
+            }
+            html_seed = dict(seed_record)
+            portal_record = dict(portal_final.get("record") or {})
+            if portal_record:
+                html_seed.update(portal_record)
+            if not str(html_seed.get("landing_url") or ""):
+                html_seed["landing_url"] = str(seed_record.get("landing_url") or "")
+            en_html = _safe_route(
+                {
+                    "source": "en_open_access",
+                    "mode": "single",
+                    "action": "html_extract",
+                    "record": html_seed,
+                    "output_dir": str((entry_dir / "en_open_access_html").resolve()),
+                    "html_request_timeout": 20,
+                }
+            )
+            en_search = _build_skipped("school_portal_first_no_fallback_search")
+            match_method = "portal_seed"
+
+            if str(en_html.get("status") or "") != "PASS":
+                en_fallback_used = True
+                en_query = _normalize_text(f"{title} {first_author} {year}")
+                en_search = _safe_route(
+                    {
+                        "source": "en_open_access",
+                        "mode": "search",
+                        "action": "metadata",
+                        "query": en_query,
+                        "max_pages": config.max_pages,
+                        "per_page": config.en_per_page,
+                        "sources": list(config.en_sources),
+                        "output_dir": str((entry_dir / "en_open_access").resolve()),
+                    }
+                )
+                selected_record, match_method = _resolve_selected_record(
+                    en_search,
+                    title=title,
+                    year=year,
+                    first_author=first_author,
+                    config=config,
+                )
+                en_html_retry_payload: dict[str, Any] = {
+                    "source": "en_open_access",
+                    "mode": "single",
+                    "action": "html_extract",
+                    "output_dir": str((entry_dir / "en_open_access_html").resolve()),
+                    "html_request_timeout": 20,
+                }
+                if selected_record:
+                    en_html_retry_payload["record"] = selected_record
+                else:
+                    en_html_retry_payload["record"] = seed_record
+                en_html = _safe_route(en_html_retry_payload)
+        else:
+            en_fallback_used = True
+            en_query = _normalize_text(f"{title} {first_author} {year}")
+            en_search = _safe_route(
+                {
+                    "source": "en_open_access",
+                    "mode": "search",
+                    "action": "metadata",
+                    "query": en_query,
+                    "max_pages": config.max_pages,
+                    "per_page": config.en_per_page,
+                    "sources": list(config.en_sources),
+                    "output_dir": str((entry_dir / "en_open_access").resolve()),
+                }
+            )
+
+            selected_record, match_method = _resolve_selected_record(
+                en_search,
+                title=title,
+                year=year,
+                first_author=first_author,
+                config=config,
+            )
+
+            en_download_payload: dict[str, Any] = {
+                "source": "en_open_access",
+                "mode": "single",
+                "action": "download",
+                "output_dir": str((entry_dir / "en_open_access_download").resolve()),
+            }
+            en_html_payload: dict[str, Any] = {
+                "source": "en_open_access",
+                "mode": "single",
+                "action": "html_extract",
+                "output_dir": str((entry_dir / "en_open_access_html").resolve()),
+                "html_request_timeout": 20,
+            }
+            if selected_record:
+                en_download_payload["record"] = selected_record
+                en_html_payload["record"] = selected_record
+            else:
+                en_download_payload["record"] = seed_record
+                en_html_payload["record"] = seed_record
+
+            en_download = _safe_route(en_download_payload)
+            en_html = _safe_route(en_html_payload)
 
     return {
         "index": index,
@@ -320,10 +475,14 @@ def _process_entry(entry: dict[str, Any], config: BibRetrievalConfig, index: int
         "year": year,
         "first_author": first_author,
         "query": query,
+        "entry_language": entry_language,
         "entry_output_dir": str(entry_dir),
         "zh_search": zh_search,
         "zh_download": zh_download,
         "zh_html_extract": zh_html,
+        "en_portal_retry": en_portal_retry,
+        "en_portal_first_status": en_portal_first_status,
+        "en_fallback_used": en_fallback_used,
         "en_search": en_search,
         "selected_en_record": selected_record or {},
         "match_method": match_method,
@@ -346,6 +505,12 @@ def run_online_retrieval_from_bib(payload: dict[str, Any]) -> dict[str, Any]:
         keep_browser_open=bool(payload.get("keep_browser_open", False)),
         use_llm_matching=bool(payload.get("use_llm_matching", False)),
         llm_api_key_file=str(payload.get("llm_api_key_file") or payload.get("bailian_api_key_file") or "").strip(),
+        school_library_nav_url=str(payload.get("school_library_nav_url") or payload.get("library_nav_url") or "").strip(),
+        school_subject_categories=tuple(
+            str(item).strip() for item in list(payload.get("school_subject_categories") or payload.get("subject_categories") or ["经济学", "管理学", "综合"]) if str(item).strip()
+        ),
+        school_max_databases=max(int(payload.get("school_max_databases") or payload.get("max_databases") or 12), 1),
+        school_max_databases_per_record=max(int(payload.get("school_max_databases_per_record") or payload.get("max_databases_per_record") or 2), 1),
     )
 
     if not config.bib_path.exists():
@@ -357,15 +522,34 @@ def run_online_retrieval_from_bib(payload: dict[str, Any]) -> dict[str, Any]:
         entries = entries[: config.max_entries]
 
     config.output_dir.mkdir(parents=True, exist_ok=True)
+    has_english_entries = any(_classify_entry_language(entry, _normalize_text(entry.get("title"))) == "en" for entry in entries)
+    school_catalog: dict[str, Any] | None = None
+    if has_english_entries:
+        school_catalog = _safe_route(
+            {
+                "source": "school_database_portal",
+                "mode": "catalog",
+                "action": "fetch",
+                "catalog_language": "英文",
+                "library_nav_url": config.school_library_nav_url,
+                "subject_categories": list(config.school_subject_categories),
+                "max_databases": config.school_max_databases,
+                "require_search_capable": True,
+                "output_dir": str((config.output_dir / "school_portal_catalog").resolve()),
+            }
+        )
+
     all_results: list[dict[str, Any]] = []
     for idx, entry in enumerate(entries, start=1):
-        all_results.append(_process_entry(entry, config, idx))
+        all_results.append(_process_entry(entry, config, idx, school_catalog=school_catalog))
 
     status_counts = {
         "zh_download_pass": sum(1 for item in all_results if str((item.get("zh_download") or {}).get("status") or "") == "PASS"),
         "en_download_pass": sum(1 for item in all_results if str((item.get("en_download") or {}).get("status") or "") == "PASS"),
         "zh_html_pass": sum(1 for item in all_results if str((item.get("zh_html_extract") or {}).get("status") or "") == "PASS"),
         "en_html_pass": sum(1 for item in all_results if str((item.get("en_html_extract") or {}).get("status") or "") == "PASS"),
+        "english_portal_pass": sum(1 for item in all_results if str(item.get("en_portal_first_status") or "") == "PASS"),
+        "english_fallback_used": sum(1 for item in all_results if bool(item.get("en_fallback_used"))),
         "llm_match_used": sum(1 for item in all_results if str(item.get("match_method") or "") == "llm"),
     }
 
@@ -374,6 +558,7 @@ def run_online_retrieval_from_bib(payload: dict[str, Any]) -> dict[str, Any]:
         "bib_path": str(config.bib_path.resolve()),
         "output_dir": str(config.output_dir.resolve()),
         "total_entries": len(entries),
+        "school_catalog": school_catalog or {},
         "status_counts": status_counts,
         "results": all_results,
     }
@@ -391,6 +576,8 @@ def run_online_retrieval_from_bib(payload: dict[str, Any]) -> dict[str, Any]:
         f"- en_download_pass: {status_counts['en_download_pass']}",
         f"- zh_html_pass: {status_counts['zh_html_pass']}",
         f"- en_html_pass: {status_counts['en_html_pass']}",
+        f"- english_portal_pass: {status_counts['english_portal_pass']}",
+        f"- english_fallback_used: {status_counts['english_fallback_used']}",
         f"- llm_match_used: {status_counts['llm_match_used']}",
         "",
         "## 每条目状态",
@@ -399,7 +586,7 @@ def run_online_retrieval_from_bib(payload: dict[str, Any]) -> dict[str, Any]:
         lines.append(
             "- "
             f"[{item.get('index')}] {item.get('cite_key')} | "
-            f"match={item.get('match_method')} | "
+            f"lang={item.get('entry_language')} | portal={item.get('en_portal_first_status')} | fallback={bool(item.get('en_fallback_used'))} | match={item.get('match_method')} | "
             f"ZH-DL={((item.get('zh_download') or {}).get('status') or '')} | "
             f"EN-DL={((item.get('en_download') or {}).get('status') or '')} | "
             f"ZH-HTML={((item.get('zh_html_extract') or {}).get('status') or '')} | "
