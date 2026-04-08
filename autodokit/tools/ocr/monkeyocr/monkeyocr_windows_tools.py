@@ -17,12 +17,17 @@
 from __future__ import annotations
 
 import os
+import time
 import subprocess
 import sys
 import threading
 import shutil
+import csv
+import json
 from pathlib import Path
 from typing import Any
+
+from autodokit.tools.atomic.path.windows_long_filename_tools import materialize_short_alias
 
 
 DEFAULT_MODEL_NAME = "MonkeyOCR-pro-1.2B"
@@ -328,4 +333,221 @@ def run_monkeyocr_windows_single_pdf(
         "input_pdf": str(pdf_path),
         "output_dir": str(result_output_dir),
         "artifacts": artifacts,
+    }
+
+
+def _rename_output_tree_to_original_stem(result_output_dir: Path, original_stem: str, alias_stem: str) -> Path:
+    """将 MonkeyOCR 产物目录从别名回写到原始文件名。"""
+
+    result_output_dir = result_output_dir.resolve()
+    original_output_dir = (result_output_dir.parent / original_stem).resolve()
+
+    if alias_stem == original_stem:
+        return result_output_dir
+
+    if original_output_dir.exists() and original_output_dir != result_output_dir:
+        if original_output_dir.is_dir():
+            shutil.rmtree(original_output_dir)
+        else:
+            original_output_dir.unlink()
+
+    if result_output_dir.exists() and result_output_dir != original_output_dir:
+        result_output_dir.rename(original_output_dir)
+    else:
+        original_output_dir.mkdir(parents=True, exist_ok=True)
+
+    if not original_output_dir.exists():
+        return original_output_dir
+
+    for path in sorted(original_output_dir.rglob("*"), reverse=True):
+        if not path.is_file():
+            continue
+        name = path.name
+        if alias_stem not in name:
+            continue
+        new_name = name.replace(alias_stem, original_stem)
+        if new_name == name:
+            continue
+        target = path.with_name(new_name)
+        if target.exists():
+            if target.is_dir():
+                shutil.rmtree(target)
+            else:
+                target.unlink()
+        path.rename(target)
+
+    return original_output_dir
+
+
+def run_monkeyocr_windows_batch_folder(
+    input_dir: str | Path,
+    output_dir: str | Path,
+    *,
+    monkeyocr_root: str | Path,
+    models_dir: str | Path | None = None,
+    config_path: str | Path | None = None,
+    model_name: str = DEFAULT_MODEL_NAME,
+    device: str = "cuda",
+    gpu_visible_devices: str = "0",
+    ensure_runtime: bool = True,
+    download_source: str = "huggingface",
+    pip_index_url: str | None = None,
+    python_executable: str | Path | None = None,
+    log_path: str | Path | None = None,
+    stream_output: bool = False,
+    alias_dir: str | Path | None = None,
+) -> dict[str, Any]:
+    """批量解析文件夹中的全部 PDF，并在完成后将产物回写为原始文件名。
+
+    Args:
+        input_dir: 输入文件夹，只处理直接子文件，不递归。
+        output_dir: 输出根目录。
+        monkeyocr_root: MonkeyOCR 仓库根目录。
+        models_dir: 模型权重目录。
+        config_path: 本地配置文件路径。
+        model_name: 模型名称。
+        device: `cuda` / `cpu` / `mps`。
+        gpu_visible_devices: CUDA 可见设备号。
+        ensure_runtime: 是否自动准备运行时。
+        download_source: 权重下载来源。
+        pip_index_url: 可选 pip 镜像。
+        python_executable: Python 可执行文件。
+        log_path: 批处理总日志路径。
+        stream_output: 是否流式输出单篇解析日志。
+        alias_dir: 临时别名文件目录；默认使用输出目录下的 `_tmp_input`。
+
+    Returns:
+        dict[str, Any]: 批处理摘要，包含每个文件的状态、耗时与最终产物路径。
+    """
+
+    source_dir = Path(input_dir).expanduser().resolve()
+    target_dir = Path(output_dir).expanduser().resolve()
+    if not source_dir.exists():
+        raise FileNotFoundError(f"输入文件夹不存在：{source_dir}")
+    if not source_dir.is_dir():
+        raise NotADirectoryError(f"输入路径不是文件夹：{source_dir}")
+    target_dir.mkdir(parents=True, exist_ok=True)
+
+    alias_root = Path(alias_dir).expanduser().resolve() if alias_dir is not None else (target_dir / "_tmp_input").resolve()
+    batch_log_path = Path(log_path).expanduser().resolve() if log_path is not None else (target_dir / "batch_monkeyocr.log").resolve()
+
+    files = [path for path in sorted(source_dir.iterdir()) if path.is_file()]
+    if not files:
+        return {
+            "status": "SUCCEEDED",
+            "input_dir": str(source_dir),
+            "output_dir": str(target_dir),
+            "total_duration_seconds": 0.0,
+            "files": [],
+            "log_path": str(batch_log_path),
+        }
+
+    records: list[dict[str, Any]] = []
+    total_start = time.perf_counter()
+
+    for index, file_path in enumerate(files, start=1):
+        alias_result = materialize_short_alias(
+            file_path,
+            alias_root,
+            prefix="doc",
+            max_path_chars=200,
+            max_name_chars=60,
+        )
+        single_log_path = target_dir / f"{alias_result.stem_to_use}.log"
+        start = time.perf_counter()
+        try:
+            result = run_monkeyocr_windows_single_pdf(
+                input_pdf=alias_result.path_to_use,
+                output_dir=target_dir,
+                monkeyocr_root=monkeyocr_root,
+                models_dir=models_dir,
+                config_path=config_path,
+                model_name=model_name,
+                device=device,
+                gpu_visible_devices=gpu_visible_devices,
+                ensure_runtime=ensure_runtime,
+                download_source=download_source,
+                pip_index_url=pip_index_url,
+                python_executable=python_executable,
+                log_path=single_log_path,
+                stream_output=stream_output,
+            )
+            final_output_dir = _rename_output_tree_to_original_stem(
+                Path(result["output_dir"]),
+                file_path.stem,
+                alias_result.stem_to_use,
+            )
+            result["output_dir"] = str(final_output_dir)
+            artifacts = result.get("artifacts") if isinstance(result.get("artifacts"), dict) else {}
+            if artifacts:
+                artifacts["markdown"] = str(final_output_dir / f"{file_path.stem}.md")
+                artifacts["content_list"] = str(final_output_dir / f"{file_path.stem}_content_list.json")
+                artifacts["middle_json"] = str(final_output_dir / f"{file_path.stem}_middle.json")
+                artifacts["model_pdf"] = str(final_output_dir / f"{file_path.stem}_model.pdf")
+                artifacts["layout_pdf"] = str(final_output_dir / f"{file_path.stem}_layout.pdf")
+                artifacts["spans_pdf"] = str(final_output_dir / f"{file_path.stem}_spans.pdf")
+                artifacts["images_dir"] = str(final_output_dir / "images")
+                artifacts["log_path"] = str(single_log_path)
+            status = "ok"
+            error = ""
+        except Exception as exc:  # noqa: BLE001 - batch needs to continue after per-file failures
+            result = None
+            status = "error"
+            error = str(exc)
+            final_output_dir = target_dir / file_path.stem
+        duration = time.perf_counter() - start
+        record = {
+            "index": index,
+            "input": str(file_path),
+            "used_input": str(alias_result.path_to_use),
+            "used_alias": alias_result.used_alias,
+            "output_dir": str(final_output_dir),
+            "status": status,
+            "error": error,
+            "duration_seconds": duration,
+            "result": result,
+        }
+        records.append(record)
+
+    total_duration = time.perf_counter() - total_start
+    report_json = target_dir / "batch_report.json"
+    report_csv = target_dir / "batch_report.csv"
+    report_json.write_text(
+        json.dumps(
+            {
+                "input_dir": str(source_dir),
+                "output_dir": str(target_dir),
+                "total_duration_seconds": total_duration,
+                "files": records,
+            },
+            ensure_ascii=False,
+            indent=2,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    with report_csv.open("w", encoding="utf-8", newline="") as stream:
+        writer = csv.writer(stream)
+        writer.writerow(["index", "input", "used_input", "used_alias", "output_dir", "status", "duration_seconds", "error"])
+        for record in records:
+            writer.writerow([
+                record.get("index"),
+                record.get("input"),
+                record.get("used_input"),
+                record.get("used_alias"),
+                record.get("output_dir"),
+                record.get("status"),
+                f"{record.get('duration_seconds'):.3f}",
+                record.get("error"),
+            ])
+
+    return {
+        "status": "SUCCEEDED",
+        "input_dir": str(source_dir),
+        "output_dir": str(target_dir),
+        "total_duration_seconds": total_duration,
+        "files": records,
+        "report_json": str(report_json),
+        "report_csv": str(report_csv),
+        "log_path": str(batch_log_path),
     }
