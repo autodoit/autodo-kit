@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+import sqlite3
 
 import pandas as pd
 
@@ -262,3 +263,137 @@ def test_reading_state_table_should_roundtrip_and_ignore_queue_conflicts(tmp_pat
     assert int(row["deep_read_count"]) == 2
     assert list(pending_rough_df["uid_literature"]) == ["lit-002", "lit-001"]
     assert pending_preprocess_df.empty
+
+
+def test_reading_state_views_should_expose_human_facing_live_lists(tmp_path: Path) -> None:
+    """中文阅读状态视图应能实时反映底层单表状态机。"""
+
+    db_path = tmp_path / "content.db"
+    save_tables(
+        db_path,
+        literatures_df=pd.DataFrame(
+            [
+                {
+                    "uid_literature": "lit-pre",
+                    "cite_key": "pre-001",
+                    "title": "预处理中的文献",
+                    "first_author": "张三",
+                    "year": "2024",
+                    "entry_type": "article",
+                    "has_fulltext": 0,
+                    "is_placeholder": 1,
+                    "created_at": "",
+                    "updated_at": "",
+                },
+                {
+                    "uid_literature": "lit-rough",
+                    "cite_key": "rough-001",
+                    "title": "待泛读文献",
+                    "first_author": "李四",
+                    "year": "2023",
+                    "entry_type": "article",
+                    "has_fulltext": 1,
+                    "is_placeholder": 0,
+                    "created_at": "",
+                    "updated_at": "",
+                },
+                {
+                    "uid_literature": "lit-parse",
+                    "cite_key": "deep-001",
+                    "title": "待批判性研读文献",
+                    "first_author": "王五",
+                    "year": "2022",
+                    "entry_type": "article",
+                    "has_fulltext": 1,
+                    "is_placeholder": 0,
+                    "created_at": "",
+                    "updated_at": "",
+                },
+            ]
+        ),
+        attachments_df=pd.DataFrame(
+            [
+                {
+                    "uid_attachment": "att-rough",
+                    "uid_literature": "lit-rough",
+                    "attachment_name": "rough.pdf",
+                    "attachment_type": "pdf",
+                    "file_ext": ".pdf",
+                    "storage_path": str((tmp_path / "rough.pdf").resolve()),
+                    "source_path": "",
+                    "checksum": "",
+                    "is_primary": 1,
+                    "status": "ready",
+                    "created_at": "",
+                    "updated_at": "",
+                }
+            ]
+        ),
+        if_exists="replace",
+    )
+    save_structured_state(
+        db_path,
+        uid_literature="lit-parse",
+        structured_status="ready",
+        structured_abs_path=str((tmp_path / "deep-001.structured.json").resolve()),
+        structured_backend="aliyun_multimodal",
+        structured_task_type="non_review_deep",
+        structured_updated_at="2026-04-07T10:00:00+00:00",
+        structured_schema_version="aok.pdf_structured.v3",
+        structured_text_length=2000,
+        structured_reference_count=30,
+    )
+    upsert_reading_state_rows(
+        db_path,
+        [
+            {
+                "uid_literature": "lit-pre",
+                "cite_key": "pre-001",
+                "pending_preprocess": 1,
+                "preprocessed": 0,
+                "preprocess_status": "missing_attachment",
+                "source_origin": "auto",
+            },
+            {
+                "uid_literature": "lit-rough",
+                "cite_key": "rough-001",
+                "preprocessed": 1,
+                "pending_rough_read": 1,
+                "source_origin": "human",
+                "manual_guidance": "重点看变量构造。",
+            },
+            {
+                "uid_literature": "lit-parse",
+                "cite_key": "deep-001",
+                "preprocessed": 1,
+                "pending_deep_read": 0,
+                "deep_read_decision": "parse_ready",
+                "deep_read_done": 0,
+                "source_origin": "legacy_queue",
+            },
+        ],
+    )
+
+    with sqlite3.connect(db_path) as conn:
+        pending_preprocess = conn.execute(
+            'SELECT uid_literature, preprocess_status, current_list_name FROM "待预处理文献清单"'
+        ).fetchall()
+        attachment_backlog = conn.execute(
+            'SELECT uid_literature FROM "补件待办文献清单"'
+        ).fetchall()
+        pending_rough = conn.execute(
+            'SELECT uid_literature, primary_attachment_name, source_origin FROM "待泛读文献清单"'
+        ).fetchall()
+        pending_critical = conn.execute(
+            'SELECT uid_literature, current_parse_status, deep_read_decision FROM "待批判性研读文献清单"'
+        ).fetchall()
+        overview_row = conn.execute(
+            'SELECT uid_literature, title, current_list_name, attachment_count, current_parse_status FROM "阅读状态总视图" WHERE uid_literature = ?',
+            ("lit-parse",),
+        ).fetchone()
+
+    assert pending_preprocess == [("lit-pre", "missing_attachment", "补件待办")]
+    assert attachment_backlog == [("lit-pre",)]
+    assert pending_rough == [("lit-rough", "rough.pdf", "human")]
+    assert pending_critical == [("lit-parse", "ready", "parse_ready")]
+    assert overview_row == ("lit-parse", "待批判性研读文献", "待批判性研读", 0, "ready")

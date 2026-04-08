@@ -52,8 +52,8 @@ DEFAULT_REVIEW_STATE_FIELD_LIMITS: Dict[str, int] = {
 
 DEFAULT_EVIDENCE_CONSTRAINED_LINE_TARGETS: Dict[str, int] = {
     "领域研究脉络.md": 5,
-    "core_findings.md": 5,
-    "future_directions_notes.md": 5,
+    "核心成果.md": 5,
+    "未来方向.md": 5,
     "领域知识框架.md": 4,
     "创新点补写.md": 6,
 }
@@ -123,8 +123,8 @@ def _build_review_state_from_sentences(
 def _note_type_to_evidence_fields(note_name: str) -> List[str]:
     mapping = {
         "领域研究脉络.md": ["research_problem", "mechanism_paths", "core_findings"],
-        "core_findings.md": ["core_findings", "supporting_evidence", "mechanism_paths"],
-        "future_directions_notes.md": ["future_directions", "limitation_points", "controversy_points"],
+        "核心成果.md": ["core_findings", "supporting_evidence", "mechanism_paths"],
+        "未来方向.md": ["future_directions", "limitation_points", "controversy_points"],
         "领域知识框架.md": ["mechanism_paths", "core_findings", "research_method"],
         "创新点补写.md": ["future_directions", "limitation_points", "controversy_points", "mechanism_paths"],
     }

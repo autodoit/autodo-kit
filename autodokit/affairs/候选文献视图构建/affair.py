@@ -782,12 +782,12 @@ def _prepare_review_assets(
 
     composite_specs = [
         (dirs["trajectories"] / "领域研究脉络.md", "领域研究脉络", "研究脉络种子，记录时间线与主题演进骨架。"),
-        (dirs["review_summaries"] / "core_findings.md", "core_findings", "核心发现汇总骨架。"),
-        (dirs["review_summaries"] / "consensus_notes.md", "consensus_notes", "综述共识汇总骨架。"),
-        (dirs["review_summaries"] / "controversy_notes.md", "controversy_notes", "综述争议汇总骨架。"),
-        (dirs["review_summaries"] / "future_directions_notes.md", "future_directions_notes", "未来研究方向骨架。"),
+        (dirs["review_summaries"] / "核心成果.md", "核心成果", "核心成果汇总骨架。"),
+        (dirs["review_summaries"] / "共识点.md", "共识点", "综述共识汇总骨架。"),
+        (dirs["review_summaries"] / "争议点.md", "争议点", "综述争议汇总骨架。"),
+        (dirs["review_summaries"] / "未来方向.md", "未来方向", "未来研究方向骨架。"),
         (dirs["frameworks"] / "领域知识框架.md", "领域知识框架", "领域知识框架骨架。"),
-        (dirs["matrices"] / "review_matrix.md", "review_matrix", "综述矩阵骨架，用于后续整理主题、方法与结论。"),
+        (dirs["matrices"] / "综述矩阵.md", "综述矩阵", "综述矩阵骨架，用于后续整理主题、方法与结论。"),
     ]
 
     try:
