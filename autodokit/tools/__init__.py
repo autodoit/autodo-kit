@@ -258,6 +258,12 @@ def lint_affairs(affairs_root: str | Path | None = None) -> list[dict[str, Any]]
             findings.append({"affair_uid": item.get("affair_uid"), "errors": report["errors"]})
     return findings
 from autodokit.tools.affair_result import ensure_absolute_output_dir, write_affair_json_result
+from autodokit.tools.atomic.path.windows_long_filename_tools import (
+    WindowsShortPathAlias,
+    build_short_alias_name,
+    materialize_short_alias,
+    needs_short_alias,
+)
 from autodokit.tools.aob_tools import (
     run_aob_aoc,
     run_aob_deploy,
@@ -460,6 +466,7 @@ from autodokit.tools.ocr.aliyun_multimodal.pdf_multimodal_tree_builder import (
 )
 from autodokit.tools.ocr.monkeyocr.monkeyocr_windows_tools import (
     prepare_monkeyocr_windows_runtime,
+    run_monkeyocr_windows_batch_folder,
     run_monkeyocr_windows_single_pdf,
 )
 from autodokit.tools.ocr.aliyun_multimodal.aok_pdf_aliyun_multimodal_parse import (

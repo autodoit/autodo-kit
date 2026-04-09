@@ -11,6 +11,12 @@ from autodokit.tools import (
 	resolve_paths_to_absolute,
 	resolve_workflow_config_path,
 )
+from autodokit.tools.atomic.path.windows_long_filename_tools import (
+	WindowsShortPathAlias,
+	build_short_alias_name,
+	materialize_short_alias,
+	needs_short_alias,
+)
 
 __all__ = [
 	"load_json_or_py",
@@ -20,4 +26,8 @@ __all__ = [
 	"resolve_path_with_workspace_root",
 	"resolve_paths_to_absolute",
 	"resolve_workflow_config_path",
+	"WindowsShortPathAlias",
+	"needs_short_alias",
+	"build_short_alias_name",
+	"materialize_short_alias",
 ]
