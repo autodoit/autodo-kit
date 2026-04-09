@@ -270,6 +270,8 @@ def run_monkeyocr_windows_single_pdf(
 
     env = os.environ.copy()
     env["PYTHONUTF8"] = "1"
+    # Prevent Windows GBK console encoding from crashing parse.py on emoji prints.
+    env["PYTHONIOENCODING"] = "utf-8"
     env["MONKEYOCR_DEVICE"] = device
     env["CUDA_VISIBLE_DEVICES"] = gpu_visible_devices
     env["PADDLE_PDX_DISABLE_MODEL_SOURCE_CHECK"] = "True"
@@ -379,6 +381,257 @@ def _rename_output_tree_to_original_stem(result_output_dir: Path, original_stem:
     return original_output_dir
 
 
+def _expected_output_artifacts(output_root: Path, stem: str) -> dict[str, Path]:
+    file_output_dir = (output_root / stem).resolve()
+    return {
+        "output_dir": file_output_dir,
+        "markdown": file_output_dir / f"{stem}.md",
+        "content_list": file_output_dir / f"{stem}_content_list.json",
+        "middle_json": file_output_dir / f"{stem}_middle.json",
+        "images_dir": file_output_dir / "images",
+    }
+
+
+def _is_existing_parse_completed(output_root: Path, stem: str) -> bool:
+    """判断某个 PDF 是否已完成解析，可用于中断后续跑跳过。"""
+
+    artifacts = _expected_output_artifacts(output_root, stem)
+    required_files = [
+        artifacts["markdown"],
+        artifacts["content_list"],
+    ]
+    for path in required_files:
+        if not path.exists() or path.stat().st_size == 0:
+            return False
+    if not artifacts["images_dir"].exists():
+        return False
+    return True
+
+
+def _is_subpath(base: Path, target: Path) -> bool:
+    try:
+        target.relative_to(base)
+        return True
+    except ValueError:
+        return False
+
+
+def _validate_runtime_path_not_in_output(output_dir: Path, runtime_path: Path, name: str) -> None:
+    if output_dir == runtime_path or _is_subpath(output_dir, runtime_path):
+        raise ValueError(
+            f"{name} must be outside output_dir. output_dir={output_dir}, {name}={runtime_path}"
+        )
+
+
+def _read_file_list_candidate_rows(file_list: Path) -> list[list[str]]:
+    suffix = file_list.suffix.lower()
+    if suffix == ".txt":
+        lines = file_list.read_text(encoding="utf-8", errors="replace").splitlines()
+        return [[line.strip()] for line in lines if line.strip() and not line.strip().startswith("#")]
+
+    if suffix == ".json":
+        payload = json.loads(file_list.read_text(encoding="utf-8"))
+        rows: list[list[str]] = []
+        if isinstance(payload, list):
+            for item in payload:
+                if isinstance(item, str):
+                    value = item.strip()
+                    if value:
+                        rows.append([value])
+                elif isinstance(item, dict):
+                    row: list[str] = []
+                    for key in ("pdf", "pdf_path", "path", "file", "filename", "文件", "文件名"):
+                        value = item.get(key)
+                        if isinstance(value, str) and value.strip():
+                            row.append(value.strip())
+                    if row:
+                        rows.append(row)
+        return rows
+
+    rows: list[list[str]] = []
+    with file_list.open("r", encoding="utf-8", errors="replace", newline="") as stream:
+        reader = csv.DictReader(stream)
+        if reader.fieldnames is None:
+            stream.seek(0)
+            raw_reader = csv.reader(stream)
+            for row in raw_reader:
+                if not row:
+                    continue
+                values = [str(cell).strip() for cell in row if str(cell).strip()]
+                if values:
+                    rows.append(values)
+            return rows
+
+        preferred = ["pdf", "pdf_path", "path", "file", "filename", "input", "title", "name", "文件", "文件名", "文献文件", "文献标题", "标题"]
+        ordered_fields: list[str] = []
+        lowered = {name.lower(): name for name in reader.fieldnames if name is not None}
+        for key in preferred:
+            field = lowered.get(key.lower())
+            if field is not None and field not in ordered_fields:
+                ordered_fields.append(field)
+        for field in reader.fieldnames:
+            if field is not None and field not in ordered_fields:
+                ordered_fields.append(field)
+
+        for row in reader:
+            values: list[str] = []
+            for field in ordered_fields:
+                value = str(row.get(field, "") or "").strip()
+                if value:
+                    values.append(value)
+            if values:
+                rows.append(values)
+    return rows
+
+
+def _resolve_pdf_candidate(input_dir: Path, value: str) -> Path | None:
+    cleaned = value.strip().strip('"').strip("'").strip("`")
+    raw = Path(cleaned).expanduser()
+    candidates = []
+    if raw.is_absolute():
+        candidates.append(raw)
+    else:
+        candidates.append(input_dir / raw)
+
+    if raw.suffix.lower() != ".pdf":
+        if raw.is_absolute():
+            candidates.append(raw.with_suffix(".pdf"))
+        else:
+            candidates.append((input_dir / raw).with_suffix(".pdf"))
+
+    for candidate in candidates:
+        resolved = candidate.resolve()
+        if resolved.exists() and resolved.is_file():
+            return resolved
+
+    def _normalize_name(text: str) -> str:
+        return "".join(ch.lower() for ch in text if ch.isalnum())
+
+    wanted = _normalize_name(raw.stem)
+    if wanted:
+        for candidate in sorted(input_dir.glob("*.pdf")):
+            if _normalize_name(candidate.stem) == wanted:
+                return candidate.resolve()
+    return None
+
+
+def _move_with_suffix(src: Path, dst: Path) -> Path:
+    target = dst
+    if target.exists():
+        stem = target.stem
+        suffix = target.suffix
+        index = 1
+        while True:
+            candidate = target.with_name(f"{stem}_{index}{suffix}")
+            if not candidate.exists():
+                target = candidate
+                break
+            index += 1
+    shutil.move(str(src), str(target))
+    return target
+
+
+def _migrate_legacy_output_root_artifacts(output_dir: Path, runtime_root: Path) -> list[str]:
+    """迁移旧版遗留在输出根目录的中间产物，保证输出根目录纯净。"""
+
+    migrated: list[str] = []
+    legacy_root = runtime_root / "migrated_from_output_root"
+    legacy_root.mkdir(parents=True, exist_ok=True)
+
+    for child in sorted(output_dir.iterdir()):
+        should_move = False
+        if child.is_file():
+            should_move = True
+        elif child.is_dir() and child.name == "_tmp_input":
+            should_move = True
+
+        if not should_move:
+            continue
+
+        moved_to = _move_with_suffix(child, legacy_root / child.name)
+        migrated.append(f"{child} -> {moved_to}")
+    return migrated
+
+
+def _build_batch_items(input_dir: Path, file_list: Path | None) -> list[dict[str, Any]]:
+    items: list[dict[str, Any]] = []
+    if file_list is None:
+        for path in sorted(input_dir.iterdir()):
+            if path.is_file() and path.suffix.lower() == ".pdf":
+                items.append(
+                    {
+                        "source_type": "input_scan",
+                        "source_value": str(path.name),
+                        "input_pdf": path.resolve(),
+                        "input_missing_reason": "",
+                    }
+                )
+        return items
+
+    resolved_file_list = _resolve_path(file_list)
+    if not resolved_file_list.exists():
+        raise FileNotFoundError(f"文件清单不存在：{resolved_file_list}")
+
+    candidate_rows = _read_file_list_candidate_rows(resolved_file_list)
+    for candidates in candidate_rows:
+        resolved_pdf = None
+        chosen_value = ""
+        for candidate in candidates:
+            resolved_pdf = _resolve_pdf_candidate(input_dir, candidate)
+            chosen_value = candidate
+            if resolved_pdf is not None:
+                break
+
+        if not chosen_value and candidates:
+            chosen_value = candidates[0]
+
+        items.append(
+            {
+                "source_type": "file_list",
+                "source_value": chosen_value,
+                "input_pdf": resolved_pdf,
+                "input_missing_reason": "input_pdf_not_found" if resolved_pdf is None else "",
+            }
+        )
+    return items
+
+
+def _write_management_tables(records: list[dict[str, Any]], json_path: Path, csv_path: Path) -> None:
+    json_path.parent.mkdir(parents=True, exist_ok=True)
+    csv_path.parent.mkdir(parents=True, exist_ok=True)
+
+    json_path.write_text(json.dumps(records, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+
+    fieldnames = [
+        "record_id",
+        "source_type",
+        "source_value",
+        "input_pdf_path",
+        "input_missing_reason",
+        "file_name",
+        "stem",
+        "output_dir",
+        "state",
+        "attempts",
+        "max_retries",
+        "should_run",
+        "artifacts_ok",
+        "last_error",
+        "last_exception_type",
+        "last_result_status",
+        "last_log_path",
+        "last_duration_seconds",
+        "round_index",
+        "first_created_at",
+        "last_updated_at",
+    ]
+    with csv_path.open("w", encoding="utf-8", newline="") as stream:
+        writer = csv.DictWriter(stream, fieldnames=fieldnames)
+        writer.writeheader()
+        for row in records:
+            writer.writerow({key: row.get(key, "") for key in fieldnames})
+
+
 def run_monkeyocr_windows_batch_folder(
     input_dir: str | Path,
     output_dir: str | Path,
@@ -393,9 +646,15 @@ def run_monkeyocr_windows_batch_folder(
     download_source: str = "huggingface",
     pip_index_url: str | None = None,
     python_executable: str | Path | None = None,
+    file_list: str | Path | None = None,
+    intermediate_dir: str | Path | None = None,
+    runtime_dir: str | Path | None = None,
+    max_retries: int = 2,
     log_path: str | Path | None = None,
+    log_dir: str | Path | None = None,
     stream_output: bool = False,
     alias_dir: str | Path | None = None,
+    skip_existing: bool = True,
 ) -> dict[str, Any]:
     """批量解析文件夹中的全部 PDF，并在完成后将产物回写为原始文件名。
 
@@ -412,9 +671,15 @@ def run_monkeyocr_windows_batch_folder(
         download_source: 权重下载来源。
         pip_index_url: 可选 pip 镜像。
         python_executable: Python 可执行文件。
+        file_list: 文件清单路径，支持 csv/txt/json。
+        intermediate_dir: 中间产物目录（日志、报告、管理表、临时别名）。
+        runtime_dir: 运行时目录（日志、报告、临时别名）；默认 `output_dir.parent/<output_dir.name>__runtime`。
+        max_retries: 单文件最大尝试次数（包含首次执行）。
         log_path: 批处理总日志路径。
+        log_dir: 单文件日志输出目录；默认 `runtime_dir/logs`。
         stream_output: 是否流式输出单篇解析日志。
-        alias_dir: 临时别名文件目录；默认使用输出目录下的 `_tmp_input`。
+        alias_dir: 临时别名文件目录；默认使用 `runtime_dir/_tmp_input`。
+        skip_existing: 是否跳过已完成解析的文件；默认 `True`。
 
     Returns:
         dict[str, Any]: 批处理摘要，包含每个文件的状态、耗时与最终产物路径。
@@ -422,103 +687,285 @@ def run_monkeyocr_windows_batch_folder(
 
     source_dir = Path(input_dir).expanduser().resolve()
     target_dir = Path(output_dir).expanduser().resolve()
+    if max_retries < 1:
+        raise ValueError(f"max_retries must be >= 1, got {max_retries}")
     if not source_dir.exists():
         raise FileNotFoundError(f"输入文件夹不存在：{source_dir}")
     if not source_dir.is_dir():
         raise NotADirectoryError(f"输入路径不是文件夹：{source_dir}")
     target_dir.mkdir(parents=True, exist_ok=True)
 
-    alias_root = Path(alias_dir).expanduser().resolve() if alias_dir is not None else (target_dir / "_tmp_input").resolve()
-    batch_log_path = Path(log_path).expanduser().resolve() if log_path is not None else (target_dir / "batch_monkeyocr.log").resolve()
+    if intermediate_dir is not None and runtime_dir is not None:
+        left = _resolve_path(intermediate_dir)
+        right = _resolve_path(runtime_dir)
+        if left != right:
+            raise ValueError(f"intermediate_dir and runtime_dir point to different paths: {left} != {right}")
 
-    files = [path for path in sorted(source_dir.iterdir()) if path.is_file()]
-    if not files:
+    runtime_value = intermediate_dir if intermediate_dir is not None else runtime_dir
+    runtime_root = _resolve_path(runtime_value) if runtime_value is not None else (target_dir.parent / f"{target_dir.name}__runtime").resolve()
+    _validate_runtime_path_not_in_output(target_dir, runtime_root, "runtime_root")
+
+    runtime_root.mkdir(parents=True, exist_ok=True)
+
+    migrated_output_artifacts = _migrate_legacy_output_root_artifacts(target_dir, runtime_root)
+
+    alias_root = Path(alias_dir).expanduser().resolve() if alias_dir is not None else (runtime_root / "_tmp_input").resolve()
+    logs_root = Path(log_dir).expanduser().resolve() if log_dir is not None else (runtime_root / "logs").resolve()
+    _validate_runtime_path_not_in_output(target_dir, alias_root, "alias_root")
+    _validate_runtime_path_not_in_output(target_dir, logs_root, "logs_root")
+    logs_root.mkdir(parents=True, exist_ok=True)
+    batch_log_path = Path(log_path).expanduser().resolve() if log_path is not None else (logs_root / "batch_monkeyocr.log").resolve()
+    _validate_runtime_path_not_in_output(target_dir, batch_log_path.parent, "batch_log_parent")
+
+    reports_root = runtime_root / "reports"
+    _validate_runtime_path_not_in_output(target_dir, reports_root, "reports_root")
+    reports_root.mkdir(parents=True, exist_ok=True)
+    report_json = reports_root / "batch_report.json"
+    report_csv = reports_root / "batch_report.csv"
+    management_json = reports_root / "management_table.json"
+    management_csv = reports_root / "management_table.csv"
+    final_report_json = reports_root / "final_run_report.json"
+
+    items = _build_batch_items(source_dir, Path(file_list) if file_list is not None else None)
+    if not items:
         return {
             "status": "SUCCEEDED",
             "input_dir": str(source_dir),
             "output_dir": str(target_dir),
+            "runtime_dir": str(runtime_root),
+            "intermediate_dir": str(runtime_root),
             "total_duration_seconds": 0.0,
             "files": [],
+            "report_json": str(report_json),
+            "report_csv": str(report_csv),
+            "management_json": str(management_json),
+            "management_csv": str(management_csv),
+            "final_report_json": str(final_report_json),
+            "migrated_output_artifacts": migrated_output_artifacts,
             "log_path": str(batch_log_path),
         }
 
-    records: list[dict[str, Any]] = []
-    total_start = time.perf_counter()
+    now = time.strftime("%Y-%m-%dT%H:%M:%S", time.localtime())
+    management_records: list[dict[str, Any]] = []
+    for index, item in enumerate(items, start=1):
+        pdf_path = item.get("input_pdf")
+        if isinstance(pdf_path, Path):
+            stem = pdf_path.stem
+            file_name = pdf_path.name
+            resolved_input = str(pdf_path)
+        else:
+            source_value = str(item.get("source_value", ""))
+            pseudo_name = Path(source_value).name if source_value else f"entry_{index}"
+            stem = Path(pseudo_name).stem or f"entry_{index}"
+            file_name = pseudo_name
+            resolved_input = ""
 
-    for index, file_path in enumerate(files, start=1):
-        alias_result = materialize_short_alias(
-            file_path,
-            alias_root,
-            prefix="doc",
-            max_path_chars=200,
-            max_name_chars=60,
-        )
-        single_log_path = target_dir / f"{alias_result.stem_to_use}.log"
-        start = time.perf_counter()
-        try:
-            result = run_monkeyocr_windows_single_pdf(
-                input_pdf=alias_result.path_to_use,
-                output_dir=target_dir,
-                monkeyocr_root=monkeyocr_root,
-                models_dir=models_dir,
-                config_path=config_path,
-                model_name=model_name,
-                device=device,
-                gpu_visible_devices=gpu_visible_devices,
-                ensure_runtime=ensure_runtime,
-                download_source=download_source,
-                pip_index_url=pip_index_url,
-                python_executable=python_executable,
-                log_path=single_log_path,
-                stream_output=stream_output,
-            )
-            final_output_dir = _rename_output_tree_to_original_stem(
-                Path(result["output_dir"]),
-                file_path.stem,
-                alias_result.stem_to_use,
-            )
-            result["output_dir"] = str(final_output_dir)
-            artifacts = result.get("artifacts") if isinstance(result.get("artifacts"), dict) else {}
-            if artifacts:
-                artifacts["markdown"] = str(final_output_dir / f"{file_path.stem}.md")
-                artifacts["content_list"] = str(final_output_dir / f"{file_path.stem}_content_list.json")
-                artifacts["middle_json"] = str(final_output_dir / f"{file_path.stem}_middle.json")
-                artifacts["model_pdf"] = str(final_output_dir / f"{file_path.stem}_model.pdf")
-                artifacts["layout_pdf"] = str(final_output_dir / f"{file_path.stem}_layout.pdf")
-                artifacts["spans_pdf"] = str(final_output_dir / f"{file_path.stem}_spans.pdf")
-                artifacts["images_dir"] = str(final_output_dir / "images")
-                artifacts["log_path"] = str(single_log_path)
-            status = "ok"
-            error = ""
-        except Exception as exc:  # noqa: BLE001 - batch needs to continue after per-file failures
-            result = None
-            status = "error"
-            error = str(exc)
-            final_output_dir = target_dir / file_path.stem
-        duration = time.perf_counter() - start
-        record = {
-            "index": index,
-            "input": str(file_path),
-            "used_input": str(alias_result.path_to_use),
-            "used_alias": alias_result.used_alias,
-            "output_dir": str(final_output_dir),
-            "status": status,
-            "error": error,
-            "duration_seconds": duration,
-            "result": result,
+        output_path = str((target_dir / stem).resolve())
+        missing_reason = str(item.get("input_missing_reason", "") or "")
+        state = "pending" if resolved_input else "failed_final"
+        should_run = bool(resolved_input)
+        artifacts_ok = _is_existing_parse_completed(target_dir, stem) if should_run else False
+        if should_run and skip_existing and artifacts_ok:
+            state = "skipped_existing"
+            should_run = False
+
+        record: dict[str, Any] = {
+            "record_id": index,
+            "source_type": str(item.get("source_type", "input_scan")),
+            "source_value": str(item.get("source_value", "")),
+            "input_pdf_path": resolved_input,
+            "input_missing_reason": missing_reason,
+            "file_name": file_name,
+            "stem": stem,
+            "output_dir": output_path,
+            "state": state,
+            "attempts": 0,
+            "max_retries": max_retries,
+            "should_run": should_run,
+            "artifacts_ok": artifacts_ok,
+            "last_error": missing_reason,
+            "last_exception_type": "",
+            "last_result_status": "SKIPPED_ALREADY_PARSED" if state == "skipped_existing" else "NOT_STARTED",
+            "last_log_path": "",
+            "last_duration_seconds": 0.0,
+            "round_index": 0,
+            "first_created_at": now,
+            "last_updated_at": now,
         }
-        records.append(record)
+        management_records.append(record)
+
+    _write_management_tables(management_records, management_json, management_csv)
+
+    total_start = time.perf_counter()
+    round_index = 0
+
+    while True:
+        runnable = [
+            record
+            for record in management_records
+            if bool(record.get("should_run"))
+            and int(record.get("attempts", 0)) < int(record.get("max_retries", max_retries))
+            and str(record.get("state")) in {"pending", "retryable_failed"}
+        ]
+        if not runnable:
+            break
+
+        round_index += 1
+        for record in runnable:
+            input_pdf_value = str(record.get("input_pdf_path", ""))
+            if not input_pdf_value:
+                record["state"] = "failed_final"
+                record["should_run"] = False
+                record["last_error"] = str(record.get("last_error") or "input_pdf_not_found")
+                record["last_updated_at"] = time.strftime("%Y-%m-%dT%H:%M:%S", time.localtime())
+                _write_management_tables(management_records, management_json, management_csv)
+                continue
+
+            file_path = Path(input_pdf_value)
+            record["state"] = "running"
+            record["round_index"] = round_index
+            record["attempts"] = int(record.get("attempts", 0)) + 1
+            attempt_start = time.perf_counter()
+
+            alias_result = materialize_short_alias(
+                file_path,
+                alias_root,
+                prefix="doc",
+                max_path_chars=200,
+                max_name_chars=60,
+            )
+            single_log_path = logs_root / f"{alias_result.stem_to_use}.log"
+            record["last_log_path"] = str(single_log_path)
+
+            try:
+                result = run_monkeyocr_windows_single_pdf(
+                    input_pdf=alias_result.path_to_use,
+                    output_dir=target_dir,
+                    monkeyocr_root=monkeyocr_root,
+                    models_dir=models_dir,
+                    config_path=config_path,
+                    model_name=model_name,
+                    device=device,
+                    gpu_visible_devices=gpu_visible_devices,
+                    ensure_runtime=ensure_runtime,
+                    download_source=download_source,
+                    pip_index_url=pip_index_url,
+                    python_executable=python_executable,
+                    log_path=single_log_path,
+                    stream_output=stream_output,
+                )
+                final_output_dir = _rename_output_tree_to_original_stem(
+                    Path(result["output_dir"]),
+                    file_path.stem,
+                    alias_result.stem_to_use,
+                )
+                result["output_dir"] = str(final_output_dir)
+                artifacts = result.get("artifacts") if isinstance(result.get("artifacts"), dict) else {}
+                if artifacts:
+                    artifacts["markdown"] = str(final_output_dir / f"{file_path.stem}.md")
+                    artifacts["content_list"] = str(final_output_dir / f"{file_path.stem}_content_list.json")
+                    artifacts["middle_json"] = str(final_output_dir / f"{file_path.stem}_middle.json")
+                    artifacts["model_pdf"] = str(final_output_dir / f"{file_path.stem}_model.pdf")
+                    artifacts["layout_pdf"] = str(final_output_dir / f"{file_path.stem}_layout.pdf")
+                    artifacts["spans_pdf"] = str(final_output_dir / f"{file_path.stem}_spans.pdf")
+                    artifacts["images_dir"] = str(final_output_dir / "images")
+                    artifacts["log_path"] = str(single_log_path)
+
+                artifacts_ok = _is_existing_parse_completed(target_dir, file_path.stem)
+                record["artifacts_ok"] = artifacts_ok
+                if artifacts_ok:
+                    record["state"] = "success"
+                    record["should_run"] = False
+                    record["last_error"] = ""
+                    record["last_exception_type"] = ""
+                    record["last_result_status"] = str(result.get("status", "SUCCEEDED"))
+                else:
+                    record["last_result_status"] = str(result.get("status", "SUCCEEDED_MISSING_ARTIFACTS"))
+                    record["last_error"] = "artifacts_missing_after_run"
+                    record["last_exception_type"] = ""
+                    if int(record["attempts"]) >= int(record["max_retries"]):
+                        record["state"] = "failed_final"
+                        record["should_run"] = False
+                    else:
+                        record["state"] = "retryable_failed"
+                        record["should_run"] = True
+
+            except Exception as exc:  # noqa: BLE001 - batch needs to continue after per-file failures
+                artifacts_ok = _is_existing_parse_completed(target_dir, file_path.stem)
+                record["artifacts_ok"] = artifacts_ok
+                if artifacts_ok:
+                    record["state"] = "success"
+                    record["should_run"] = False
+                    record["last_result_status"] = "SUCCEEDED_WITH_NONZERO_EXIT"
+                    record["last_error"] = f"nonzero_exit_but_artifacts_exist: {exc}"
+                    record["last_exception_type"] = exc.__class__.__name__
+                else:
+                    record["last_result_status"] = "FAILED"
+                    record["last_error"] = str(exc)
+                    record["last_exception_type"] = exc.__class__.__name__
+                    if int(record["attempts"]) >= int(record["max_retries"]):
+                        record["state"] = "failed_final"
+                        record["should_run"] = False
+                    else:
+                        record["state"] = "retryable_failed"
+                        record["should_run"] = True
+
+            record["last_duration_seconds"] = time.perf_counter() - attempt_start
+            record["last_updated_at"] = time.strftime("%Y-%m-%dT%H:%M:%S", time.localtime())
+            _write_management_tables(management_records, management_json, management_csv)
 
     total_duration = time.perf_counter() - total_start
-    report_json = target_dir / "batch_report.json"
-    report_csv = target_dir / "batch_report.csv"
+
+    batch_records: list[dict[str, Any]] = []
+    failure_reasons: dict[str, int] = {}
+    for record in management_records:
+        state = str(record.get("state", ""))
+        if state == "success":
+            status = "ok"
+            error = ""
+        elif state == "skipped_existing":
+            status = "skipped"
+            error = "already_parsed"
+        elif state == "failed_final":
+            status = "error"
+            error = str(record.get("last_error", "failed"))
+            failure_reasons[error] = failure_reasons.get(error, 0) + 1
+        else:
+            status = "error"
+            error = str(record.get("last_error", f"unexpected_state:{state}"))
+            failure_reasons[error] = failure_reasons.get(error, 0) + 1
+
+        batch_records.append(
+            {
+                "index": int(record.get("record_id", 0)),
+                "input": str(record.get("input_pdf_path") or record.get("source_value") or ""),
+                "used_input": str(record.get("input_pdf_path") or ""),
+                "used_alias": False,
+                "output_dir": str(record.get("output_dir", "")),
+                "status": status,
+                "error": error,
+                "duration_seconds": float(record.get("last_duration_seconds", 0.0) or 0.0),
+                "result": {
+                    "status": str(record.get("last_result_status", "NOT_STARTED")),
+                    "state": state,
+                    "attempts": int(record.get("attempts", 0)),
+                    "max_retries": int(record.get("max_retries", max_retries)),
+                    "artifacts_ok": bool(record.get("artifacts_ok", False)),
+                    "last_log_path": str(record.get("last_log_path", "")),
+                },
+            }
+        )
+
     report_json.write_text(
         json.dumps(
             {
                 "input_dir": str(source_dir),
                 "output_dir": str(target_dir),
+                "runtime_dir": str(runtime_root),
+                "intermediate_dir": str(runtime_root),
+                "rounds": round_index,
                 "total_duration_seconds": total_duration,
-                "files": records,
+                "files": batch_records,
             },
             ensure_ascii=False,
             indent=2,
@@ -529,7 +976,7 @@ def run_monkeyocr_windows_batch_folder(
     with report_csv.open("w", encoding="utf-8", newline="") as stream:
         writer = csv.writer(stream)
         writer.writerow(["index", "input", "used_input", "used_alias", "output_dir", "status", "duration_seconds", "error"])
-        for record in records:
+        for record in batch_records:
             writer.writerow([
                 record.get("index"),
                 record.get("input"),
@@ -541,13 +988,46 @@ def run_monkeyocr_windows_batch_folder(
                 record.get("error"),
             ])
 
-    return {
-        "status": "SUCCEEDED",
+    final_report = {
         "input_dir": str(source_dir),
         "output_dir": str(target_dir),
+        "runtime_dir": str(runtime_root),
+        "intermediate_dir": str(runtime_root),
+        "rounds": round_index,
         "total_duration_seconds": total_duration,
-        "files": records,
+        "total_entries": len(management_records),
+        "success_count": sum(1 for r in management_records if str(r.get("state")) == "success"),
+        "skipped_count": sum(1 for r in management_records if str(r.get("state")) == "skipped_existing"),
+        "failed_final_count": sum(1 for r in management_records if str(r.get("state")) == "failed_final"),
+        "failure_reasons": failure_reasons,
+        "management_json": str(management_json),
+        "management_csv": str(management_csv),
+        "batch_report_json": str(report_json),
+        "batch_report_csv": str(report_csv),
+        "batch_log_path": str(batch_log_path),
+        "migrated_output_artifacts": migrated_output_artifacts,
+    }
+    final_report_json.write_text(json.dumps(final_report, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+
+    _write_management_tables(management_records, management_json, management_csv)
+
+    has_error = any(str(record.get("state")) == "failed_final" for record in management_records)
+
+    return {
+        "status": "FAILED" if has_error else "SUCCEEDED",
+        "input_dir": str(source_dir),
+        "output_dir": str(target_dir),
+        "runtime_dir": str(runtime_root),
+        "intermediate_dir": str(runtime_root),
+        "log_dir": str(logs_root),
+        "rounds": round_index,
+        "total_duration_seconds": total_duration,
+        "files": batch_records,
         "report_json": str(report_json),
         "report_csv": str(report_csv),
+        "management_json": str(management_json),
+        "management_csv": str(management_csv),
+        "final_report_json": str(final_report_json),
+        "migrated_output_artifacts": migrated_output_artifacts,
         "log_path": str(batch_log_path),
     }
