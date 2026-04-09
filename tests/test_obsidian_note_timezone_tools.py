@@ -55,8 +55,8 @@ def test_knowledge_note_register_should_default_to_beijing_time(tmp_path: Path) 
     assert "+08:00" in text
 
 
-def test_write_mainline_affair_entry_registry_should_include_a065_and_a130(tmp_path: Path) -> None:
-    """主链入口注册表应写出已实现节点与设计占位节点。"""
+def test_write_mainline_affair_entry_registry_should_include_a065_a105_and_a130(tmp_path: Path) -> None:
+    """主链入口注册表应写出已实现节点、A105 与设计占位节点。"""
 
     output_path = tmp_path / "affair_entry_registry.json"
     write_mainline_affair_entry_registry(
@@ -67,9 +67,12 @@ def test_write_mainline_affair_entry_registry_should_include_a065_and_a130(tmp_p
 
     payload = json.loads(output_path.read_text(encoding="utf-8"))
     a065 = resolve_mainline_affair_entry("A065", payload)
+    a105 = resolve_mainline_affair_entry("A105", payload)
     a130 = resolve_mainline_affair_entry("A130", payload)
     assert a065["module"] == "autodokit.affairs.综述参考文献预处理与笔记骨架.affair"
     assert a065["config_path"].endswith("A065.json")
+    assert a105["module"] == "autodokit.affairs.文献批判性研读与标准笔记.affair"
+    assert a105["config_path"].endswith("A105.json")
     assert a130["implemented"] is False
 
 

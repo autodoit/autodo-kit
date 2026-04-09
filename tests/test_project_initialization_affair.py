@@ -11,12 +11,14 @@ def test_project_initialization_should_create_pdf_structured_variant_dirs(tmp_pa
     """项目初始化应在 workspace/references 下创建 PDF 四组合目录。"""
 
     module = importlib.import_module("autodokit.affairs.项目初始化.affair")
-    config_path = (tmp_path / "project_init_config.json").resolve()
+    workspace_root = tmp_path / "workspace"
+    config_path = (workspace_root / "config" / "affairs_config" / "A010.json").resolve()
+    config_path.parent.mkdir(parents=True, exist_ok=True)
     config_path.write_text(
         json.dumps(
             {
-                "project_root": str(tmp_path),
-                "output_dir": str(tmp_path),
+                "output_dir": str(workspace_root / "steps" / "A010_project_bootstrap"),
+                "self_check_output_path": str(workspace_root / "steps" / "A010_project_bootstrap" / "self_check.json"),
             },
             ensure_ascii=False,
         ),
@@ -24,17 +26,23 @@ def test_project_initialization_should_create_pdf_structured_variant_dirs(tmp_pa
     )
 
     outputs = module.execute(config_path)
-    assert len(outputs) == 1
+    assert len(outputs) >= 1
 
-    result_payload = json.loads(outputs[0].read_text(encoding="utf-8"))
+    result_path = next(path for path in outputs if path.name == "project_initialization_result.json")
+    result_payload = json.loads(result_path.read_text(encoding="utf-8"))
     assert result_payload["git_init_result"]["status"] == "PASS"
     assert result_payload["snapshot_result"]["status"] == "PASS"
-    assert (tmp_path / ".git").exists()
-    assert (tmp_path / ".gitignore").exists()
-    assert "database/logs/aok_log.db" in (tmp_path / ".gitignore").read_text(encoding="utf-8")
-    assert (tmp_path / "database" / "tasks" / "tasks.db").exists()
+    assert (workspace_root / ".git").exists()
+    assert (workspace_root / ".gitignore").exists()
+    assert "database/logs/aok_log.db" in (workspace_root / ".gitignore").read_text(encoding="utf-8")
+    assert (workspace_root / "database" / "tasks" / "tasks.db").exists()
+    assert (workspace_root / "config" / "affair_entry_registry.json").exists()
+    assert (workspace_root / "steps" / "A010_project_bootstrap" / "self_check.json").exists()
 
-    references_root = tmp_path / "references"
+    registry_payload = json.loads((workspace_root / "config" / "affair_entry_registry.json").read_text(encoding="utf-8"))
+    assert any(record["node_code"] == "A105" for record in registry_payload["records"])
+
+    references_root = workspace_root / "references"
     assert (references_root / "structured_local_pipeline_v2_reference_context").is_dir()
     assert (references_root / "structured_local_pipeline_v2_full_fine_grained").is_dir()
     assert (references_root / "structured_babeldoc_reference_context").is_dir()

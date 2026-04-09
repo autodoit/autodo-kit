@@ -26,7 +26,6 @@ import pandas as pd
 from bibtexparser import loads as bibtex_loads
 from autodokit.tools import bibliodb_sqlite
 from autodokit.tools.atomic.task_aok.post_affair_git_commit import affair_auto_git_commit
-from autodokit.tools.incremental_bib_import_tools import incremental_import_bib_into_content_db
 from autodokit.tools.literature_translation_tools import run_literature_translation
 
 # 归一化规则列表：在此列表中出现的规则会被应用
@@ -50,7 +49,6 @@ DEFAULT_CONFIG: Dict[str, Any] = {
     "output_dir": "output",
     "output_table_csv": "literatures.csv",
     "storage_backend": "sqlite",
-    "incremental_only": False,
     "sqlite_db_path": "database/references/references.db",
     "tag_list": ["graph", "risk", "bank", "systemic"],
     "tag_match_fields": ["title", "abstract", "keywords"],
@@ -687,7 +685,7 @@ def _resolve_source_paths(raw_value: Any) -> List[Path]:
 
 
 def _merge_bib_sources(origin_bib_paths: List[Path], target_bib_path: Path) -> Path | None:
-    """把原始 bib 文件合并复制到标准 bib 位置。"""
+    """把原始 bib 文件合并去重后写入标准 bib 位置。"""
     if not origin_bib_paths:
         return None
 
@@ -698,12 +696,37 @@ def _merge_bib_sources(origin_bib_paths: List[Path], target_bib_path: Path) -> P
         else:
             resolved_files.append(source)
 
-    if not resolved_files:
+    dedup_files: List[Path] = []
+    seen_files: set[Path] = set()
+    for item in resolved_files:
+        normalized = item.expanduser().resolve()
+        if normalized in seen_files:
+            continue
+        seen_files.add(normalized)
+        dedup_files.append(normalized)
+
+    if not dedup_files:
         return None
 
     target_bib_path.parent.mkdir(parents=True, exist_ok=True)
-    merged_parts = [path.read_text(encoding="utf-8", errors="ignore").strip() for path in resolved_files]
-    merged_text = "\n\n".join(part for part in merged_parts if part)
+    seen_entries: set[str] = set()
+    merged_entries: List[str] = []
+    for path in dedup_files:
+        text = path.read_text(encoding="utf-8", errors="ignore").strip()
+        if not text:
+            continue
+        parts = re.split(r"(?=@)", text)
+        for part in parts:
+            entry = part.strip()
+            if not entry:
+                continue
+            entry_key = re.sub(r"\s+", " ", entry.lower())
+            if entry_key in seen_entries:
+                continue
+            seen_entries.add(entry_key)
+            merged_entries.append(entry)
+
+    merged_text = "\n\n".join(merged_entries)
     if merged_text:
         target_bib_path.write_text(merged_text + "\n", encoding="utf-8")
     else:
@@ -824,11 +847,21 @@ def _run_and_write_all_outputs(config_path: Path) -> List[Path]:
     legacy_output_dir = Path(str(merged_cfg.get("legacy_output_dir") or config.output_dir))
     pdf_dir = Path(config.pdf_dir)
     workspace_root = Path(merged_cfg.get("workspace_root") or config_path.parents[2]).resolve()
+    workspace_references_dir = workspace_root / "references"
+    workspace_bib_dir = workspace_references_dir / "bib"
+    workspace_bib_path = workspace_bib_dir / bibtex_path.name
+    workspace_attachments_dir = workspace_references_dir / "attachments"
     output_dir = _build_task_instance_dir(workspace_root, "A020")
     legacy_output_dir.mkdir(parents=True, exist_ok=True)
 
-    merged_bib_path = _merge_bib_sources(origin_bib_paths, bibtex_path)
-    synced_attachments = _sync_attachments(origin_attachments_root, pdf_dir)
+    merged_bib_path = _merge_bib_sources(origin_bib_paths, workspace_bib_path)
+    if merged_bib_path is not None:
+        bibtex_path = merged_bib_path
+
+    synced_attachments = _sync_attachments(origin_attachments_root, workspace_attachments_dir)
+    if origin_attachments_root is not None:
+        pdf_dir = workspace_attachments_dir
+
     if merged_bib_path is not None:
         written_files = [merged_bib_path]
     else:
@@ -941,43 +974,31 @@ def _run_and_write_all_outputs(config_path: Path) -> List[Path]:
         persisted = persist_literature_table(table, output_dir, config.output_table_csv, backend=backend, db_path=db_path)
         written_files.extend(persisted)
     elif backend == "sqlite" and db_path is not None:
-        incremental_only = bool(merged_cfg.get("incremental_only", False))
-        if incremental_only:
-            merge_summary = incremental_import_bib_into_content_db(
-                db_path=db_path,
-                bib_paths=bibtex_path,
-                tag_list=config.tag_list,
-                tag_match_fields=config.tag_match_fields,
-                has_pdf_enable=bool(config.has_pdf_enable),
-                pdf_dir=pdf_dir,
-            )
-            published_literature_df = bibliodb_sqlite.load_literatures_df(db_path)
-        else:
-            incoming_literatures_df = table.reset_index()
-            incoming_attachment_relations_df = bibliodb_sqlite.build_attachments_df_from_literatures(incoming_literatures_df)
-            incoming_tag_relations_df = bibliodb_sqlite.build_tags_df_from_inverted_index(
-                incoming_literatures_df,
-                tag_inv,
-                normalize_text_fn=normalize_text,
-            )
-            existing_literatures_df = bibliodb_sqlite.load_literatures_df(db_path) if db_path.exists() else pd.DataFrame()
-            existing_attachment_relations_df = bibliodb_sqlite.load_attachments_df(db_path) if db_path.exists() else pd.DataFrame()
-            existing_tag_relations_df = bibliodb_sqlite.load_tags_df(db_path) if db_path.exists() else pd.DataFrame()
-            merged_literatures_df, merged_attachment_relations_df, merged_tag_relations_df, merge_summary = bibliodb_sqlite.merge_reference_records(
-                existing_literatures_df=existing_literatures_df,
-                existing_attachments_df=existing_attachment_relations_df,
-                existing_tags_df=existing_tag_relations_df,
-                incoming_literatures_df=incoming_literatures_df,
-                incoming_attachments_df=incoming_attachment_relations_df,
-                incoming_tags_df=incoming_tag_relations_df,
-            )
-            bibliodb_sqlite.replace_reference_tables_only(
-                db_path,
-                literatures_df=merged_literatures_df,
-                attachments_df=merged_attachment_relations_df,
-                tags_df=merged_tag_relations_df,
-            )
-            published_literature_df = merged_literatures_df
+        incoming_literatures_df = table.reset_index()
+        incoming_attachment_relations_df = bibliodb_sqlite.build_attachments_df_from_literatures(incoming_literatures_df)
+        incoming_tag_relations_df = bibliodb_sqlite.build_tags_df_from_inverted_index(
+            incoming_literatures_df,
+            tag_inv,
+            normalize_text_fn=normalize_text,
+        )
+        existing_literatures_df = bibliodb_sqlite.load_literatures_df(db_path) if db_path.exists() else pd.DataFrame()
+        existing_attachment_relations_df = bibliodb_sqlite.load_attachments_df(db_path) if db_path.exists() else pd.DataFrame()
+        existing_tag_relations_df = bibliodb_sqlite.load_tags_df(db_path) if db_path.exists() else pd.DataFrame()
+        merged_literatures_df, merged_attachment_relations_df, merged_tag_relations_df, merge_summary = bibliodb_sqlite.merge_reference_records(
+            existing_literatures_df=existing_literatures_df,
+            existing_attachments_df=existing_attachment_relations_df,
+            existing_tags_df=existing_tag_relations_df,
+            incoming_literatures_df=incoming_literatures_df,
+            incoming_attachments_df=incoming_attachment_relations_df,
+            incoming_tags_df=incoming_tag_relations_df,
+        )
+        bibliodb_sqlite.replace_reference_tables_only(
+            db_path,
+            literatures_df=merged_literatures_df,
+            attachments_df=merged_attachment_relations_df,
+            tags_df=merged_tag_relations_df,
+        )
+        published_literature_df = merged_literatures_df
         written_files.append(db_path)
 
     published_paths = [

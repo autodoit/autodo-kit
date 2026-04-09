@@ -22,6 +22,7 @@ MAINLINE_AFFAIR_ENTRY_MAP: dict[str, dict[str, Any]] = {
     "A090": {"node_name": "文献泛读与轻量分析", "affair_uid": "文献泛读与粗读", "module": "autodokit.affairs.文献泛读与粗读.affair", "callable": "execute", "implemented": True},
     "A095": {"node_name": "泛读批次分析汇总", "affair_uid": "泛读批次分析汇总", "module": "autodokit.affairs.泛读批次分析汇总.affair", "callable": "execute", "implemented": True},
     "A100": {"node_name": "文献研读与正式知识回写", "affair_uid": "文献研读与正式知识回写", "module": "autodokit.affairs.文献研读与正式知识回写.affair", "callable": "execute", "implemented": True},
+    "A105": {"node_name": "文献批判性研读与标准笔记", "affair_uid": "文献批判性研读与标准笔记", "module": "autodokit.affairs.文献批判性研读与标准笔记.affair", "callable": "execute", "implemented": True},
     "A110": {"node_name": "文献矩阵与研究缺口", "affair_uid": "文献矩阵", "module": "autodokit.affairs.文献矩阵.affair", "callable": "execute", "implemented": True},
     "A120": {"node_name": "研究脉络梳理", "affair_uid": "研究脉络梳理", "module": "autodokit.affairs.研究脉络梳理.affair", "callable": "execute", "implemented": True},
     "A130": {"node_name": "领域知识框架", "affair_uid": "领域知识框架构建", "module": "", "callable": "execute", "implemented": False, "notes": "当前仓库未发现同名官方 affair.py，保留为设计占位。"},
@@ -43,9 +44,10 @@ def build_mainline_affair_entry_registry(
     records: list[dict[str, Any]] = []
     for node_code, base in MAINLINE_AFFAIR_ENTRY_MAP.items():
         record = dict(base)
-        config_path = ""
         if node_inputs and node_code in node_inputs:
             config_path = str(Path(str(node_inputs[node_code])).expanduser().resolve())
+        else:
+            config_path = str((resolved_root / "config" / "affairs_config" / f"{node_code}.json").resolve())
         record.update({"node_code": node_code, "config_path": config_path})
         records.append(record)
 

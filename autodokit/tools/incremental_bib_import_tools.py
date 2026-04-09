@@ -8,6 +8,7 @@ from typing import Any, Dict, Iterable, List, Sequence, Tuple
 
 import pandas as pd
 from bibtexparser import loads as bibtex_loads
+import re
 
 from autodokit.tools import bibliodb_sqlite
 from autodokit.tools.literature_attachment_tools import build_literature_attachment_inverted_index
@@ -68,19 +69,85 @@ def _iter_bib_source_files(bib_paths: str | Path | Sequence[str | Path]) -> List
     return dedup
 
 
+def _preprocess_bibtex_text_for_parser(bibtex_text: str, *, file_prefix: str) -> str:
+    """对 BibTeX 文本做与 A020 事务一致的预处理。"""
+
+    text = bibtex_text or ""
+    text = re.sub(r"@([^{]+)\{", lambda m: "@" + re.sub(r"\s+", "", m.group(1)) + "{", text)
+
+    parts = re.split(r"(?=@)", text)
+    out_parts: List[str] = []
+    auto_idx = 1
+
+    def map_type(orig: str) -> str:
+        s = orig.lower().replace(" ", "")
+        if "journal" in s or "article" in s:
+            return "article"
+        if "conference" in s or "inproceedings" in s or "proceedings" in s:
+            return "inproceedings"
+        if "thesis" in s or "dissertation" in s:
+            return "phdthesis"
+        if "book" in s:
+            return "book"
+        return "misc"
+
+    for part in parts:
+        if not part.strip():
+            continue
+        if not part.lstrip().startswith("@"):
+            out_parts.append(part)
+            continue
+
+        brace_pos = part.find("{")
+        if brace_pos == -1:
+            out_parts.append(part)
+            continue
+
+        orig_type = part[1:brace_pos].strip()
+        std_type = map_type(orig_type)
+        first_comma = part.find(",", brace_pos + 1)
+        if first_comma == -1:
+            out_parts.append("@" + std_type + part[brace_pos:])
+            continue
+
+        key_candidate = part[brace_pos + 1:first_comma].strip()
+        if not key_candidate or "=" in key_candidate:
+            key = f"{file_prefix}auto_{auto_idx}"
+            auto_idx += 1
+            rest = part[brace_pos + 1:].lstrip()
+            new_part = f"@{std_type}{{{key}, orig_entry_type = {{{orig_type}}}," + rest
+        else:
+            key = f"{file_prefix}{key_candidate}"
+            rest = part[first_comma + 1:]
+            new_part = f"@{std_type}{{{key}, orig_entry_type = {{{orig_type}}}," + rest
+
+        out_parts.append(new_part)
+
+    return "".join(out_parts)
+
+
 def _load_bib_records(bib_paths: str | Path | Sequence[str | Path]) -> List[BibRecord]:
-    """解析多个 Bib 文件并返回记录列表。"""
+    """解析多个 Bib 文件并返回记录列表（与 A020 使用同一套解析逻辑）。"""
 
     records: List[BibRecord] = []
     source_files = _iter_bib_source_files(bib_paths)
-    for bib_file in source_files:
+    merged_parts: List[str] = []
+    for idx, bib_file in enumerate(source_files, start=1):
         bib_text = bib_file.read_text(encoding="utf-8", errors="ignore")
-        bib_db = bibtex_loads(bib_text)
-        for entry in bib_db.entries:
-            entry_type = str(entry.get("ENTRYTYPE", ""))
-            entry_key = str(entry.get("ID", ""))
-            fields = {str(key).lower(): value for key, value in entry.items() if key not in {"ENTRYTYPE", "ID"}}
-            records.append(BibRecord(entry_type=entry_type, entry_key=entry_key, fields=fields))
+        safe_stem = re.sub(r"[^0-9A-Za-z_\-]+", "_", bib_file.stem)
+        prefix = f"f{idx:03d}_{safe_stem}_"
+        merged_parts.append(_preprocess_bibtex_text_for_parser(bib_text, file_prefix=prefix))
+        merged_parts.append("\n\n")
+
+    bib_db = bibtex_loads("".join(merged_parts))
+    for entry in bib_db.entries:
+        entry_type = str(entry.get("ENTRYTYPE", ""))
+        orig_type = entry.get("orig_entry_type") or entry.get("orig_entrytype")
+        if orig_type:
+            entry_type = str(orig_type)
+        entry_key = str(entry.get("ID", ""))
+        fields = {str(key).lower(): value for key, value in entry.items() if key not in {"ENTRYTYPE", "ID"}}
+        records.append(BibRecord(entry_type=entry_type, entry_key=entry_key, fields=fields))
     return records
 
 
