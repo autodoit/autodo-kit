@@ -14,6 +14,7 @@ from __future__ import annotations
 import importlib.util
 import json
 import shutil
+from datetime import datetime
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Tuple
@@ -53,6 +54,26 @@ DEFAULT_CONFIG: Dict[str, Any] = {
     "pdf_dir": "pdfs",
     "pdf_match_mode": "title",
 }
+
+
+def _build_task_instance_dir(workspace_root: Path, node_code: str) -> Path:
+    task_instance_dir = workspace_root / "tasks" / f"{datetime.now().strftime('%Y%m%d%H%M%S')}-{node_code}"
+    task_instance_dir.mkdir(parents=True, exist_ok=False)
+    (task_instance_dir / "task_manifest.json").write_text(
+        json.dumps(
+            {
+                "task_uid": task_instance_dir.name,
+                "node_code": node_code,
+                "workspace_root": str(workspace_root),
+                "task_instance_dir": str(task_instance_dir),
+                "created_at": datetime.now().isoformat(timespec="seconds"),
+            },
+            ensure_ascii=False,
+            indent=2,
+        ),
+        encoding="utf-8",
+    )
+    return task_instance_dir
 
 
 def set_normalize_rules(rules: Iterable[str]) -> None:
@@ -796,10 +817,11 @@ def _run_and_write_all_outputs(config_path: Path) -> List[Path]:
     released_artifacts = merged_cfg.get("released_artifacts") or {}
 
     bibtex_path = Path(config.bibtex_path)
-    output_dir = Path(config.output_dir)
+    legacy_output_dir = Path(config.output_dir)
     pdf_dir = Path(config.pdf_dir)
-
-    output_dir.mkdir(parents=True, exist_ok=True)
+    workspace_root = Path(merged_cfg.get("workspace_root") or config_path.parents[2]).resolve()
+    output_dir = _build_task_instance_dir(workspace_root, "A020")
+    legacy_output_dir.mkdir(parents=True, exist_ok=True)
 
     merged_bib_path = _merge_bib_sources(origin_bib_paths, bibtex_path)
     synced_attachments = _sync_attachments(origin_attachments_root, pdf_dir)
@@ -941,6 +963,19 @@ def _run_and_write_all_outputs(config_path: Path) -> List[Path]:
         gate_path.parent.mkdir(parents=True, exist_ok=True)
         gate_path.write_text(json.dumps(gate_payload, ensure_ascii=False, indent=2), encoding="utf-8")
         written_files.append(gate_path)
+
+        if legacy_output_dir != output_dir:
+            for artifact_path in [
+                output_dir / config.output_table_csv,
+                output_dir / "literature_relations.csv",
+                output_dir / "tags_to_literatures.csv",
+                output_dir / "attachments_to_literatures.csv",
+                gate_path,
+            ]:
+                if artifact_path.exists():
+                    legacy_target = legacy_output_dir / artifact_path.name
+                    if artifact_path.is_file():
+                        legacy_target.write_text(artifact_path.read_text(encoding="utf-8"), encoding="utf-8")
 
 
     return written_files

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from datetime import datetime
 import json
 import os
 import sqlite3
@@ -262,8 +263,32 @@ class ProjectInitializationEngine:
         file_path.parent.mkdir(parents=True, exist_ok=True)
         file_path.touch(exist_ok=True)
 
+    def _bootstrap_task_instance_dir(self, project_root: Path) -> Path:
+        tasks_root = project_root / "tasks"
+        task_instance_name = f"{datetime.now().strftime('%Y%m%d%H%M%S')}-A010"
+        task_instance_dir = tasks_root / task_instance_name
+        task_instance_dir.mkdir(parents=True, exist_ok=False)
+        manifest_path = task_instance_dir / "task_manifest.json"
+        manifest_path.write_text(
+            json.dumps(
+                {
+                    "task_uid": task_instance_name,
+                    "node_code": "A010",
+                    "workspace_root": str(project_root),
+                    "task_instance_dir": str(task_instance_dir),
+                    "created_at": datetime.now().isoformat(timespec="seconds"),
+                    "purpose": "A010 项目初始化任务实例目录",
+                },
+                ensure_ascii=False,
+                indent=2,
+            ),
+            encoding="utf-8",
+        )
+        return task_instance_dir
+
     def run(self, project_root: str | Path = ".") -> dict[str, Any]:
         root = Path(project_root).resolve()
+        task_instance_dir = self._bootstrap_task_instance_dir(root)
         git_init_result = git_workspace_init(root)
         self._bootstrap_task_database(root)
         self._bootstrap_minimal_task_db(root)
@@ -279,10 +304,14 @@ class ProjectInitializationEngine:
         return {
             "project_root": str(root),
             "status": "PASS",
+            "task_instance_dir": str(task_instance_dir),
             "git_init_result": git_init_result,
             "aok_logdb_result": aok_logdb_result,
             "snapshot_result": snapshot_result,
             "created_paths": [
+                str(root / "tasks"),
+                str(task_instance_dir),
+                str(task_instance_dir / "task_manifest.json"),
                 str(root / "database" / "tasks"),
                 str(root / "database" / "tasks" / "tasks.db"),
                 str(root / "database" / "content"),
@@ -312,6 +341,13 @@ def execute(config_path: Path) -> List[Path]:
         )
     output_dir.mkdir(parents=True, exist_ok=True)
 
+    task_instance_dir = Path(str(result.get("task_instance_dir") or (output_dir / "task_instance")))
+    task_instance_dir.mkdir(parents=True, exist_ok=True)
+    task_out_path = task_instance_dir / "project_initialization_result.json"
+    task_out_path.write_text(json.dumps(result, ensure_ascii=False, indent=2), encoding="utf-8")
+
     out_path = output_dir / "project_initialization_result.json"
-    out_path.write_text(json.dumps(result, ensure_ascii=False, indent=2), encoding="utf-8")
-    return [out_path]
+    if out_path != task_out_path:
+        out_path.write_text(json.dumps(result, ensure_ascii=False, indent=2), encoding="utf-8")
+        return [task_out_path, out_path]
+    return [task_out_path]

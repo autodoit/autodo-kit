@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, List
 
@@ -18,6 +19,26 @@ from autodokit.tools.atomic.task_aok.post_affair_git_commit import affair_auto_g
 
 OUTPUT_INDEX = "a100_deep_parse_index.csv"
 OUTPUT_GATE = "gate_review.json"
+
+
+def _build_task_instance_dir(workspace_root: Path, node_code: str) -> Path:
+    task_instance_dir = workspace_root / "tasks" / f"{datetime.now().strftime('%Y%m%d%H%M%S')}-{node_code}"
+    task_instance_dir.mkdir(parents=True, exist_ok=False)
+    (task_instance_dir / "task_manifest.json").write_text(
+        json.dumps(
+            {
+                "task_uid": task_instance_dir.name,
+                "node_code": node_code,
+                "workspace_root": str(workspace_root),
+                "task_instance_dir": str(task_instance_dir),
+                "created_at": datetime.now().isoformat(timespec="seconds"),
+            },
+            ensure_ascii=False,
+            indent=2,
+        ),
+        encoding="utf-8",
+    )
+    return task_instance_dir
 
 
 def _stringify(value: Any) -> str:
@@ -50,7 +71,8 @@ def _resolve_output_dir(config_path: Path, raw_cfg: Dict[str, Any]) -> Path:
 def execute(config_path: Path) -> List[Path]:
     raw_cfg = load_json_or_py(config_path)
     workspace_root = _resolve_workspace_root(config_path, raw_cfg)
-    output_dir = _resolve_output_dir(config_path, raw_cfg)
+    legacy_output_dir = _resolve_output_dir(config_path, raw_cfg)
+    output_dir = _build_task_instance_dir(workspace_root, "A100")
     content_db, _ = resolve_content_db_config(
         raw_cfg,
         default_path=workspace_root / "database" / CONTENT_DB_DIRECTORY_NAME / DEFAULT_CONTENT_DB_NAME,
@@ -282,6 +304,12 @@ def execute(config_path: Path) -> List[Path]:
     gate_path = output_dir / OUTPUT_GATE
     gate_path.write_text(json.dumps(gate_review, ensure_ascii=False, indent=2), encoding="utf-8")
 
+    if legacy_output_dir != output_dir:
+        legacy_output_dir.mkdir(parents=True, exist_ok=True)
+        for artifact_path in [index_path, gate_path]:
+            legacy_target = legacy_output_dir / artifact_path.name
+            legacy_target.write_text(artifact_path.read_text(encoding="utf-8"), encoding="utf-8")
+
     try:
         append_aok_log_event(
             event_type="A100_DEEP_READING_COMPLETED",
@@ -298,5 +326,5 @@ def execute(config_path: Path) -> List[Path]:
     except Exception:
         pass
 
-    return [index_path]
+    return [index_path, gate_path]
 
