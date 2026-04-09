@@ -466,6 +466,7 @@ from autodokit.tools.ocr.aliyun_multimodal.pdf_multimodal_tree_builder import (
 )
 from autodokit.tools.ocr.monkeyocr.monkeyocr_windows_tools import (
     prepare_monkeyocr_windows_runtime,
+    update_monkeyocr_batch_status_csv,
     run_monkeyocr_windows_batch_folder,
     run_monkeyocr_windows_single_pdf,
 )
@@ -812,7 +813,9 @@ _开发者工具 = [
     "generate_aok_pdf_parse_uid",
     "resolve_aok_pdf_parse_output_dir",
     "prepare_monkeyocr_windows_runtime",
+    "run_monkeyocr_windows_batch_folder",
     "run_monkeyocr_windows_single_pdf",
+    "update_monkeyocr_batch_status_csv",
     "build_aliyun_multimodal_chunks",
     "parse_pdf_with_aliyun_multimodal",
     "batch_manage_pdf_with_aliyun_multimodal",

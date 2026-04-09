@@ -1149,3 +1149,87 @@ def parse_pdf_with_monkeyocr_windows(
         "status": str(raw_result.get("status") or "SUCCEEDED"),
         "artifacts": raw_result.get("artifacts") or {},
     }
+
+
+def update_monkeyocr_batch_status_csv(
+    csv_path: str | Path,
+    outputs_dir: str | Path,
+    *,
+    backup: bool = True,
+) -> dict[str, Any]:
+    """根据 MonkeyOCR 输出目录回写 CSV 的 monkeyocr_status 列。"""
+
+    csv_file = _resolve_path(csv_path)
+    output_root = _resolve_path(outputs_dir)
+
+    if not csv_file.exists():
+        raise FileNotFoundError(f"CSV not found: {csv_file}")
+    if not output_root.exists():
+        print(f"[WARN] outputs dir not found (treated as empty): {output_root}")
+
+    backup_path = csv_file.with_suffix(csv_file.suffix + ".bak")
+    if backup:
+        shutil.copy2(csv_file, backup_path)
+        print(f"[INFO] backup saved to {backup_path}")
+
+    output_stems = [path.stem for path in output_root.iterdir()] if output_root.exists() else []
+
+    def _status_for_row(row: dict[str, Any]) -> str:
+        candidate = ""
+        for key_name in ("pdf_attachment_name", "input_pdf_path", "file_name", "source_value", "input"):
+            value = row.get(key_name)
+            if isinstance(value, str) and value.strip():
+                candidate = value.strip()
+                break
+
+        if not candidate:
+            return "UNKNOWN"
+
+        try:
+            stem = Path(candidate).stem
+        except Exception:
+            stem = candidate
+
+        norm_key = str(stem).lower()
+        for out_stem in output_stems:
+            if not out_stem:
+                continue
+            out_norm = out_stem.lower()
+            if out_norm == norm_key or norm_key in out_norm or out_norm in norm_key:
+                return "SUCCEEDED"
+        return "MISSING"
+
+    rows: list[dict[str, Any]] = []
+    with csv_file.open("r", encoding="utf-8-sig", newline="") as stream:
+        reader = csv.DictReader(stream)
+        fieldnames = list(reader.fieldnames or [])
+        for row in reader:
+            row["monkeyocr_status"] = _status_for_row(row)
+            rows.append(row)
+
+    if "monkeyocr_status" not in fieldnames:
+        fieldnames.append("monkeyocr_status")
+
+    with csv_file.open("w", encoding="utf-8-sig", newline="") as stream:
+        writer = csv.DictWriter(stream, fieldnames=fieldnames)
+        writer.writeheader()
+        for row in rows:
+            writer.writerow(row)
+
+    counts = {"SUCCEEDED": 0, "MISSING": 0, "UNKNOWN": 0}
+    for row in rows:
+        status = str(row.get("monkeyocr_status", "MISSING"))
+        counts.setdefault(status, 0)
+        counts[status] += 1
+
+    print(
+        f"[INFO] Updated CSV {csv_file} — SUCCEEDED={counts['SUCCEEDED']} "
+        f"MISSING={counts['MISSING']} UNKNOWN={counts['UNKNOWN']}"
+    )
+    return {
+        "csv_path": str(csv_file),
+        "backup_path": str(backup_path) if backup else "",
+        "outputs_dir": str(output_root),
+        "counts": counts,
+        "total_rows": len(rows),
+    }
