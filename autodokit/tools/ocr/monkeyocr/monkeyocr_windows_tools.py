@@ -16,6 +16,7 @@
 
 from __future__ import annotations
 
+import json
 import os
 import time
 import subprocess
@@ -23,8 +24,8 @@ import sys
 import threading
 import shutil
 import csv
-import json
 from pathlib import Path
+from datetime import datetime, timezone
 from typing import Any
 
 from autodokit.tools.atomic.path.windows_long_filename_tools import materialize_short_alias
@@ -336,7 +337,6 @@ def run_monkeyocr_windows_single_pdf(
         "output_dir": str(result_output_dir),
         "artifacts": artifacts,
     }
-
 
 def _rename_output_tree_to_original_stem(result_output_dir: Path, original_stem: str, alias_stem: str) -> Path:
     """将 MonkeyOCR 产物目录从别名回写到原始文件名。"""
@@ -1030,4 +1030,122 @@ def run_monkeyocr_windows_batch_folder(
         "final_report_json": str(final_report_json),
         "migrated_output_artifacts": migrated_output_artifacts,
         "log_path": str(batch_log_path),
+    }
+
+
+def parse_pdf_with_monkeyocr_windows(
+    *,
+    pdf_path: str | Path,
+    output_root: str | Path,
+    output_name: str | None = None,
+    monkeyocr_root: str | Path,
+    models_dir: str | Path | None = None,
+    config_path: str | Path | None = None,
+    model_name: str = DEFAULT_MODEL_NAME,
+    device: str = "cuda",
+    gpu_visible_devices: str = "0",
+    ensure_runtime: bool = True,
+    download_source: str = "huggingface",
+    pip_index_url: str | None = None,
+    python_executable: str | Path | None = None,
+    log_path: str | Path | None = None,
+    stream_output: bool = True,
+    **_: Any,
+) -> dict[str, Any]:
+    """运行 MonkeyOCR Windows 单篇 PDF 解析并输出 AOK 兼容结果。"""
+
+    resolved_output_root = _resolve_path(output_root)
+    if output_name:
+        resolved_output_root = (resolved_output_root / str(output_name)).resolve()
+
+    raw_result = run_monkeyocr_windows_single_pdf(
+        input_pdf=pdf_path,
+        output_dir=resolved_output_root,
+        monkeyocr_root=monkeyocr_root,
+        models_dir=models_dir,
+        config_path=config_path,
+        model_name=model_name,
+        device=device,
+        gpu_visible_devices=gpu_visible_devices,
+        ensure_runtime=ensure_runtime,
+        download_source=download_source,
+        pip_index_url=pip_index_url,
+        python_executable=python_executable,
+        log_path=log_path,
+        stream_output=stream_output,
+    )
+
+    result_output_dir = Path(str(raw_result.get("output_dir") or resolved_output_root)).resolve()
+    artifacts = raw_result.get("artifacts") if isinstance(raw_result.get("artifacts"), dict) else {}
+    markdown_path = Path(str(artifacts.get("markdown") or result_output_dir / f"{Path(pdf_path).stem}.md")).resolve()
+    content_list_path = Path(str(artifacts.get("content_list") or result_output_dir / f"{Path(pdf_path).stem}_content_list.json")).resolve()
+    middle_json_path = Path(str(artifacts.get("middle_json") or result_output_dir / f"{Path(pdf_path).stem}_middle.json")).resolve()
+    images_dir = Path(str(artifacts.get("images_dir") or result_output_dir / "images")).resolve()
+
+    content_items: list[Any] = []
+    if content_list_path.exists() and content_list_path.is_file():
+        try:
+            loaded = json.loads(content_list_path.read_text(encoding="utf-8-sig"))
+            if isinstance(loaded, list):
+                content_items = loaded
+        except Exception:
+            content_items = []
+
+    image_count = 0
+    if images_dir.exists() and images_dir.is_dir():
+        image_count = sum(
+            1
+            for item in images_dir.iterdir()
+            if item.is_file() and item.suffix.lower() in {".jpg", ".jpeg", ".png", ".webp"}
+        )
+
+    parse_record = {
+        "schema": "aok.pdf_monkeyocr_parse_record.v1",
+        "created_at": datetime.now(timezone.utc).isoformat(),
+        "tool": "run_monkeyocr_windows_single_pdf",
+        "status": str(raw_result.get("status") or "SUCCEEDED"),
+        "input_pdf": str(_resolve_path(pdf_path)),
+        "output_dir": str(result_output_dir),
+        "device": str(raw_result.get("device") or device),
+        "gpu_name": _detect_gpu_name() or "",
+        "model_name": str(raw_result.get("model_name") or model_name),
+        "page_count": image_count,
+        "element_count": len(content_items),
+        "markdown_path": str(markdown_path),
+        "content_list_path": str(content_list_path),
+        "middle_json_path": str(middle_json_path),
+    }
+    parse_record_path = (result_output_dir / "parse_record.json").resolve()
+    parse_record_path.write_text(json.dumps(parse_record, ensure_ascii=False, indent=2), encoding="utf-8")
+
+    quality_report = {
+        "schema": "aok.pdf_monkeyocr_quality_report.v1",
+        "created_at": parse_record["created_at"],
+        "status": parse_record["status"],
+        "page_count": image_count,
+        "element_count": len(content_items),
+        "input_pdf": parse_record["input_pdf"],
+        "output_dir": parse_record["output_dir"],
+        "tool": parse_record["tool"],
+    }
+    quality_report_path = (result_output_dir / "quality_report.json").resolve()
+    quality_report_path.write_text(json.dumps(quality_report, ensure_ascii=False, indent=2), encoding="utf-8")
+
+    return {
+        "output_name": str(output_name or Path(pdf_path).stem),
+        "output_dir": str(result_output_dir),
+        "structured_tree_path": str(middle_json_path) if middle_json_path.exists() else "",
+        "elements_path": str(content_list_path) if content_list_path.exists() else "",
+        "attachments_manifest_path": "",
+        "linear_index_path": str(content_list_path) if content_list_path.exists() else "",
+        "chunk_manifest_path": str(middle_json_path) if middle_json_path.exists() else "",
+        "chunks_jsonl_path": "",
+        "reconstructed_markdown_path": str(markdown_path) if markdown_path.exists() else "",
+        "parse_record_path": str(parse_record_path),
+        "quality_report_path": str(quality_report_path),
+        "llm_model": str(raw_result.get("model_name") or model_name),
+        "llm_backend": "monkeyocr_windows",
+        "device": str(raw_result.get("device") or device),
+        "status": str(raw_result.get("status") or "SUCCEEDED"),
+        "artifacts": raw_result.get("artifacts") or {},
     }
