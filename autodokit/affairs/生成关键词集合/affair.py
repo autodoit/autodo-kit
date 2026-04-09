@@ -39,6 +39,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional, Set, Tuple
 
 from autodokit.tools.atomic.task_aok.post_affair_git_commit import affair_auto_git_commit
+from autodokit.tools.atomic.task_aok.task_instance_dir import create_task_instance_dir, mirror_artifacts_to_legacy, resolve_legacy_output_dir
 
 from autodokit.tools.llm_clients import invoke_aliyun_llm
 from autodokit.tools.llm_parsing import (
@@ -1043,6 +1044,10 @@ def execute(config_path: Path) -> List[Path]:
 
     raw_cfg = load_json_or_py(config_path)
     affair_cfg: Dict[str, Any] = dict(raw_cfg)
+    workspace_root = Path(str(affair_cfg.get("workspace_root") or config_path.parents[2]))
+    if not workspace_root.is_absolute():
+        raise ValueError(f"workspace_root 必须为绝对路径: {workspace_root}")
+    legacy_output_dir = resolve_legacy_output_dir(affair_cfg, config_path)
 
     research_domains = _normalize_research_domains(affair_cfg.get("research_domains"))
 
@@ -1057,7 +1062,7 @@ def execute(config_path: Path) -> List[Path]:
         reference_materials_max_chars=(
             int(affair_cfg["reference_materials_max_chars"]) if affair_cfg.get("reference_materials_max_chars") is not None else None
         ),
-        output_dir=str(affair_cfg.get("output_dir") or ""),
+        output_dir="",
         output_json_name=_resolve_output_filename(
             affair_cfg.get("output_json_name"),
             default_name="keyword_set.json",
@@ -1114,13 +1119,8 @@ def execute(config_path: Path) -> List[Path]:
     if cfg.num_domains < 2:
         raise ValueError("num_domains 必须 >= 2")
 
-    output_dir = Path(cfg.output_dir)
-    if not output_dir.is_absolute():
-        raise ValueError(
-            "output_dir 必须为绝对路径：请确认 main.py 已启用统一路径解析，"
-            f"或检查 workspace_root 配置。当前值={cfg.output_dir!r}"
-        )
-    output_dir.mkdir(parents=True, exist_ok=True)
+    output_dir = create_task_instance_dir(workspace_root, "A030")
+    cfg.output_dir = str(output_dir)
 
     reference_debug: Dict[str, Any] = {}
     if cfg.reference_materials_dir:
@@ -1225,7 +1225,9 @@ def execute(config_path: Path) -> List[Path]:
         encoding="utf-8",
     )
 
-    return [json_path, txt_path, pairs_path, debug_path, domains_path]
+    written_files = [json_path, txt_path, pairs_path, debug_path, domains_path]
+    mirror_artifacts_to_legacy(written_files, legacy_output_dir, output_dir)
+    return written_files
 
 
 def main() -> None:

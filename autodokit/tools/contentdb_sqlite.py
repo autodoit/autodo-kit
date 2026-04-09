@@ -23,6 +23,7 @@ CONTENT_DB_DIRECTORY_NAME = "content"
 KNOWLEDGE_LINK_TABLE_NAME = "knowledge_literature_links"
 KNOWLEDGE_EVIDENCE_TABLE_NAME = "knowledge_evidence_links"
 KNOWLEDGE_NOTES_TABLE_NAME = "knowledge_notes"
+TRANSLATION_ASSET_TABLE_NAME = "literature_translation_assets"
 READING_STATE_TABLE_NAME = "literature_reading_state"
 READING_STATE_OVERVIEW_VIEW_NAME = "阅读状态总视图"
 READING_STATE_FILTER_VIEWS: tuple[tuple[str, str], ...] = (
@@ -154,7 +155,34 @@ LITERATURE_REQUIRED_COLUMNS: dict[str, str] = {
     "structured_schema_version": "TEXT",
     "structured_text_length": "INTEGER",
     "structured_reference_count": "INTEGER",
+    "source_lang": "TEXT",
+    "title_zh": "TEXT",
+    "abstract_zh": "TEXT",
+    "keywords_zh": "TEXT",
+    "metadata_translation_status": "TEXT",
+    "metadata_translation_provider": "TEXT",
+    "metadata_translation_model": "TEXT",
+    "metadata_translation_updated_at": "TEXT",
     **PDF_STRUCTURED_VARIANT_PATH_COLUMNS,
+}
+TRANSLATION_ASSET_REQUIRED_COLUMNS: dict[str, str] = {
+    "translation_uid": "TEXT",
+    "uid_literature": "TEXT",
+    "cite_key": "TEXT",
+    "source_asset_uid": "TEXT",
+    "source_kind": "TEXT",
+    "target_lang": "TEXT",
+    "translation_scope": "TEXT",
+    "provider": "TEXT",
+    "model_name": "TEXT",
+    "asset_dir": "TEXT",
+    "translated_markdown_path": "TEXT",
+    "translated_structured_path": "TEXT",
+    "translation_audit_path": "TEXT",
+    "status": "TEXT",
+    "is_current": "INTEGER",
+    "created_at": "TEXT",
+    "updated_at": "TEXT",
 }
 
 
@@ -609,6 +637,43 @@ def init_content_db(db_path: str | Path) -> Path:
         _create_index_if_table(conn, "literature_parse_assets", "CREATE INDEX IF NOT EXISTS idx_parse_asset_current ON literature_parse_assets(parse_level, is_current)")
 
         cur.execute(
+            f"""
+            CREATE TABLE IF NOT EXISTS {TRANSLATION_ASSET_TABLE_NAME} (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                translation_uid TEXT UNIQUE,
+                uid_literature TEXT,
+                cite_key TEXT,
+                source_asset_uid TEXT,
+                source_kind TEXT,
+                target_lang TEXT,
+                translation_scope TEXT,
+                provider TEXT,
+                model_name TEXT,
+                asset_dir TEXT,
+                translated_markdown_path TEXT,
+                translated_structured_path TEXT,
+                translation_audit_path TEXT,
+                status TEXT,
+                is_current INTEGER,
+                created_at TEXT,
+                updated_at TEXT,
+                FOREIGN KEY(uid_literature) REFERENCES literatures(uid_literature)
+            )
+            """
+        )
+        _ensure_table_columns(conn, TRANSLATION_ASSET_TABLE_NAME, TRANSLATION_ASSET_REQUIRED_COLUMNS)
+        _create_index_if_table(
+            conn,
+            TRANSLATION_ASSET_TABLE_NAME,
+            f"CREATE INDEX IF NOT EXISTS idx_translation_asset_lit_scope ON {TRANSLATION_ASSET_TABLE_NAME}(uid_literature, source_kind, target_lang, translation_scope)",
+        )
+        _create_index_if_table(
+            conn,
+            TRANSLATION_ASSET_TABLE_NAME,
+            f"CREATE INDEX IF NOT EXISTS idx_translation_asset_current ON {TRANSLATION_ASSET_TABLE_NAME}(source_kind, target_lang, is_current)",
+        )
+
+        cur.execute(
             """
             CREATE TABLE IF NOT EXISTS literature_reading_queue (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -867,6 +932,148 @@ def load_knowledge_evidence_links_df(db_path: str | Path) -> pd.DataFrame:
         return pd.read_sql_query(f"SELECT * FROM {KNOWLEDGE_EVIDENCE_TABLE_NAME}", conn)
 
 
+def load_translation_assets_df(
+    db_path: str | Path,
+    *,
+    uid_literature: str = "",
+    source_kind: str = "",
+    target_lang: str = "",
+    only_current: bool = False,
+) -> pd.DataFrame:
+    """读取翻译资产索引。"""
+
+    init_content_db(db_path)
+    with connect_sqlite(db_path) as conn:
+        frame = pd.read_sql_query(f"SELECT * FROM {TRANSLATION_ASSET_TABLE_NAME}", conn)
+
+    if frame.empty:
+        return frame
+
+    if uid_literature:
+        frame = frame[frame["uid_literature"].astype(str) == str(uid_literature)]
+    if source_kind:
+        frame = frame[frame["source_kind"].astype(str) == str(source_kind)]
+    if target_lang:
+        frame = frame[frame["target_lang"].astype(str) == str(target_lang)]
+    if only_current:
+        frame = frame[frame["is_current"].fillna(0).astype(int) == 1]
+
+    return frame.reset_index(drop=True)
+
+
+def upsert_translation_asset_rows(
+    db_path: str | Path,
+    rows: Sequence[dict[str, object]] | pd.DataFrame,
+) -> None:
+    """写入翻译资产索引并维护 current 标记。"""
+
+    incoming = rows.copy() if isinstance(rows, pd.DataFrame) else pd.DataFrame(list(rows or []))
+    if incoming.empty:
+        return
+
+    init_content_db(db_path)
+    now = _utc_now_iso()
+    with connect_sqlite(db_path) as conn:
+        for _, row in incoming.fillna("").iterrows():
+            uid_literature = str(row.get("uid_literature") or "").strip()
+            cite_key = str(row.get("cite_key") or "").strip()
+            source_asset_uid = str(row.get("source_asset_uid") or "").strip()
+            source_kind = str(row.get("source_kind") or "").strip() or "metadata"
+            target_lang = str(row.get("target_lang") or "").strip() or "zh-CN"
+            translation_scope = str(row.get("translation_scope") or "").strip() or source_kind
+            provider = str(row.get("provider") or "").strip()
+            model_name = str(row.get("model_name") or "").strip()
+            asset_dir = str(row.get("asset_dir") or "").strip()
+            translated_markdown_path = str(row.get("translated_markdown_path") or "").strip()
+            translated_structured_path = str(row.get("translated_structured_path") or "").strip()
+            translation_audit_path = str(row.get("translation_audit_path") or "").strip()
+            status = str(row.get("status") or "").strip() or "ready"
+            is_current = int(row.get("is_current") or 1)
+            created_at = str(row.get("created_at") or "").strip() or now
+            updated_at = str(row.get("updated_at") or "").strip() or now
+            translation_uid = str(row.get("translation_uid") or "").strip()
+
+            if not uid_literature and not cite_key:
+                continue
+
+            if not translation_uid:
+                base = "|".join(
+                    [
+                        uid_literature,
+                        cite_key,
+                        source_asset_uid,
+                        source_kind,
+                        target_lang,
+                        translation_scope,
+                        translated_markdown_path,
+                        translated_structured_path,
+                        updated_at,
+                    ]
+                )
+                translation_uid = f"tr-{abs(hash(base))}"
+
+            if is_current:
+                conn.execute(
+                    f"""
+                    UPDATE {TRANSLATION_ASSET_TABLE_NAME}
+                    SET is_current = 0, updated_at = ?
+                    WHERE uid_literature = ?
+                      AND source_kind = ?
+                      AND target_lang = ?
+                      AND translation_scope = ?
+                    """,
+                    (updated_at, uid_literature, source_kind, target_lang, translation_scope),
+                )
+
+            conn.execute(
+                f"""
+                INSERT INTO {TRANSLATION_ASSET_TABLE_NAME}
+                    (translation_uid, uid_literature, cite_key, source_asset_uid, source_kind, target_lang,
+                     translation_scope, provider, model_name, asset_dir, translated_markdown_path,
+                     translated_structured_path, translation_audit_path, status, is_current, created_at, updated_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(translation_uid)
+                DO UPDATE SET
+                    uid_literature=excluded.uid_literature,
+                    cite_key=excluded.cite_key,
+                    source_asset_uid=excluded.source_asset_uid,
+                    source_kind=excluded.source_kind,
+                    target_lang=excluded.target_lang,
+                    translation_scope=excluded.translation_scope,
+                    provider=excluded.provider,
+                    model_name=excluded.model_name,
+                    asset_dir=excluded.asset_dir,
+                    translated_markdown_path=excluded.translated_markdown_path,
+                    translated_structured_path=excluded.translated_structured_path,
+                    translation_audit_path=excluded.translation_audit_path,
+                    status=excluded.status,
+                    is_current=excluded.is_current,
+                    created_at=excluded.created_at,
+                    updated_at=excluded.updated_at
+                """,
+                (
+                    translation_uid,
+                    uid_literature,
+                    cite_key,
+                    source_asset_uid,
+                    source_kind,
+                    target_lang,
+                    translation_scope,
+                    provider,
+                    model_name,
+                    asset_dir,
+                    translated_markdown_path,
+                    translated_structured_path,
+                    translation_audit_path,
+                    status,
+                    is_current,
+                    created_at,
+                    updated_at,
+                ),
+            )
+        conn.commit()
+
+
 def backfill_content_relationships(db_path: str | Path) -> None:
     """根据兼容字段回填跨域关系表。"""
 
@@ -1043,6 +1250,7 @@ __all__ = [
     "KNOWLEDGE_EVIDENCE_TABLE_NAME",
     "KNOWLEDGE_LINK_TABLE_NAME",
     "KNOWLEDGE_NOTES_TABLE_NAME",
+    "TRANSLATION_ASSET_TABLE_NAME",
     "READING_STATE_TABLE_NAME",
     "PDF_STRUCTURED_VARIANT_SPECS",
     "PDF_STRUCTURED_VARIANT_PATH_COLUMNS",
@@ -1055,8 +1263,10 @@ __all__ = [
     "init_content_db",
     "load_knowledge_evidence_links_df",
     "load_knowledge_literature_links_df",
+    "load_translation_assets_df",
     "resolve_content_db_config",
     "resolve_content_db_path",
     "resolve_pdf_structured_variant_output_dir",
     "upsert_knowledge_literature_link",
+    "upsert_translation_asset_rows",
 ]

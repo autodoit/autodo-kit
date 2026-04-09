@@ -24,7 +24,9 @@ import unicodedata
 
 import pandas as pd
 from bibtexparser import loads as bibtex_loads
+from autodokit.tools import bibliodb_sqlite
 from autodokit.tools.atomic.task_aok.post_affair_git_commit import affair_auto_git_commit
+from autodokit.tools.literature_translation_tools import run_literature_translation
 
 # 归一化规则列表：在此列表中出现的规则会被应用
 # 可用规则说明：
@@ -569,7 +571,7 @@ def load_json_or_py(config_path: Path) -> Dict[str, Any]:
     """
     config_path = Path(config_path)
     if config_path.suffix.lower() == ".json":
-        return json.loads(config_path.read_text(encoding="utf-8"))
+        return json.loads(config_path.read_text(encoding="utf-8-sig"))
 
     if config_path.suffix.lower() == ".py":
         spec = importlib.util.spec_from_file_location("a02_runtime_config", config_path)
@@ -817,7 +819,7 @@ def _run_and_write_all_outputs(config_path: Path) -> List[Path]:
     released_artifacts = merged_cfg.get("released_artifacts") or {}
 
     bibtex_path = Path(config.bibtex_path)
-    legacy_output_dir = Path(config.output_dir)
+    legacy_output_dir = Path(str(merged_cfg.get("legacy_output_dir") or config.output_dir))
     pdf_dir = Path(config.pdf_dir)
     workspace_root = Path(merged_cfg.get("workspace_root") or config_path.parents[2]).resolve()
     output_dir = _build_task_instance_dir(workspace_root, "A020")
@@ -872,10 +874,19 @@ def _run_and_write_all_outputs(config_path: Path) -> List[Path]:
         or merged_cfg.get("db_path")
     )
     db_path = Path(db_path_str) if db_path_str else None
-    from autodokit.tools.storage_backend import persist_literature_table
-
-    persisted = persist_literature_table(table, output_dir, config.output_table_csv, backend=backend, db_path=db_path)
-    written_files.extend(persisted)
+    translation_summary: Dict[str, Any] = {
+        "status": "SKIP",
+        "translated_count": 0,
+        "failed_count": 0,
+        "audit_path": "",
+    }
+    merge_summary: Dict[str, Any] = {
+        "incoming_count": int(len(table)),
+        "matched_existing_count": 0,
+        "inserted_count": int(len(table)),
+        "final_literature_count": int(len(table)),
+    }
+    published_literature_df = table.reset_index()
 
     uid_numeric_list = [int(x) for x in list(table.index)]
 
@@ -922,8 +933,41 @@ def _run_and_write_all_outputs(config_path: Path) -> List[Path]:
     attachments_main_audit_df.to_csv(attachments_main_audit_path, index=False, encoding="utf-8-sig")
     written_files.append(attachments_main_audit_path)
 
+    if backend == "csv":
+        from autodokit.tools.storage_backend import persist_literature_table
+
+        persisted = persist_literature_table(table, output_dir, config.output_table_csv, backend=backend, db_path=db_path)
+        written_files.extend(persisted)
+    elif backend == "sqlite" and db_path is not None:
+        incoming_literatures_df = table.reset_index()
+        incoming_attachment_relations_df = bibliodb_sqlite.build_attachments_df_from_literatures(incoming_literatures_df)
+        incoming_tag_relations_df = bibliodb_sqlite.build_tags_df_from_inverted_index(
+            incoming_literatures_df,
+            tag_inv,
+            normalize_text_fn=normalize_text,
+        )
+        existing_literatures_df = bibliodb_sqlite.load_literatures_df(db_path) if db_path.exists() else pd.DataFrame()
+        existing_attachment_relations_df = bibliodb_sqlite.load_attachments_df(db_path) if db_path.exists() else pd.DataFrame()
+        existing_tag_relations_df = bibliodb_sqlite.load_tags_df(db_path) if db_path.exists() else pd.DataFrame()
+        merged_literatures_df, merged_attachment_relations_df, merged_tag_relations_df, merge_summary = bibliodb_sqlite.merge_reference_records(
+            existing_literatures_df=existing_literatures_df,
+            existing_attachments_df=existing_attachment_relations_df,
+            existing_tags_df=existing_tag_relations_df,
+            incoming_literatures_df=incoming_literatures_df,
+            incoming_attachments_df=incoming_attachment_relations_df,
+            incoming_tags_df=incoming_tag_relations_df,
+        )
+        bibliodb_sqlite.replace_reference_tables_only(
+            db_path,
+            literatures_df=merged_literatures_df,
+            attachments_df=merged_attachment_relations_df,
+            tags_df=merged_tag_relations_df,
+        )
+        published_literature_df = merged_literatures_df
+        written_files.append(db_path)
+
     published_paths = [
-        _write_csv_if_requested(table.reset_index(drop=True), released_artifacts.get("literature_table")),
+        _write_csv_if_requested(published_literature_df, released_artifacts.get("literature_table")),
         _write_csv_if_requested(literature_main_audit_df, released_artifacts.get("literature_relations")),
         _write_csv_if_requested(tags_main_audit_df, released_artifacts.get("tags_to_literatures")),
         _write_csv_if_requested(attachments_main_audit_df, released_artifacts.get("attachments_to_literatures")),
@@ -931,20 +975,28 @@ def _run_and_write_all_outputs(config_path: Path) -> List[Path]:
     written_files.extend([path for path in published_paths if path is not None])
 
     if backend == "sqlite" and db_path is not None:
-        from autodokit.tools import bibliodb_sqlite
-
-        attachment_relations_df = bibliodb_sqlite.build_attachments_df_from_literatures(table.reset_index())
-        tag_relations_df = bibliodb_sqlite.build_tags_df_from_inverted_index(
-            table,
-            tag_inv,
-            normalize_text_fn=normalize_text,
-        )
-        bibliodb_sqlite.save_tables(
-            db_path,
-            attachments_df=attachment_relations_df,
-            tags_df=tag_relations_df,
-            if_exists="replace",
-        )
+        translation_policy = merged_cfg.get("translation_policy") or {}
+        try:
+            translation_summary = run_literature_translation(
+                content_db=db_path,
+                translation_scope="metadata",
+                translation_policy=translation_policy,
+                workspace_root=workspace_root,
+                max_items=int(merged_cfg.get("translation_max_items") or 0),
+                affair_name="A020",
+                config_path=config_path,
+            )
+            translation_audit_path = Path(str(translation_summary.get("audit_path") or "").strip())
+            if translation_audit_path.exists() and translation_audit_path.is_file():
+                written_files.append(translation_audit_path)
+        except Exception as translation_exc:
+            translation_summary = {
+                "status": "FAIL",
+                "translated_count": 0,
+                "failed_count": 0,
+                "audit_path": "",
+                "error": str(translation_exc),
+            }
 
     gate_review_path = released_artifacts.get("gate_review")
     if gate_review_path:
@@ -954,8 +1006,14 @@ def _run_and_write_all_outputs(config_path: Path) -> List[Path]:
             "affair_code": "A020",
             "summary": {
                 "literature_count": int(len(table)),
+                "matched_existing_count": int(merge_summary.get("matched_existing_count") or 0),
+                "inserted_count": int(merge_summary.get("inserted_count") or 0),
+                "final_literature_count": int(merge_summary.get("final_literature_count") or len(table)),
                 "attachment_file_count": int(len(synced_attachments)) if synced_attachments else int(len(attachment_inv)),
                 "matched_fulltext_count": match_count,
+                "metadata_translation_status": str(translation_summary.get("status") or "SKIP"),
+                "metadata_translation_count": int(translation_summary.get("translated_count") or 0),
+                "metadata_translation_failed_count": int(translation_summary.get("failed_count") or 0),
             },
             "decision_suggestion": "pass_next" if len(table) > 0 else "revise_current_iteration",
         }

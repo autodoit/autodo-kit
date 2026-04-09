@@ -1,16 +1,16 @@
 ﻿"""PDF 解析资产管理工具。
 
-负责把阿里百炼多模态解析结果注册为统一可复用的解析资产，并补写
+负责把 MonkeyOCR 单篇解析结果注册为统一可复用的解析资产，并补写
 兼容旧消费者的 `aok.pdf_structured.v3` 文件入口。
 """
 
 from __future__ import annotations
 
 import json
+import re
 from pathlib import Path
-from typing import Any, Dict
+from typing import Any, Dict, List
 
-from autodokit.tools.ocr.aliyun_multimodal.aok_pdf_aliyun_multimodal_parse import parse_pdf_with_aliyun_multimodal
 from autodokit.tools.bibliodb_sqlite import (
     load_attachments_df,
     load_literatures_df,
@@ -21,6 +21,12 @@ from autodokit.tools.bibliodb_sqlite import (
 from autodokit.tools.contentdb_sqlite import infer_workspace_root_from_content_db
 from autodokit.tools.ocr.classic.pdf_elements_extractors import extract_text_with_rapidocr
 from autodokit.tools.ocr.classic.pdf_structured_data_tools import build_structured_data_payload
+from autodokit.tools.ocr.monkeyocr.monkeyocr_windows_tools import parse_pdf_with_monkeyocr_windows
+
+
+UNIFIED_PARSE_ROOT_NAME = "structured_monkeyocr_full"
+UNIFIED_PARSE_LEVEL = "monkeyocr_full"
+_LEGACY_PARSE_LEVELS = ("review_deep", "non_review_rough", "non_review_deep")
 
 
 def _stringify(value: Any) -> str:
@@ -31,6 +37,16 @@ def _stringify(value: Any) -> str:
 
 def _load_json_file(path: Path) -> Dict[str, Any]:
     return json.loads(path.read_text(encoding="utf-8-sig"))
+
+
+def _load_global_config(global_config_path: str | Path | None) -> Dict[str, Any]:
+    if global_config_path is None:
+        return {}
+    path = Path(global_config_path)
+    if not path.exists() or not path.is_file():
+        return {}
+    payload = _load_json_file(path)
+    return payload if isinstance(payload, dict) else {}
 
 
 def _safe_stem(text: str) -> str:
@@ -88,6 +104,29 @@ def _resolve_model(*, model: str = "auto", global_config_path: str | Path | None
                 return candidate
 
     return "auto"
+
+
+def _resolve_monkeyocr_root(*, workspace_root: Path, raw_cfg: Dict[str, Any]) -> Path:
+    candidate = _stringify(raw_cfg.get("monkeyocr_root"))
+    if candidate:
+        path = Path(candidate)
+        if not path.is_absolute():
+            raise ValueError(f"monkeyocr_root 必须为绝对路径：{path}")
+        return path.resolve()
+
+    default_root = (workspace_root / "sandbox" / "MonkeyOCR-main").resolve()
+    return default_root
+
+
+def _resolve_monkeyocr_model_name(*, raw_cfg: Dict[str, Any]) -> str:
+    candidate = _stringify(raw_cfg.get("monkeyocr_model_name") or raw_cfg.get("monkeyocr_model"))
+    return candidate or "MonkeyOCR-pro-1.2B"
+
+
+def parse_pdf_with_aliyun_multimodal(**kwargs: Any) -> Dict[str, Any]:
+    """兼容旧调用名的 MonkeyOCR 单篇解析包装器。"""
+
+    return parse_pdf_with_monkeyocr_windows(**kwargs)
 
 
 def _resolve_sdk_backend(*, sdk_backend: str | None = None, global_config_path: str | Path | None = None) -> str | None:
@@ -151,9 +190,231 @@ def _resolve_pdf_path(content_db: Path, literature_row: Dict[str, Any]) -> Path:
 
 def _resolve_output_root(content_db: Path, parse_level: str) -> Path:
     workspace_root = infer_workspace_root_from_content_db(content_db)
-    output_root = workspace_root / "references" / f"structured_aliyun_multimodal_{parse_level}"
+    output_root = workspace_root / "references" / UNIFIED_PARSE_ROOT_NAME
     output_root.mkdir(parents=True, exist_ok=True)
     return output_root.resolve()
+
+
+def _normalize_lookup_key(text: str) -> str:
+    value = _stringify(text).lower()
+    if not value:
+        return ""
+    value = re.sub(r"\.[a-z0-9]{1,8}$", "", value)
+    value = re.sub(r"[^\w\u4e00-\u9fff]", "", value)
+    return value
+
+
+def _discover_existing_asset_dir(output_root: Path, literature_row: Dict[str, Any]) -> Path | None:
+    if not output_root.exists() or not output_root.is_dir():
+        return None
+
+    uid = _stringify(literature_row.get("uid_literature"))
+    cite_key = _stringify(literature_row.get("cite_key"))
+    title = _stringify(literature_row.get("title"))
+    pdf_path = _stringify(literature_row.get("pdf_path"))
+    pdf_stem = Path(pdf_path).stem if pdf_path else ""
+
+    exact_keys = {item for item in (uid, cite_key, title, pdf_stem) if item}
+    normalized_keys = {_normalize_lookup_key(item) for item in exact_keys if _normalize_lookup_key(item)}
+
+    for child in output_root.iterdir():
+        if not child.is_dir():
+            continue
+        if child.name in exact_keys:
+            return child.resolve()
+        if _normalize_lookup_key(child.name) in normalized_keys:
+            return child.resolve()
+
+    return None
+
+
+def _pick_existing_markdown(asset_dir: Path) -> Path | None:
+    preferred = [
+        asset_dir / "reconstructed_content.md",
+        asset_dir / "reconstructed_content_postprocessed.md",
+        asset_dir / "reconstructed_content_raw.md",
+        asset_dir / "reconstructed_content_pdf_text_fallback.md",
+    ]
+    for candidate in preferred:
+        if candidate.exists() and candidate.is_file():
+            return candidate.resolve()
+
+    markdown_files = sorted([path for path in asset_dir.glob("*.md") if path.is_file()])
+    if not markdown_files:
+        return None
+    return markdown_files[0].resolve()
+
+
+def _build_elements_from_content_list(content_list_path: Path) -> Dict[str, Any]:
+    try:
+        payload = json.loads(content_list_path.read_text(encoding="utf-8-sig"))
+    except Exception:
+        return {"items": []}
+
+    if not isinstance(payload, list):
+        return {"items": []}
+
+    items: List[Dict[str, Any]] = []
+    for idx, row in enumerate(payload, start=1):
+        if not isinstance(row, dict):
+            continue
+        text = _stringify(row.get("text"))
+        if not text:
+            continue
+        block_type = _stringify(row.get("type")) or "text"
+        text_level = int(row.get("text_level") or 0)
+        page_idx = int(row.get("page_idx") or 0)
+
+        node_type = "paragraph"
+        if idx == 1 and text_level >= 1:
+            node_type = "document_title"
+        elif block_type == "title" or text_level >= 1:
+            node_type = "section_heading"
+        elif "关键词" in text:
+            node_type = "keywords_block"
+        elif "摘 要" in text or text.startswith("摘要"):
+            node_type = "abstract_block"
+
+        items.append(
+            {
+                "node_id": f"legacy_{idx:06d}",
+                "node_type": node_type,
+                "text": text,
+                "page_number": page_idx + 1,
+                "reading_order": idx,
+            }
+        )
+
+    return {"items": items}
+
+
+def _bootstrap_existing_asset(
+    *,
+    content_db_path: Path,
+    parse_level: str,
+    literature_row: Dict[str, Any],
+    output_root: Path,
+    source_stage: str,
+) -> Dict[str, Any] | None:
+    asset_dir = _discover_existing_asset_dir(output_root, literature_row)
+    if asset_dir is None:
+        return None
+
+    normalized_structured_path = (asset_dir / "normalized.structured.json").resolve()
+    reconstructed_markdown_path = (asset_dir / "reconstructed_content.md").resolve()
+    elements_path = (asset_dir / "elements.json").resolve()
+    linear_index_path = (asset_dir / "linear_index.json").resolve()
+    parse_record_path = (asset_dir / "parse_record.json").resolve()
+    quality_report_path = (asset_dir / "quality_report.json").resolve()
+
+    source_markdown = _pick_existing_markdown(asset_dir)
+    if source_markdown is None:
+        return None
+
+    markdown_text = source_markdown.read_text(encoding="utf-8-sig")
+    if not reconstructed_markdown_path.exists():
+        reconstructed_markdown_path.write_text(markdown_text, encoding="utf-8")
+
+    if not elements_path.exists():
+        content_list_candidates = sorted(asset_dir.glob("*_content_list.json"))
+        elements_payload = {"items": []}
+        if content_list_candidates:
+            elements_payload = _build_elements_from_content_list(content_list_candidates[0].resolve())
+        elements_path.write_text(json.dumps(elements_payload, ensure_ascii=False, indent=2), encoding="utf-8")
+
+    if not linear_index_path.exists():
+        linear_index_payload = {
+            "paragraphs": [
+                {
+                    "index": idx + 1,
+                    "text": paragraph,
+                }
+                for idx, paragraph in enumerate([item for item in re.split(r"\n{2,}", markdown_text) if _stringify(item)])
+            ]
+        }
+        linear_index_path.write_text(json.dumps(linear_index_payload, ensure_ascii=False, indent=2), encoding="utf-8")
+
+    if not parse_record_path.exists():
+        parse_record_payload = {
+            "schema": "aok.pdf_monkeyocr_parse_record.v1",
+            "tool": "bootstrap_existing_monkeyocr_asset",
+            "llm_backend": "monkeyocr_windows",
+            "llm_model": "external_preparsed",
+            "output_dir": str(asset_dir),
+        }
+        parse_record_path.write_text(json.dumps(parse_record_payload, ensure_ascii=False, indent=2), encoding="utf-8")
+
+    if not quality_report_path.exists():
+        quality_report_payload = {
+            "schema": "aok.pdf_monkeyocr_quality_report.v1",
+            "status": "bootstrapped",
+            "output_dir": str(asset_dir),
+        }
+        quality_report_path.write_text(json.dumps(quality_report_payload, ensure_ascii=False, indent=2), encoding="utf-8")
+
+    if not normalized_structured_path.exists():
+        pdf_path = _resolve_pdf_path(content_db_path, literature_row)
+        payload = build_structured_data_payload(
+            pdf_path=pdf_path,
+            backend="monkeyocr_windows",
+            backend_family="monkeyocr",
+            task_type=parse_level,
+            full_text=markdown_text,
+            extract_error="",
+            uid_literature=_stringify(literature_row.get("uid_literature")),
+            cite_key=_stringify(literature_row.get("cite_key")),
+            title=_stringify(literature_row.get("title")),
+            year=_stringify(literature_row.get("year")),
+            artifacts={
+                "asset_dir": str(asset_dir),
+                "elements_path": str(elements_path),
+                "linear_index_path": str(linear_index_path),
+                "reconstructed_markdown_path": str(reconstructed_markdown_path),
+                "parse_record_path": str(parse_record_path),
+                "quality_report_path": str(quality_report_path),
+            },
+            capabilities={"parse_level": parse_level, "llm_backend": "monkeyocr_windows", "llm_model": "external_preparsed"},
+        )
+        normalized_structured_path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+
+    parse_asset_row = {
+        "uid_literature": _stringify(literature_row.get("uid_literature")),
+        "cite_key": _stringify(literature_row.get("cite_key")),
+        "parse_level": parse_level,
+        "source_stage": _stringify(source_stage),
+        "backend": "monkeyocr_windows",
+        "task_type": parse_level,
+        "asset_dir": str(asset_dir),
+        "normalized_structured_path": str(normalized_structured_path),
+        "reconstructed_markdown_path": str(reconstructed_markdown_path),
+        "linear_index_path": str(linear_index_path),
+        "elements_path": str(elements_path),
+        "chunk_manifest_path": _stringify(asset_dir / "chunk_manifest.json"),
+        "chunks_jsonl_path": _stringify(asset_dir / "chunks.jsonl"),
+        "parse_record_path": str(parse_record_path),
+        "quality_report_path": str(quality_report_path),
+        "parse_status": "ready",
+        "llm_model": "external_preparsed",
+        "llm_backend": "monkeyocr_windows",
+        "last_run_uid": _safe_stem(_stringify(literature_row.get("cite_key")) or _stringify(literature_row.get("uid_literature"))),
+    }
+    upsert_parse_asset_rows(content_db_path, [parse_asset_row])
+    payload = _load_json_file(normalized_structured_path)
+    text_payload = payload.get("text") if isinstance(payload.get("text"), dict) else {}
+    references_payload = payload.get("references") if isinstance(payload.get("references"), list) else []
+    save_structured_state(
+        content_db_path,
+        uid_literature=_stringify(literature_row.get("uid_literature")),
+        structured_status="ready",
+        structured_abs_path=str(normalized_structured_path),
+        structured_backend="monkeyocr_windows",
+        structured_task_type=parse_level,
+        structured_updated_at=_stringify((payload.get("parse_profile") or {}).get("created_at")),
+        structured_schema_version=_stringify(payload.get("schema")),
+        structured_text_length=len(_stringify(text_payload.get("full_text"))),
+        structured_reference_count=len(references_payload),
+    )
+    return parse_asset_row
 
 
 def _extract_text_with_pymupdf(pdf_path: Path) -> tuple[str, Dict[str, Any]]:
@@ -211,7 +472,14 @@ def _select_existing_asset(
     uid_literature: str = "",
     cite_key: str = "",
 ) -> Dict[str, Any] | None:
-    table = load_parse_assets_df(content_db, parse_level=parse_level, only_current=True, parse_statuses=["ready"]).fillna("")
+    table = load_parse_assets_df(content_db, only_current=True, parse_statuses=["ready"]).fillna("")
+    if table.empty:
+        return None
+    requested_level = _stringify(parse_level)
+    allowed_levels = {requested_level, UNIFIED_PARSE_LEVEL}
+    if requested_level in _LEGACY_PARSE_LEVELS:
+        allowed_levels.update(_LEGACY_PARSE_LEVELS)
+    table = table[table.get("parse_level", "").astype(str).isin({item for item in allowed_levels if item})]
     if table.empty:
         return None
     resolved_uid = _stringify(uid_literature)
@@ -234,12 +502,14 @@ def build_normalized_structured_from_multimodal_result(
     pdf_path: str | Path,
     parse_result: Dict[str, Any],
     parse_level: str,
+    backend: str = "monkeyocr_windows",
+    backend_family: str = "monkeyocr",
     uid_literature: str = "",
     cite_key: str = "",
     title: str = "",
     year: str = "",
 ) -> Path:
-    """把多模态目录资产转换为兼容旧消费者的 structured.json。"""
+    """把解析目录资产转换为兼容旧消费者的 structured.json。"""
 
     pdf_file = Path(pdf_path).resolve()
     output_dir = Path(_stringify(parse_result.get("output_dir"))).resolve()
@@ -267,8 +537,8 @@ def build_normalized_structured_from_multimodal_result(
     }
     payload = build_structured_data_payload(
         pdf_path=pdf_file,
-        backend="aliyun_multimodal",
-        backend_family="aliyun_multimodal",
+        backend=backend,
+        backend_family=backend_family,
         task_type=parse_level,
         full_text=reconstructed_text,
         extract_error="",
@@ -448,21 +718,37 @@ def ensure_multimodal_parse_asset(
         if existing is not None:
             return existing
 
-    pdf_path = _resolve_pdf_path(content_db_path, literature_row)
-    resolved_api_key_file = _resolve_api_key_file(api_key_file=api_key_file, global_config_path=global_config_path)
     output_root = _resolve_output_root(content_db_path, parse_level)
-    output_name = _safe_stem(resolved_cite_key or resolved_uid or pdf_path.stem)
+    bootstrapped = _bootstrap_existing_asset(
+        content_db_path=content_db_path,
+        parse_level=parse_level,
+        literature_row=literature_row,
+        output_root=output_root,
+        source_stage=source_stage,
+    )
+    if bootstrapped is not None:
+        existing = _select_existing_asset(
+            content_db_path,
+            parse_level=parse_level,
+            uid_literature=resolved_uid,
+            cite_key=resolved_cite_key,
+        )
+        if existing is not None:
+            return existing
 
-    resolved_model = _resolve_model(model=model, global_config_path=global_config_path)
-    resolved_sdk_backend = _resolve_sdk_backend(sdk_backend=sdk_backend, global_config_path=global_config_path)
+    pdf_path = _resolve_pdf_path(content_db_path, literature_row)
+    output_name = _safe_stem(resolved_cite_key or resolved_uid or pdf_path.stem)
+    workspace_root = infer_workspace_root_from_content_db(content_db_path)
+    raw_cfg = _load_global_config(global_config_path)
+    resolved_monkeyocr_root = _resolve_monkeyocr_root(workspace_root=workspace_root, raw_cfg=raw_cfg)
+    resolved_monkeyocr_model_name = _resolve_monkeyocr_model_name(raw_cfg=raw_cfg)
 
     parse_result = parse_pdf_with_aliyun_multimodal(
         pdf_path=pdf_path,
         output_root=output_root,
         output_name=output_name,
-        api_key_file=resolved_api_key_file,
-        model=resolved_model,
-        sdk_backend=resolved_sdk_backend,
+        monkeyocr_root=resolved_monkeyocr_root,
+        model_name=resolved_monkeyocr_model_name,
         uid_literature=resolved_uid,
         cite_key=resolved_cite_key,
         document_id=resolved_cite_key or resolved_uid,
@@ -473,11 +759,16 @@ def ensure_multimodal_parse_asset(
         },
         max_pages=max_pages,
         overwrite_output=overwrite_existing,
+        api_key_file=api_key_file,
+        model=model,
+        sdk_backend=sdk_backend,
     )
     normalized_structured_path = build_normalized_structured_from_multimodal_result(
         pdf_path=pdf_path,
         parse_result=parse_result,
         parse_level=parse_level,
+        backend="monkeyocr_windows",
+        backend_family="monkeyocr",
         uid_literature=resolved_uid,
         cite_key=resolved_cite_key,
         title=_stringify(literature_row.get("title")),
@@ -492,7 +783,7 @@ def ensure_multimodal_parse_asset(
         "cite_key": resolved_cite_key,
         "parse_level": parse_level,
         "source_stage": _stringify(source_stage),
-        "backend": "aliyun_multimodal",
+        "backend": "monkeyocr_windows",
         "task_type": parse_level,
         "asset_dir": _stringify(parse_result.get("output_dir")),
         "normalized_structured_path": str(normalized_structured_path),
@@ -513,7 +804,7 @@ def ensure_multimodal_parse_asset(
         uid_literature=resolved_uid,
         structured_status="ready",
         structured_abs_path=str(normalized_structured_path),
-        structured_backend="aliyun_multimodal",
+        structured_backend="monkeyocr_windows",
         structured_task_type=parse_level,
         structured_updated_at=_stringify((structured_payload.get("parse_profile") or {}).get("created_at")),
         structured_schema_version=_stringify(structured_payload.get("schema")),

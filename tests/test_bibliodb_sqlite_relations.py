@@ -2,19 +2,24 @@
 
 from __future__ import annotations
 
+import os
 import json
 from pathlib import Path
 import sqlite3
 
 import pandas as pd
 
+from autodokit.tools import incremental_import_bib_into_content_db
 from autodokit.tools.bibliodb_sqlite import (
     get_structured_state,
     load_attachments_df,
     load_chunk_sets_df,
     load_chunks_df,
+    load_literatures_df,
     load_reading_state_df,
     load_tags_df,
+    merge_reference_records,
+    replace_reference_tables_only,
     replace_chunk_set_records,
     rebuild_reference_relation_tables_from_config,
     save_structured_state,
@@ -22,6 +27,114 @@ from autodokit.tools.bibliodb_sqlite import (
     upsert_reading_queue_rows,
     upsert_reading_state_rows,
 )
+
+
+def test_incremental_import_tool_should_merge_records_and_preserve_runtime_tables(tmp_path: Path) -> None:
+    """独立增量导入入口应合并重复文献且保留运行态表。"""
+
+    db_path = tmp_path / "content.db"
+    save_tables(
+        db_path,
+        literatures_df=pd.DataFrame(
+            [
+                {
+                    "id": 1,
+                    "uid_literature": "lit-old-001",
+                    "cite_key": "sciinfo-2024-scientometrics",
+                    "title": "科学学研究方法综述",
+                    "title_norm": "科学学研究方法综述",
+                    "first_author": "研究者甲",
+                    "year": "2024",
+                    "entry_type": "article",
+                    "has_fulltext": 1,
+                    "primary_attachment_name": "old.pdf",
+                    "pdf_path": "C:/papers/old.pdf",
+                    "keywords": "科学学; 学术评价",
+                    "created_at": "",
+                    "updated_at": "",
+                }
+            ]
+        ),
+        attachments_df=pd.DataFrame(
+            [
+                {
+                    "uid_attachment": "att-old-001",
+                    "uid_literature": "lit-old-001",
+                    "attachment_name": "old.pdf",
+                    "attachment_type": "fulltext",
+                    "file_ext": "pdf",
+                    "storage_path": "C:/papers/old.pdf",
+                    "source_path": "C:/papers/old.pdf",
+                    "checksum": "",
+                    "is_primary": 1,
+                    "status": "available",
+                    "created_at": "",
+                    "updated_at": "",
+                }
+            ]
+        ),
+        if_exists="replace",
+    )
+    upsert_reading_state_rows(
+        db_path,
+        [
+            {
+                "uid_literature": "lit-old-001",
+                "cite_key": "sciinfo-2024-scientometrics",
+                "source_stage": "A080",
+                "pending_preprocess": 1,
+                "preprocessed": 0,
+                "pending_rough_read": 0,
+                "rough_read_done": 0,
+                "deep_read_count": 0,
+            }
+        ],
+    )
+
+    bib_path = tmp_path / "incoming.bib"
+    bib_path.write_text(
+        """
+@article{dup_ref,
+  title={科学学研究方法综述},
+  author={研究者甲 and 研究者乙},
+  year={2024},
+  keywords={科学学; 学术评价}
+}
+
+@article{new_ref,
+  title={学术影响力与政策工具},
+  author={研究者丙 and 研究者丁},
+  year={2023},
+  keywords={学术影响力; 政策工具}
+}
+""".strip(),
+        encoding="utf-8",
+    )
+
+    summary = incremental_import_bib_into_content_db(
+        db_path=db_path,
+        bib_paths=bib_path,
+        tag_list=["科学学", "学术影响力"],
+        tag_match_fields=["title", "keywords"],
+        has_pdf_enable=False,
+    )
+
+    literatures_df = load_literatures_df(db_path)
+    attachments_df = load_attachments_df(db_path)
+    tags_df = load_tags_df(db_path)
+    reading_state_df = load_reading_state_df(db_path)
+
+    assert summary["incoming_count"] == 2
+    assert summary["matched_existing_count"] == 1
+    assert summary["inserted_count"] == 1
+    assert summary["final_literature_count"] == 2
+
+    uid_values = set(literatures_df["uid_literature"].tolist())
+    assert "lit-old-001" in uid_values
+    assert len(uid_values) == 2
+    assert set(attachments_df["uid_literature"].tolist()) == {"lit-old-001"}
+    assert set(tags_df["tag"].tolist()) == {"科学学", "学术影响力"}
+    assert set(reading_state_df["uid_literature"].tolist()) == {"lit-old-001"}
 
 
 def test_rebuild_reference_relation_tables_from_config_should_fill_attachment_and_tag_tables(tmp_path: Path) -> None:
@@ -397,3 +510,210 @@ def test_reading_state_views_should_expose_human_facing_live_lists(tmp_path: Pat
     assert pending_rough == [("lit-rough", "rough.pdf", "human")]
     assert pending_critical == [("lit-parse", "ready", "parse_ready")]
     assert overview_row == ("lit-parse", "待批判性研读文献", "待批判性研读", 0, "ready")
+
+
+def test_merge_reference_records_should_keep_existing_uid_and_runtime_tables(tmp_path: Path) -> None:
+    """增量并库应复用旧 UID、合并附件，并保留阅读状态表。"""
+
+    db_path = tmp_path / "content.db"
+    old_dir = tmp_path / "old"
+    new_dir = tmp_path / "new"
+    old_dir.mkdir()
+    new_dir.mkdir()
+    old_pdf = old_dir / "paper.pdf"
+    new_pdf = new_dir / "paper.pdf"
+    supplement_pdf = new_dir / "supplement.pdf"
+    old_pdf.write_text("old", encoding="utf-8")
+    new_pdf.write_text("new", encoding="utf-8")
+    supplement_pdf.write_text("supplement", encoding="utf-8")
+    os.utime(old_pdf, (1_700_000_000, 1_700_000_000))
+    os.utime(new_pdf, (1_800_000_000, 1_800_000_000))
+    os.utime(supplement_pdf, (1_800_000_100, 1_800_000_100))
+
+    save_tables(
+        db_path,
+        literatures_df=pd.DataFrame(
+            [
+                {
+                    "id": 1,
+                    "uid_literature": "lit-existing",
+                    "cite_key": "sci2024demo",
+                    "title": "科学学案例研究",
+                    "title_norm": "科学学案例研究",
+                    "clean_title": "科学学案例研究",
+                    "first_author": "研究者甲",
+                    "year": "2024",
+                    "abstract": "旧摘要（科学学方向）",
+                    "keywords": "科学学",
+                    "has_fulltext": 1,
+                    "primary_attachment_name": "paper.pdf",
+                    "pdf_path": str(old_pdf),
+                    "created_at": "2026-04-01T00:00:00+00:00",
+                    "updated_at": "2026-04-01T00:00:00+00:00",
+                }
+            ]
+        ),
+        attachments_df=pd.DataFrame(
+            [
+                {
+                    "uid_attachment": "att-old",
+                    "uid_literature": "lit-existing",
+                    "attachment_name": "paper.pdf",
+                    "attachment_type": "fulltext",
+                    "file_ext": "pdf",
+                    "storage_path": str(old_pdf),
+                    "source_path": str(old_pdf),
+                    "checksum": "",
+                    "is_primary": 1,
+                    "status": "available",
+                    "created_at": "2026-04-01T00:00:00+00:00",
+                    "updated_at": "2026-04-01T00:00:00+00:00",
+                }
+            ]
+        ),
+        tags_df=pd.DataFrame(
+            [
+                {
+                    "uid_literature": "lit-existing",
+                    "cite_key": "sci2024demo",
+                    "tag": "历史标签",
+                    "tag_norm": "历史标签",
+                    "source_type": "seed",
+                    "created_at": "2026-04-01T00:00:00+00:00",
+                    "updated_at": "2026-04-01T00:00:00+00:00",
+                }
+            ]
+        ),
+        if_exists="replace",
+    )
+    upsert_reading_state_rows(
+        db_path,
+        [
+                {
+                    "uid_literature": "lit-existing",
+                    "cite_key": "sci2024demo",
+                    "pending_preprocess": 0,
+                    "preprocessed": 1,
+                    "pending_rough_read": 1,
+                }
+        ],
+    )
+
+    merged_literatures_df, merged_attachments_df, merged_tags_df, summary = merge_reference_records(
+        existing_literatures_df=load_literatures_df(db_path),
+        existing_attachments_df=load_attachments_df(db_path),
+        existing_tags_df=load_tags_df(db_path),
+        incoming_literatures_df=pd.DataFrame(
+            [
+                {
+                    "id": 1,
+                    "uid_literature": "lit-incoming-dup",
+                        "cite_key": "sci2024demo",
+                        "title": "科学学案例研究",
+                        "title_norm": "科学学案例研究",
+                        "clean_title": "科学学案例研究",
+                        "first_author": "研究者甲",
+                        "year": "2024",
+                        "abstract": "更新后的更长摘要内容（科学学）",
+                        "keywords": "科学学;研究方法",
+                    "has_fulltext": 1,
+                    "primary_attachment_name": "paper.pdf",
+                    "pdf_path": str(new_pdf),
+                    "created_at": "2026-04-09T00:00:00+00:00",
+                    "updated_at": "2026-04-09T00:00:00+00:00",
+                },
+                {
+                    "id": 2,
+                    "uid_literature": "lit-fresh",
+                    "cite_key": "li2025fresh",
+                    "title": "新增论文（科学学）",
+                    "title_norm": "新增论文（科学学）",
+                    "clean_title": "新增论文（科学学）",
+                    "first_author": "研究者乙",
+                    "year": "2025",
+                    "abstract": "新增摘要（科学学方向）",
+                    "keywords": "新增",
+                    "has_fulltext": 0,
+                    "primary_attachment_name": "",
+                    "pdf_path": "",
+                    "created_at": "2026-04-09T00:00:00+00:00",
+                    "updated_at": "2026-04-09T00:00:00+00:00",
+                },
+            ]
+        ),
+        incoming_attachments_df=pd.DataFrame(
+            [
+                {
+                    "uid_attachment": "att-new-main",
+                    "uid_literature": "lit-incoming-dup",
+                    "attachment_name": "paper.pdf",
+                    "attachment_type": "fulltext",
+                    "file_ext": "pdf",
+                    "storage_path": str(new_pdf),
+                    "source_path": str(new_pdf),
+                    "checksum": "",
+                    "is_primary": 1,
+                    "status": "available",
+                    "created_at": "2026-04-09T00:00:00+00:00",
+                    "updated_at": "2026-04-09T00:00:00+00:00",
+                },
+                {
+                    "uid_attachment": "att-new-supplement",
+                    "uid_literature": "lit-incoming-dup",
+                    "attachment_name": "supplement.pdf",
+                    "attachment_type": "fulltext",
+                    "file_ext": "pdf",
+                    "storage_path": str(supplement_pdf),
+                    "source_path": str(supplement_pdf),
+                    "checksum": "",
+                    "is_primary": 0,
+                    "status": "available",
+                    "created_at": "2026-04-09T00:00:00+00:00",
+                    "updated_at": "2026-04-09T00:00:00+00:00",
+                },
+            ]
+        ),
+        incoming_tags_df=pd.DataFrame(
+            [
+                {
+                    "uid_literature": "lit-incoming-dup",
+                    "cite_key": "sci2024demo",
+                    "tag": "引用分析",
+                    "tag_norm": "引用分析",
+                    "source_type": "a020",
+                    "created_at": "2026-04-09T00:00:00+00:00",
+                    "updated_at": "2026-04-09T00:00:00+00:00",
+                }
+            ]
+        ),
+    )
+
+    assert summary["matched_existing_count"] == 1
+    assert summary["inserted_count"] == 1
+    assert set(merged_literatures_df["uid_literature"].tolist()) == {"lit-existing", "lit-fresh"}
+    merged_existing = merged_literatures_df[merged_literatures_df["uid_literature"] == "lit-existing"].iloc[0]
+    assert merged_existing["abstract"] == "更新后的更长摘要内容（科学学）"
+    assert merged_existing["pdf_path"] == str(new_pdf)
+
+    merged_existing_attachments = merged_attachments_df[
+        merged_attachments_df["uid_literature"] == "lit-existing"
+    ].copy()
+    assert set(merged_existing_attachments["attachment_name"].tolist()) == {"paper.pdf", "supplement.pdf"}
+    paper_row = merged_existing_attachments[merged_existing_attachments["attachment_name"] == "paper.pdf"].iloc[0]
+    assert paper_row["storage_path"] == str(new_pdf)
+    assert set(merged_tags_df[merged_tags_df["uid_literature"] == "lit-existing"]["tag"].tolist()) == {"历史标签", "引用分析"}
+
+    replace_reference_tables_only(
+        db_path,
+        literatures_df=merged_literatures_df,
+        attachments_df=merged_attachments_df,
+        tags_df=merged_tags_df,
+    )
+
+    roundtrip_literatures = load_literatures_df(db_path)
+    roundtrip_attachments = load_attachments_df(db_path)
+    roundtrip_state = load_reading_state_df(db_path)
+
+    assert set(roundtrip_literatures["uid_literature"].tolist()) == {"lit-existing", "lit-fresh"}
+    assert set(roundtrip_attachments[roundtrip_attachments["uid_literature"] == "lit-existing"]["attachment_name"].tolist()) == {"paper.pdf", "supplement.pdf"}
+    assert list(roundtrip_state["uid_literature"]) == ["lit-existing"]

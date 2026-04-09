@@ -17,6 +17,7 @@ from autodokit.tools import (
 )
 from autodokit.tools.atomic.task_aok.git_snapshot_ledger import git_workspace_init
 from autodokit.tools.atomic.task_aok.post_affair_git_commit import affair_auto_git_commit
+from autodokit.tools.atomic.task_aok.task_instance_dir import resolve_legacy_output_dir
 from autodokit.tools.bibliodb_sqlite import init_db as init_references_db
 from autodokit.tools.contentdb_sqlite import (
     CONTENT_DB_DIRECTORY_NAME,
@@ -333,13 +334,7 @@ def execute(config_path: Path) -> List[Path]:
     raw_cfg = load_json_or_py(config_path)
     result = ProjectInitializationEngine().run(project_root=str(raw_cfg.get("project_root") or "."))
 
-    output_dir = Path(str(raw_cfg.get("output_dir") or config_path.parent))
-    if not output_dir.is_absolute():
-        raise ValueError(
-            "output_dir 必须为绝对路径：请确认已在 tools 层完成统一路径预处理，"
-            f"当前值={str(raw_cfg.get('output_dir') or '')!r}"
-        )
-    output_dir.mkdir(parents=True, exist_ok=True)
+    output_dir = resolve_legacy_output_dir(raw_cfg, config_path)
 
     task_instance_dir = Path(str(result.get("task_instance_dir") or (output_dir / "task_instance")))
     task_instance_dir.mkdir(parents=True, exist_ok=True)

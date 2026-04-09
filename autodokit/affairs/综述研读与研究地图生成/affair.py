@@ -45,6 +45,7 @@ from autodokit.tools import (
     refine_review_state_with_llm,
     sentence_line_from_review_state,
 )
+from autodokit.tools.atomic.task_aok.task_instance_dir import create_task_instance_dir, mirror_artifacts_to_legacy, resolve_legacy_output_dir
 from autodokit.tools.contentdb_sqlite import resolve_content_db_config
 from autodokit.tools.bibliodb_sqlite import load_reading_queue_df, replace_tags_for_namespace, upsert_reading_queue_rows
 from autodokit.tools.storage_backend import (
@@ -1444,7 +1445,8 @@ def _update_standard_note(
 def execute(config_path: Path) -> List[Path]:
     raw_cfg = load_json_or_py(config_path)
     workspace_root = _resolve_workspace_root(config_path, raw_cfg)
-    output_dir = _resolve_output_dir(config_path, raw_cfg)
+    legacy_output_dir = resolve_legacy_output_dir(raw_cfg, config_path)
+    output_dir = create_task_instance_dir(workspace_root, "A070")
     asset_paths = _a05_asset_paths(workspace_root)
     content_db_path, db_input_key = resolve_content_db_config(raw_cfg)
 
@@ -1935,7 +1937,7 @@ def execute(config_path: Path) -> List[Path]:
     if batch_path is not None:
         artifacts.append(batch_path)
 
-    step_output_dir = workspace_root / "steps" / "A070_review_synthesis"
+    step_output_dir = output_dir
     step_output_dir.mkdir(parents=True, exist_ok=True)
     downstream_path = step_output_dir / "downstream_non_review_candidates.csv"
     downstream_df.to_csv(downstream_path, index=False, encoding="utf-8-sig")
@@ -2059,5 +2061,7 @@ def execute(config_path: Path) -> List[Path]:
     except Exception:
         pass
 
+
+    mirror_artifacts_to_legacy([downstream_path, downstream_md_path, gate_path], legacy_output_dir, output_dir)
     return [*artifacts, gate_path]
 

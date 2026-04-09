@@ -12,10 +12,12 @@ from autodokit.tools import append_aok_log_event, build_gate_review, knowledge_i
 from autodokit.tools.llm_clients import postprocess_aliyun_multimodal_parse_outputs
 from autodokit.tools.bibliodb_sqlite import load_reading_state_df, upsert_reading_state_rows
 from autodokit.tools.contentdb_sqlite import CONTENT_DB_DIRECTORY_NAME, DEFAULT_CONTENT_DB_NAME, resolve_content_db_config
+from autodokit.tools.literature_translation_tools import run_literature_translation
 from autodokit.tools.ocr.classic.pdf_parse_asset_manager import ensure_multimodal_parse_asset, ensure_pdf_text_fallback_asset
 from autodokit.tools.ocr.classic.pdf_structured_data_tools import load_single_document_record
 from autodokit.tools.reading_state_tools import build_followup_candidate_state_row
 from autodokit.tools.storage_backend import load_knowledge_tables, load_reference_tables, persist_knowledge_tables, persist_reference_tables
+from autodokit.tools.atomic.task_aok.task_instance_dir import create_task_instance_dir, mirror_artifacts_to_legacy, resolve_legacy_output_dir
 from autodokit.tools.atomic.task_aok.post_affair_git_commit import affair_auto_git_commit
 
 
@@ -112,7 +114,8 @@ def _build_critical_note(*, title: str, cite_key: str, text: str, reading_object
 def execute(config_path: Path) -> List[Path]:
     raw_cfg = load_json_or_py(config_path)
     workspace_root = _resolve_workspace_root(config_path, raw_cfg)
-    output_dir = _resolve_output_dir(config_path, raw_cfg)
+    legacy_output_dir = resolve_legacy_output_dir(raw_cfg, config_path)
+    output_dir = create_task_instance_dir(workspace_root, "A105")
     content_db, _ = resolve_content_db_config(
         raw_cfg,
         default_path=workspace_root / "database" / CONTENT_DB_DIRECTORY_NAME / DEFAULT_CONTENT_DB_NAME,
@@ -155,6 +158,7 @@ def execute(config_path: Path) -> List[Path]:
     postprocess_rewrite_structured = bool(raw_cfg.get("postprocess_rewrite_structured", True))
     postprocess_rewrite_markdown = bool(raw_cfg.get("postprocess_rewrite_markdown", True))
     postprocess_keep_page_markers = bool(raw_cfg.get("postprocess_keep_page_markers", False))
+    translation_policy = dict(raw_cfg.get("translation_policy") or {})
 
     literatures_df, attachments_df, _ = load_reference_tables(db_path=content_db)
     knowledge_index_df, knowledge_attachments_df, _ = load_knowledge_tables(db_path=content_db)
@@ -321,6 +325,32 @@ def execute(config_path: Path) -> List[Path]:
                 }
             )
             state_updates.extend(discovered_rows)
+            note_translation_result: Dict[str, Any] = {
+                "status": "SKIP",
+                "translated_note_path": "",
+                "audit_path": "",
+            }
+            if translation_policy:
+                try:
+                    note_translation_result = run_literature_translation(
+                        content_db=content_db,
+                        translation_scope="standard_note",
+                        translation_policy=translation_policy,
+                        workspace_root=workspace_root,
+                        uid_literature=uid_literature,
+                        cite_key=cite_key,
+                        source_note_path=note_path,
+                        affair_name="A105",
+                        config_path=workspace_root / "config" / "config.json",
+                    )
+                except Exception as translation_exc:
+                    note_translation_result = {
+                        "status": "FAIL",
+                        "translated_note_path": "",
+                        "audit_path": "",
+                        "error": str(translation_exc),
+                    }
+
             result_rows.append(
                 {
                     "uid_literature": uid_literature,
@@ -335,6 +365,9 @@ def execute(config_path: Path) -> List[Path]:
                     "postprocess_llm_basic_cleanup_status": _stringify(postprocess_summary.get("llm_basic_cleanup_status")),
                     "postprocess_llm_structure_status": _stringify(postprocess_summary.get("llm_structure_resolution_status")),
                     "postprocess_contamination_removed_block_count": int(postprocess_summary.get("contamination_removed_block_count") or 0),
+                    "note_translation_status": str(note_translation_result.get("status") or "SKIP"),
+                    "translated_note_path": str(note_translation_result.get("translated_note_path") or ""),
+                    "note_translation_audit_path": str(note_translation_result.get("audit_path") or ""),
                 }
             )
         except Exception as exc:
@@ -406,5 +439,6 @@ def execute(config_path: Path) -> List[Path]:
     except Exception:
         pass
 
+    mirror_artifacts_to_legacy([index_path, gate_path], legacy_output_dir, output_dir)
     return [index_path, gate_path]
 

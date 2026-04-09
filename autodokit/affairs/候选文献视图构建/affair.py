@@ -43,6 +43,7 @@ from autodokit.tools.storage_backend import (
     persist_reference_main_table,
     persist_review_candidate_views,
 )
+from autodokit.tools.atomic.task_aok.task_instance_dir import create_task_instance_dir, mirror_artifacts_to_legacy, resolve_legacy_output_dir
 from autodokit.tools.atomic.task_aok.post_affair_git_commit import affair_auto_git_commit
 from autodokit.tools.ocr.classic.pdf_structured_data_tools import (
     extract_reference_lines_from_structured_data,
@@ -1144,10 +1145,8 @@ def execute(config_path: Path) -> List[Path]:
         global_config_path = None
     global_cfg = _load_global_config(global_config_path)
     content_db_path, db_input_key = _resolve_content_db_path(raw_cfg, global_cfg)
-    output_dir = Path(str(raw_cfg.get("output_dir") or config_path.parent))
-    if not output_dir.is_absolute():
-        raise ValueError(f"output_dir 必须为绝对路径: {output_dir}")
-    output_dir.mkdir(parents=True, exist_ok=True)
+    legacy_output_dir = resolve_legacy_output_dir(raw_cfg, config_path)
+    output_dir = create_task_instance_dir(workspace_root, "A050")
     global_config_path = workspace_root / "config" / "config.json"
     if not global_config_path.exists():
         global_config_path = None
@@ -1424,6 +1423,11 @@ def execute(config_path: Path) -> List[Path]:
             "batch_count": int(review_reading_batches['batch_id'].nunique()) if not review_reading_batches.empty else 0,
             "a060_queue_count": a060_queue_count,
         },
+    )
+    mirror_artifacts_to_legacy(
+        [index_path, readable_path, review_path, queue_seed_path, read_pool_path, exit_view_path, batch_path, gate_path],
+        legacy_output_dir,
+        output_dir,
     )
     return [
         index_path,

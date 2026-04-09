@@ -74,7 +74,7 @@ def _resolve_workspace_root(config_path: Path, raw_cfg: Dict[str, Any]) -> Path:
 
 
 def _resolve_output_dir(config_path: Path, raw_cfg: Dict[str, Any]) -> Path:
-    output_dir = Path(str(raw_cfg.get("output_dir") or config_path.parent))
+    output_dir = Path(str(raw_cfg.get("legacy_output_dir") or raw_cfg.get("output_dir") or config_path.parent))
     if not output_dir.is_absolute():
         raise ValueError(f"output_dir 必须为绝对路径: {output_dir}")
     output_dir.mkdir(parents=True, exist_ok=True)

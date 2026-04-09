@@ -9,7 +9,9 @@ from typing import Any, Literal
 from uuid import uuid4
 
 from autodokit.tools import load_json_or_py
+from autodokit.tools.atomic.task_aok.task_instance_dir import create_task_instance_dir, mirror_artifacts_to_legacy, resolve_legacy_output_dir
 from autodokit.tools.atomic.task_aok.post_affair_git_commit import affair_auto_git_commit
+from autodokit.tools.literature_translation_tools import run_literature_translation
 
 ObjectType = Literal["literature", "dataset"]
 SourceType = Literal["offline", "online"]
@@ -125,6 +127,9 @@ def execute(config_path: Path) -> list[Path]:
     """事务执行入口。"""
 
     raw_cfg = load_json_or_py(config_path)
+    workspace_root = Path(str(raw_cfg.get("workspace_root") or config_path.parents[2]))
+    if not workspace_root.is_absolute():
+        raise ValueError(f"workspace_root 必须为绝对路径: {workspace_root}")
     result = default_retrieval_handler(
         {
             "request_uid": str(raw_cfg.get("request_uid") or f"request-{uuid4().hex}"),
@@ -137,14 +142,34 @@ def execute(config_path: Path) -> list[Path]:
         }
     )
 
-    output_dir = Path(str(raw_cfg.get("output_dir") or config_path.parent))
-    if not output_dir.is_absolute():
-        raise ValueError(
-            "output_dir 必须为绝对路径：请确认已在 tools 层完成统一路径预处理，"
-            f"当前值={str(raw_cfg.get('output_dir') or '')!r}"
-        )
-    output_dir.mkdir(parents=True, exist_ok=True)
+    legacy_output_dir = resolve_legacy_output_dir(raw_cfg, config_path)
+    output_dir = create_task_instance_dir(workspace_root, "A040")
 
     out_path = output_dir / "retrieval_governance_result.json"
     out_path.write_text(json.dumps(result, ensure_ascii=False, indent=2), encoding="utf-8")
-    return [out_path]
+
+    written_files: list[Path] = [out_path]
+    translation_policy = dict(raw_cfg.get("translation_policy") or {})
+    content_db = str(raw_cfg.get("content_db") or ((raw_cfg.get("released_artifacts") or {}).get("content_db") or "")).strip()
+    if content_db and translation_policy:
+        try:
+            translation_result = run_literature_translation(
+                content_db=content_db,
+                translation_scope="metadata",
+                translation_policy=translation_policy,
+                workspace_root=str(raw_cfg.get("workspace_root") or "").strip() or None,
+                max_items=int(raw_cfg.get("translation_max_items") or 0),
+                affair_name="A040",
+                config_path=config_path,
+            )
+            result["metadata_translation"] = translation_result
+            out_path.write_text(json.dumps(result, ensure_ascii=False, indent=2), encoding="utf-8")
+            audit_path = Path(str(translation_result.get("audit_path") or "").strip())
+            if audit_path.exists() and audit_path.is_file():
+                written_files.append(audit_path)
+        except Exception as exc:
+            result["metadata_translation"] = {"status": "FAIL", "error": str(exc)}
+            out_path.write_text(json.dumps(result, ensure_ascii=False, indent=2), encoding="utf-8")
+
+    mirror_artifacts_to_legacy(written_files, legacy_output_dir, output_dir)
+    return written_files

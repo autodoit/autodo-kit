@@ -9,6 +9,7 @@ from typing import Any, Dict, List
 import pandas as pd
 
 from autodokit.tools import append_aok_log_event, build_gate_review, load_json_or_py
+from autodokit.tools.atomic.task_aok.task_instance_dir import create_task_instance_dir, mirror_artifacts_to_legacy, resolve_legacy_output_dir
 from autodokit.tools.bibliodb_sqlite import load_reading_state_df, upsert_reading_state_rows
 from autodokit.tools.contentdb_sqlite import CONTENT_DB_DIRECTORY_NAME, DEFAULT_CONTENT_DB_NAME, resolve_content_db_config
 from autodokit.tools.reading_state_tools import ANALYSIS_NOTE_SPECS, append_markdown_section, resolve_analysis_note_paths
@@ -49,7 +50,8 @@ def _resolve_output_dir(config_path: Path, raw_cfg: Dict[str, Any]) -> Path:
 def execute(config_path: Path) -> List[Path]:
     raw_cfg = load_json_or_py(config_path)
     workspace_root = _resolve_workspace_root(config_path, raw_cfg)
-    output_dir = _resolve_output_dir(config_path, raw_cfg)
+    legacy_output_dir = resolve_legacy_output_dir(raw_cfg, config_path)
+    output_dir = create_task_instance_dir(workspace_root, "A095")
     content_db, _ = resolve_content_db_config(
         raw_cfg,
         default_path=workspace_root / "database" / CONTENT_DB_DIRECTORY_NAME / DEFAULT_CONTENT_DB_NAME,
@@ -121,4 +123,5 @@ def execute(config_path: Path) -> List[Path]:
     except Exception:
         pass
 
+    mirror_artifacts_to_legacy([summary_path, gate_path], legacy_output_dir, output_dir)
     return [summary_path, gate_path]

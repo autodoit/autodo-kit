@@ -9,6 +9,7 @@ from typing import Any, Dict, List
 import pandas as pd
 
 from autodokit.tools import build_gate_review, innovation_pool_upsert, init_empty_innovation_pool_table, load_json_or_py
+from autodokit.tools.atomic.task_aok.task_instance_dir import create_task_instance_dir, mirror_artifacts_to_legacy, resolve_legacy_output_dir
 from autodokit.tools.atomic.task_aok.post_affair_git_commit import affair_auto_git_commit
 
 
@@ -53,10 +54,11 @@ def execute(config_path: Path) -> List[Path]:
     """事务执行入口。"""
 
     raw_cfg = load_json_or_py(config_path)
-    output_dir = Path(str(raw_cfg.get("output_dir") or config_path.parent))
-    if not output_dir.is_absolute():
-        raise ValueError(f"output_dir 必须为绝对路径: {output_dir}")
-    output_dir.mkdir(parents=True, exist_ok=True)
+    workspace_root = Path(str(raw_cfg.get("workspace_root") or config_path.parents[2]))
+    if not workspace_root.is_absolute():
+        raise ValueError(f"workspace_root 必须为绝对路径: {workspace_root}")
+    legacy_output_dir = resolve_legacy_output_dir(raw_cfg, config_path)
+    output_dir = create_task_instance_dir(workspace_root, "A140")
 
     pool_table = init_empty_innovation_pool_table()
     generated_items = _generate_innovation_items(raw_cfg)
@@ -77,4 +79,5 @@ def execute(config_path: Path) -> List[Path]:
     )
     gate_path = output_dir / "gate_review.json"
     gate_path.write_text(json.dumps(gate_review, ensure_ascii=False, indent=2), encoding="utf-8")
+    mirror_artifacts_to_legacy([pool_path, gate_path], legacy_output_dir, output_dir)
     return [pool_path, gate_path]

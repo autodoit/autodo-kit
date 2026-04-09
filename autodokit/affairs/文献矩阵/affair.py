@@ -30,10 +30,12 @@ try:
     from autodokit.core.template_affair import TemplateAffairBase
 except ModuleNotFoundError:  # pragma: no cover - 联调环境兼容回退
     from autodoengine.core.template_affair import TemplateAffairBase
+from autodokit.tools import load_json_or_py
 from autodokit.tools.contentdb_sqlite import resolve_content_db_config
 from autodokit.tools.llm_clients import AliyunDashScopeClient, load_aliyun_llm_config
 from autodokit.tools.ocr.classic.pdf_structured_data_tools import load_document_records_from_structured_source
 from autodokit.tools.atomic.task_aok.post_affair_git_commit import affair_auto_git_commit
+from autodokit.tools.atomic.task_aok.task_instance_dir import create_task_instance_dir, mirror_artifacts_to_legacy, resolve_legacy_output_dir
 
 
 @dataclass
@@ -237,7 +239,16 @@ def execute(config_path: Path, workspace_root: Path | None = None) -> List[Path]
         写出的文件路径列表。
     """
 
-    affair = LiteratureMatrixTemplateAffair()
-    return affair.execute(config_path=config_path, workspace_root=workspace_root)
+    raw_cfg = load_json_or_py(config_path)
+    resolved_workspace_root = Path(str(raw_cfg.get("workspace_root") or workspace_root or config_path.parents[2]))
+    if not resolved_workspace_root.is_absolute():
+        raise ValueError(f"workspace_root 必须为绝对路径: {resolved_workspace_root}")
+    legacy_output_dir = resolve_legacy_output_dir(raw_cfg, config_path)
+    task_output_dir = create_task_instance_dir(resolved_workspace_root, "A110")
+    merged = dict(raw_cfg)
+    merged["output_dir"] = str(task_output_dir)
+    written_files = _run_literature_matrix(merged=merged)
+    mirror_artifacts_to_legacy(written_files, legacy_output_dir, task_output_dir)
+    return written_files
 
 

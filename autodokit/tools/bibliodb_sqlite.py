@@ -974,6 +974,465 @@ def _stable_attachment_uid(uid_literature: str, storage_path: str) -> str:
     return hashlib.md5(raw).hexdigest()
 
 
+_LITERATURE_ATTACHMENT_COLUMNS: List[str] = [
+    "uid_attachment",
+    "uid_literature",
+    "attachment_name",
+    "attachment_type",
+    "file_ext",
+    "storage_path",
+    "source_path",
+    "checksum",
+    "is_primary",
+    "status",
+    "created_at",
+    "updated_at",
+]
+
+
+_LITERATURE_TAG_COLUMNS: List[str] = [
+    "uid_literature",
+    "cite_key",
+    "tag",
+    "tag_norm",
+    "source_type",
+    "created_at",
+    "updated_at",
+]
+
+
+def _empty_attachments_df() -> pd.DataFrame:
+    return pd.DataFrame(columns=_LITERATURE_ATTACHMENT_COLUMNS)
+
+
+def _empty_tags_df() -> pd.DataFrame:
+    return pd.DataFrame(columns=_LITERATURE_TAG_COLUMNS)
+
+
+def _ensure_reference_columns(frame: pd.DataFrame | None, columns: Sequence[str]) -> pd.DataFrame:
+    working = frame.copy() if frame is not None else pd.DataFrame()
+    for column in columns:
+        if column not in working.columns:
+            working[column] = None
+    return working
+
+
+def _normalize_literatures_df(frame: pd.DataFrame | None) -> pd.DataFrame:
+    working = frame.copy() if frame is not None else pd.DataFrame()
+    if working.empty:
+        return working
+    if "id" not in working.columns and str(working.index.name or "") == "id":
+        working = working.reset_index()
+    if "id" in working.columns:
+        working["id"] = pd.to_numeric(working["id"], errors="coerce")
+    return working
+
+
+def _normalize_attachments_df(frame: pd.DataFrame | None) -> pd.DataFrame:
+    working = _ensure_reference_columns(frame, _LITERATURE_ATTACHMENT_COLUMNS)
+    if working.empty:
+        return _empty_attachments_df()
+    working["is_primary"] = pd.to_numeric(working["is_primary"], errors="coerce").fillna(0).astype(int)
+    return working
+
+
+def _normalize_tags_df(frame: pd.DataFrame | None) -> pd.DataFrame:
+    working = _ensure_reference_columns(frame, _LITERATURE_TAG_COLUMNS)
+    if working.empty:
+        return _empty_tags_df()
+    return working
+
+
+def _is_empty_scalar(value: Any) -> bool:
+    return _stringify(value) == ""
+
+
+def _find_unique_uid(frame: pd.DataFrame, mask: pd.Series) -> str:
+    rows = frame[mask]
+    if rows.empty:
+        return ""
+    uid_values = rows.get("uid_literature", pd.Series(dtype=str)).astype(str).dropna().unique().tolist()
+    if len(uid_values) != 1:
+        return ""
+    return _stringify(uid_values[0])
+
+
+def _find_matching_literature_uid(current_df: pd.DataFrame, incoming_row: pd.Series) -> str:
+    if current_df.empty:
+        return ""
+
+    incoming_uid = _stringify(incoming_row.get("uid_literature"))
+    if incoming_uid:
+        matched = _find_unique_uid(
+            current_df,
+            current_df.get("uid_literature", pd.Series(dtype=str)).astype(str) == incoming_uid,
+        )
+        if matched:
+            return matched
+
+    incoming_cite_key = _stringify(incoming_row.get("cite_key"))
+    if incoming_cite_key:
+        matched = _find_unique_uid(
+            current_df,
+            current_df.get("cite_key", pd.Series(dtype=str)).astype(str) == incoming_cite_key,
+        )
+        if matched:
+            return matched
+
+    title_norm = _stringify(incoming_row.get("title_norm"))
+    first_author = _stringify(incoming_row.get("first_author"))
+    year = _stringify(incoming_row.get("year"))
+    if title_norm and first_author and year:
+        matched = _find_unique_uid(
+            current_df,
+            (
+                current_df.get("title_norm", pd.Series(dtype=str)).astype(str) == title_norm
+            )
+            & (
+                current_df.get("first_author", pd.Series(dtype=str)).astype(str) == first_author
+            )
+            & (
+                current_df.get("year", pd.Series(dtype=str)).astype(str) == year
+            ),
+        )
+        if matched:
+            return matched
+
+    clean_title = _stringify(incoming_row.get("clean_title"))
+    if clean_title and year:
+        matched = _find_unique_uid(
+            current_df,
+            (
+                current_df.get("clean_title", pd.Series(dtype=str)).astype(str) == clean_title
+            )
+            & (
+                current_df.get("year", pd.Series(dtype=str)).astype(str) == year
+            ),
+        )
+        if matched:
+            return matched
+
+    return ""
+
+
+def _merge_literature_row(existing_row: Dict[str, Any], incoming_row: Dict[str, Any]) -> Dict[str, Any]:
+    merged = dict(existing_row)
+    prefer_longer_columns = {"abstract", "keywords", "authors"}
+    prefer_existing_columns = {
+        "id",
+        "uid_literature",
+        "cite_key",
+        "title",
+        "title_norm",
+        "clean_title",
+        "first_author",
+        "year",
+        "has_fulltext",
+        "primary_attachment_name",
+        "pdf_path",
+        "created_at",
+        "updated_at",
+    }
+
+    for column, incoming_value in incoming_row.items():
+        existing_value = merged.get(column)
+        incoming_text = _stringify(incoming_value)
+        existing_text = _stringify(existing_value)
+        if column in prefer_existing_columns:
+            if not existing_text and incoming_text:
+                merged[column] = incoming_value
+            continue
+        if column in prefer_longer_columns:
+            if len(incoming_text) > len(existing_text):
+                merged[column] = incoming_value
+            continue
+        if not existing_text and incoming_text:
+            merged[column] = incoming_value
+    return merged
+
+
+def _attachment_identity(row: pd.Series | Dict[str, Any]) -> str:
+    attachment_name = _stringify(row.get("attachment_name"))
+    if attachment_name:
+        return attachment_name.lower()
+    storage_name = Path(_stringify(row.get("storage_path")) or _stringify(row.get("source_path"))).name
+    return storage_name.lower()
+
+
+def _attachment_timestamp(row: pd.Series | Dict[str, Any]) -> float:
+    for key in ["storage_path", "source_path"]:
+        raw_path = _stringify(row.get(key))
+        if not raw_path:
+            continue
+        path = Path(raw_path)
+        if path.exists() and path.is_file():
+            try:
+                return float(path.stat().st_mtime)
+            except OSError:
+                continue
+    return 0.0
+
+
+def _attachment_sort_key(row: pd.Series | Dict[str, Any]) -> tuple[int, int, float, int, str]:
+    attachment_type = _stringify(row.get("attachment_type")).lower()
+    storage_path = _stringify(row.get("storage_path"))
+    source_path = _stringify(row.get("source_path"))
+    exists_flag = int(any(Path(path_text).exists() for path_text in [storage_path, source_path] if path_text))
+    fulltext_flag = int(attachment_type in {"fulltext", "pdf"} or _stringify(row.get("file_ext")).lower() == "pdf")
+    primary_flag = int(pd.to_numeric(row.get("is_primary"), errors="coerce") if hasattr(pd, "to_numeric") else row.get("is_primary") or 0)
+    return (
+        fulltext_flag,
+        primary_flag,
+        exists_flag,
+        _attachment_timestamp(row),
+        _attachment_identity(row),
+    )
+
+
+def _build_attachment_uid_from_row(uid_literature: str, row: Dict[str, Any]) -> str:
+    token = _stringify(row.get("storage_path")) or _stringify(row.get("source_path")) or _stringify(row.get("attachment_name"))
+    return _stable_attachment_uid(uid_literature, token)
+
+
+def _merge_attachment_rows(rows: List[Dict[str, Any]], uid_literature: str) -> List[Dict[str, Any]]:
+    grouped: Dict[str, List[Dict[str, Any]]] = {}
+    for row in rows:
+        key = _attachment_identity(row)
+        if not key:
+            continue
+        normalized = dict(row)
+        normalized["uid_literature"] = uid_literature
+        grouped.setdefault(key, []).append(normalized)
+
+    merged_rows: List[Dict[str, Any]] = []
+    now_iso = _utc_now_iso()
+    for same_name_rows in grouped.values():
+        chosen = max(same_name_rows, key=_attachment_sort_key)
+        chosen["uid_literature"] = uid_literature
+        chosen["uid_attachment"] = _build_attachment_uid_from_row(uid_literature, chosen)
+        chosen["created_at"] = _stringify(chosen.get("created_at")) or now_iso
+        chosen["updated_at"] = now_iso
+        chosen["status"] = _stringify(chosen.get("status")) or "available"
+        merged_rows.append(chosen)
+
+    if not merged_rows:
+        return []
+
+    primary_index = max(range(len(merged_rows)), key=lambda idx: _attachment_sort_key(merged_rows[idx]))
+    for idx, row in enumerate(merged_rows):
+        row["is_primary"] = 1 if idx == primary_index else 0
+        row["file_ext"] = _stringify(row.get("file_ext")) or Path(_stringify(row.get("attachment_name"))).suffix.lower().lstrip(".")
+    merged_rows.sort(key=lambda item: (_attachment_sort_key(item), _attachment_identity(item)), reverse=True)
+    return merged_rows
+
+
+def _refresh_literatures_from_attachments(literatures_df: pd.DataFrame, attachments_df: pd.DataFrame) -> pd.DataFrame:
+    working = literatures_df.copy()
+    attachment_working = _normalize_attachments_df(attachments_df)
+    if working.empty:
+        return working
+    if attachment_working.empty:
+        if "has_fulltext" in working.columns:
+            working["has_fulltext"] = 0
+        if "primary_attachment_name" in working.columns:
+            working["primary_attachment_name"] = ""
+        if "pdf_path" in working.columns:
+            working["pdf_path"] = ""
+        return working
+
+    indexed_rows: Dict[str, Dict[str, Any]] = {}
+    for _, row in attachment_working.iterrows():
+        uid_literature = _stringify(row.get("uid_literature"))
+        if not uid_literature:
+            continue
+        best_row = indexed_rows.get(uid_literature)
+        if best_row is None or _attachment_sort_key(row) > _attachment_sort_key(best_row):
+            indexed_rows[uid_literature] = row.to_dict()
+
+    for index, row in working.iterrows():
+        uid_literature = _stringify(row.get("uid_literature"))
+        selected_attachment = indexed_rows.get(uid_literature)
+        if selected_attachment is None:
+            working.at[index, "has_fulltext"] = 0
+            working.at[index, "primary_attachment_name"] = ""
+            working.at[index, "pdf_path"] = ""
+            continue
+        working.at[index, "has_fulltext"] = 1
+        working.at[index, "primary_attachment_name"] = _stringify(selected_attachment.get("attachment_name"))
+        working.at[index, "pdf_path"] = _stringify(selected_attachment.get("storage_path")) or _stringify(selected_attachment.get("source_path"))
+    return working
+
+
+def merge_reference_records(
+    *,
+    existing_literatures_df: pd.DataFrame | None,
+    existing_attachments_df: pd.DataFrame | None,
+    existing_tags_df: pd.DataFrame | None,
+    incoming_literatures_df: pd.DataFrame | None,
+    incoming_attachments_df: pd.DataFrame | None,
+    incoming_tags_df: pd.DataFrame | None,
+) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame, Dict[str, Any]]:
+    """把现有文献表与新导入文献表做增量归并。"""
+
+    existing_literatures = _normalize_literatures_df(existing_literatures_df)
+    incoming_literatures = _normalize_literatures_df(incoming_literatures_df)
+    existing_attachments = _normalize_attachments_df(existing_attachments_df)
+    incoming_attachments = _normalize_attachments_df(incoming_attachments_df)
+    existing_tags = _normalize_tags_df(existing_tags_df)
+    incoming_tags = _normalize_tags_df(incoming_tags_df)
+
+    if incoming_literatures.empty:
+        return existing_literatures, existing_attachments, existing_tags, {
+            "incoming_count": 0,
+            "matched_existing_count": 0,
+            "inserted_count": 0,
+            "final_literature_count": int(len(existing_literatures)),
+            "uid_mapping": {},
+        }
+
+    current_df = existing_literatures.copy()
+    next_id = int(pd.to_numeric(current_df.get("id", pd.Series(dtype=float)), errors="coerce").max()) if not current_df.empty and "id" in current_df.columns else 0
+    if pd.isna(next_id):
+        next_id = 0
+
+    uid_mapping: Dict[str, str] = {}
+    matched_existing_count = 0
+    inserted_count = 0
+
+    for _, incoming_row in incoming_literatures.iterrows():
+        incoming_dict = incoming_row.to_dict()
+        incoming_uid = _stringify(incoming_dict.get("uid_literature"))
+        if not incoming_uid:
+            continue
+        matched_uid = _find_matching_literature_uid(current_df, incoming_row)
+        if matched_uid:
+            mask = current_df.get("uid_literature", pd.Series(dtype=str)).astype(str) == matched_uid
+            if not mask.any():
+                continue
+            existing_index = current_df[mask].index[0]
+            merged_row = _merge_literature_row(current_df.loc[existing_index].to_dict(), incoming_dict)
+            merged_row["uid_literature"] = matched_uid
+            current_df.loc[existing_index, list(merged_row.keys())] = list(merged_row.values())
+            uid_mapping[incoming_uid] = matched_uid
+            matched_existing_count += 1
+            continue
+
+        next_id += 1
+        new_row = incoming_dict
+        new_row["id"] = next_id
+        current_df = pd.concat([current_df, pd.DataFrame([new_row])], ignore_index=True)
+        uid_mapping[incoming_uid] = incoming_uid
+        inserted_count += 1
+
+    merged_attachment_rows: List[Dict[str, Any]] = []
+    attachment_uid_order = current_df.get("uid_literature", pd.Series(dtype=str)).astype(str).tolist() if not current_df.empty else []
+    existing_attachment_records = existing_attachments.to_dict(orient="records") if not existing_attachments.empty else []
+    incoming_attachment_records = incoming_attachments.to_dict(orient="records") if not incoming_attachments.empty else []
+
+    for uid_literature in attachment_uid_order:
+        combined_rows: List[Dict[str, Any]] = []
+        combined_rows.extend([
+            row for row in existing_attachment_records if _stringify(row.get("uid_literature")) == uid_literature
+        ])
+        combined_rows.extend([
+            {**row, "uid_literature": uid_mapping.get(_stringify(row.get("uid_literature")), uid_literature)}
+            for row in incoming_attachment_records
+            if uid_mapping.get(_stringify(row.get("uid_literature")), _stringify(row.get("uid_literature"))) == uid_literature
+        ])
+        merged_attachment_rows.extend(_merge_attachment_rows(combined_rows, uid_literature))
+
+    merged_attachments_df = _normalize_attachments_df(pd.DataFrame(merged_attachment_rows))
+    current_df = _refresh_literatures_from_attachments(current_df, merged_attachments_df)
+
+    tag_rows: List[Dict[str, Any]] = []
+    if not existing_tags.empty:
+        tag_rows.extend(existing_tags.to_dict(orient="records"))
+    if not incoming_tags.empty:
+        cite_lookup = {
+            _stringify(row.get("uid_literature")): _stringify(row.get("cite_key"))
+            for row in current_df.to_dict(orient="records")
+        }
+        for row in incoming_tags.to_dict(orient="records"):
+            incoming_uid = _stringify(row.get("uid_literature"))
+            target_uid = uid_mapping.get(incoming_uid, incoming_uid)
+            if not target_uid:
+                continue
+            normalized = dict(row)
+            normalized["uid_literature"] = target_uid
+            normalized["cite_key"] = cite_lookup.get(target_uid, _stringify(row.get("cite_key")))
+            tag_rows.append(normalized)
+    merged_tags_df = _normalize_tags_df(pd.DataFrame(tag_rows)).drop_duplicates(subset=["uid_literature", "tag"], keep="last")
+
+    if "id" in current_df.columns:
+        current_df["id"] = pd.to_numeric(current_df["id"], errors="coerce").fillna(0).astype(int)
+        current_df = current_df.sort_values(by=["id", "uid_literature"], ascending=[True, True]).reset_index(drop=True)
+
+    return current_df, merged_attachments_df, merged_tags_df, {
+        "incoming_count": int(len(incoming_literatures)),
+        "matched_existing_count": int(matched_existing_count),
+        "inserted_count": int(inserted_count),
+        "final_literature_count": int(len(current_df)),
+        "uid_mapping": uid_mapping,
+    }
+
+
+def replace_reference_tables_only(
+    db_path: Path,
+    *,
+    literatures_df: Optional[pd.DataFrame] = None,
+    attachments_df: Optional[pd.DataFrame] = None,
+    tags_df: Optional[pd.DataFrame] = None,
+) -> None:
+    """仅替换文献域三张表，保留阅读状态与解析资产等运行态表。"""
+
+    init_db(db_path)
+    conn = _connect(db_path)
+    try:
+        literature_target = _resolve_writable_table_name(conn, LITERATURE_TABLE_NAME)
+        attachment_target = _resolve_writable_table_name(conn, LITERATURE_ATTACHMENT_TABLE_NAME)
+        tag_target = _resolve_writable_table_name(conn, LITERATURE_TAG_TABLE_NAME)
+
+        if literatures_df is not None and literature_target:
+            working_literatures = _normalize_literatures_df(literatures_df)
+            _ensure_columns(conn, literature_target, {column: "TEXT" for column in working_literatures.columns})
+            if not working_literatures.empty:
+                literatures_columns = [column for column in working_literatures.columns if column]
+                update_columns = [column for column in literatures_columns if column != "id"]
+                placeholders = ", ".join(["?"] * len(literatures_columns))
+                update_sql = ", ".join(
+                    [f"{_quote_identifier(column)} = excluded.{_quote_identifier(column)}" for column in update_columns]
+                )
+                sql = (
+                    f"INSERT INTO {_quote_identifier(literature_target)} "
+                    f"({', '.join(_quote_identifier(column) for column in literatures_columns)}) "
+                    f"VALUES ({placeholders}) "
+                    f"ON CONFLICT(id) DO UPDATE SET {update_sql}"
+                )
+                for row in working_literatures.where(pd.notnull(working_literatures), None).to_dict(orient="records"):
+                    values = [row.get(column) for column in literatures_columns]
+                    conn.execute(sql, values)
+
+        if attachments_df is not None and attachment_target:
+            working_attachments = _normalize_attachments_df(attachments_df)
+            _ensure_columns(conn, attachment_target, {column: "TEXT" for column in working_attachments.columns})
+            _delete_all_if_table(conn, attachment_target)
+            if not working_attachments.empty:
+                working_attachments.where(pd.notnull(working_attachments), None).to_sql(attachment_target, conn, if_exists="append", index=False)
+
+        if tags_df is not None and tag_target:
+            working_tags = _normalize_tags_df(tags_df)
+            _ensure_columns(conn, tag_target, {column: "TEXT" for column in working_tags.columns})
+            _delete_all_if_table(conn, tag_target)
+            if not working_tags.empty:
+                working_tags.where(pd.notnull(working_tags), None).to_sql(tag_target, conn, if_exists="append", index=False)
+
+        conn.commit()
+    finally:
+        conn.close()
+    init_db(db_path)
+    backfill_content_relationships(db_path)
+
+
 def build_attachments_df_from_literatures(literatures_df: pd.DataFrame) -> pd.DataFrame:
     """根据文献主表构建附件关系表。
 
@@ -984,22 +1443,7 @@ def build_attachments_df_from_literatures(literatures_df: pd.DataFrame) -> pd.Da
         可写入 literature_attachments 的 DataFrame。
     """
     if literatures_df is None or literatures_df.empty:
-        return pd.DataFrame(
-            columns=[
-                "uid_attachment",
-                "uid_literature",
-                "attachment_name",
-                "attachment_type",
-                "file_ext",
-                "storage_path",
-                "source_path",
-                "checksum",
-                "is_primary",
-                "status",
-                "created_at",
-                "updated_at",
-            ]
-        )
+        return _empty_attachments_df()
 
     rows: List[dict] = []
     for _, row in literatures_df.iterrows():
@@ -1026,22 +1470,7 @@ def build_attachments_df_from_literatures(literatures_df: pd.DataFrame) -> pd.Da
             }
         )
     if not rows:
-        return pd.DataFrame(
-            columns=[
-                "uid_attachment",
-                "uid_literature",
-                "attachment_name",
-                "attachment_type",
-                "file_ext",
-                "storage_path",
-                "source_path",
-                "checksum",
-                "is_primary",
-                "status",
-                "created_at",
-                "updated_at",
-            ]
-        )
+        return _empty_attachments_df()
     return pd.DataFrame(rows).drop_duplicates(subset=["uid_attachment"])
 
 

@@ -2,11 +2,13 @@
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 from typing import Any
 
-from autodokit.tools import load_json_or_py, write_affair_json_result
+from autodokit.tools import load_json_or_py
 from autodokit.tools.atomic.task_aok.post_affair_git_commit import affair_auto_git_commit
+from autodokit.tools.atomic.task_aok.task_instance_dir import create_task_instance_dir, mirror_artifacts_to_legacy, resolve_legacy_output_dir
 
 
 def archive_publication(
@@ -57,10 +59,18 @@ def execute(config_path: Path) -> list[Path]:
     """
 
     raw_cfg = load_json_or_py(config_path)
+    workspace_root = Path(str(raw_cfg.get("workspace_root") or config_path.parents[2]))
+    if not workspace_root.is_absolute():
+        raise ValueError(f"workspace_root 必须为绝对路径: {workspace_root}")
+    legacy_output_dir = resolve_legacy_output_dir(raw_cfg, config_path)
+    output_dir = create_task_instance_dir(workspace_root, "A160")
     result = archive_publication(
         manuscript_title=str(raw_cfg.get("manuscript_title") or ""),
         publication_status=str(raw_cfg.get("publication_status") or ""),
         archive_files=list(raw_cfg.get("archive_files") or []),
         release_note=str(raw_cfg.get("release_note") or ""),
     )
-    return write_affair_json_result(raw_cfg, config_path, "publication_archive_release_result.json", result)
+    out_path = output_dir / "publication_archive_release_result.json"
+    out_path.write_text(json.dumps(result, ensure_ascii=False, indent=2), encoding="utf-8")
+    mirror_artifacts_to_legacy([out_path], legacy_output_dir, output_dir)
+    return [out_path]

@@ -20,6 +20,7 @@ from autodokit.affairs.候选文献视图构建.affair import (
     _resolve_workspace_root,
 )
 from autodokit.tools import append_aok_log_event, build_gate_review, load_json_or_py
+from autodokit.tools.atomic.task_aok.task_instance_dir import create_task_instance_dir, mirror_artifacts_to_legacy, resolve_legacy_output_dir
 from autodokit.tools.llm_clients import postprocess_aliyun_multimodal_parse_outputs
 from autodokit.tools.atomic.task_aok.post_affair_git_commit import affair_auto_git_commit
 from autodokit.tools.bibliodb_sqlite import load_reading_queue_df, upsert_reading_queue_rows
@@ -118,10 +119,12 @@ def execute(config_path: Path) -> List[Path]:
         raise ValueError("A060 配置必须是字典")
 
     workspace_root = _resolve_workspace_root(config_path, raw_cfg)
-    output_dir = Path(str(raw_cfg.get("output_dir") or (workspace_root / "steps" / "A060_review_preprocessing")))
-    if not output_dir.is_absolute():
-        raise ValueError(f"output_dir 必须为绝对路径: {output_dir}")
-    output_dir.mkdir(parents=True, exist_ok=True)
+    legacy_output_dir = resolve_legacy_output_dir(
+        raw_cfg,
+        config_path,
+        default_path=workspace_root / "steps" / "A060_review_preprocessing",
+    )
+    output_dir = create_task_instance_dir(workspace_root, "A060")
 
     global_config_path = workspace_root / "config" / "config.json"
     if not global_config_path.exists():
@@ -337,6 +340,7 @@ def execute(config_path: Path) -> List[Path]:
         },
     )
 
+    mirror_artifacts_to_legacy([parse_status_path, gate_path], legacy_output_dir, output_dir)
     return [
         parse_status_path,
         gate_path,

@@ -12,6 +12,7 @@ import pandas as pd
 from autodokit.tools import append_aok_log_event, build_gate_review, load_json_or_py
 from autodokit.tools.bibliodb_sqlite import load_reading_state_df, upsert_reading_state_rows
 from autodokit.tools.contentdb_sqlite import CONTENT_DB_DIRECTORY_NAME, DEFAULT_CONTENT_DB_NAME, resolve_content_db_config
+from autodokit.tools.literature_translation_tools import run_literature_translation
 from autodokit.tools.ocr.aliyun_multimodal.aliyun_multimodal_postprocess_tools import postprocess_aliyun_multimodal_parse_outputs
 from autodokit.tools.ocr.classic.pdf_parse_asset_manager import ensure_multimodal_parse_asset, ensure_pdf_text_fallback_asset
 from autodokit.tools.atomic.task_aok.post_affair_git_commit import affair_auto_git_commit
@@ -60,7 +61,7 @@ def _resolve_workspace_root(config_path: Path, raw_cfg: Dict[str, Any]) -> Path:
 
 
 def _resolve_output_dir(config_path: Path, raw_cfg: Dict[str, Any]) -> Path:
-    output_dir = Path(str(raw_cfg.get("output_dir") or config_path.parent))
+    output_dir = Path(str(raw_cfg.get("legacy_output_dir") or raw_cfg.get("output_dir") or config_path.parent))
     if not output_dir.is_absolute():
         raise ValueError(f"output_dir 必须为绝对路径: {output_dir}")
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -104,6 +105,7 @@ def execute(config_path: Path) -> List[Path]:
     postprocess_rewrite_structured = bool(raw_cfg.get("postprocess_rewrite_structured", True))
     postprocess_rewrite_markdown = bool(raw_cfg.get("postprocess_rewrite_markdown", True))
     postprocess_keep_page_markers = bool(raw_cfg.get("postprocess_keep_page_markers", False))
+    translation_policy = dict(raw_cfg.get("translation_policy") or {})
 
     result_rows: List[Dict[str, Any]] = []
     state_updates: List[Dict[str, Any]] = []
@@ -192,8 +194,33 @@ def execute(config_path: Path) -> List[Path]:
                     "postprocess_contamination_removed_block_count": int(postprocess_summary.get("contamination_removed_block_count") or 0),
                     "postprocess_markdown_path": _stringify(postprocess_summary.get("postprocessed_markdown_path")),
                     "postprocess_audit_path": _stringify(postprocess_summary.get("postprocess_audit_path")),
+                    "parse_translation_status": "SKIP",
+                    "parse_translation_markdown_path": "",
+                    "parse_translation_audit_path": "",
                 }
             )
+
+            if translation_policy:
+                try:
+                    translation_result = run_literature_translation(
+                        content_db=content_db,
+                        translation_scope="parse_text",
+                        translation_policy=translation_policy,
+                        workspace_root=workspace_root,
+                        uid_literature=uid_literature,
+                        cite_key=cite_key,
+                        parse_level="non_review_deep",
+                        affair_name="A100",
+                        config_path=workspace_root / "config" / "config.json",
+                    )
+                    result_rows[-1]["parse_translation_status"] = str(translation_result.get("status") or "SKIP")
+                    result_rows[-1]["parse_translation_markdown_path"] = str(translation_result.get("translated_markdown_path") or "")
+                    result_rows[-1]["parse_translation_audit_path"] = str(translation_result.get("audit_path") or "")
+                except Exception as translation_exc:
+                    result_rows[-1]["parse_translation_status"] = "FAIL"
+                    result_rows[-1]["parse_translation_markdown_path"] = ""
+                    result_rows[-1]["parse_translation_audit_path"] = ""
+                    failures.append(f"{cite_key}: 解析译文生成失败: {translation_exc}")
         except Exception as exc:
             fallback_asset: Dict[str, Any] = {}
             fallback_exc: Exception | None = None

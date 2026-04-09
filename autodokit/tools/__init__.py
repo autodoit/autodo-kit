@@ -196,6 +196,14 @@ def local_reference_lookup_and_materialize(*args: Any, **kwargs: Any) -> dict[st
     impl = getattr(module, "local_reference_lookup_and_materialize")
     return impl(*args, **kwargs)
 
+
+def incremental_import_bib_into_content_db(*args: Any, **kwargs: Any) -> dict[str, Any]:
+    """延迟加载 Bib 增量导入工具，避免入口模块循环导入。"""
+
+    module = importlib.import_module("autodokit.tools.incremental_bib_import_tools")
+    impl = getattr(module, "incremental_import_bib_into_content_db")
+    return impl(*args, **kwargs)
+
 def scan_affairs(affairs_root: str | Path | None = None) -> list[dict[str, Any]]:
     if affairs_root is None:
         affairs_root = Path(__file__).resolve().parents[1] / "affairs"
@@ -359,6 +367,13 @@ from autodokit.tools.contentdb_sqlite import (
     load_knowledge_literature_links_df,
     resolve_content_db_path,
 )
+from autodokit.tools.literature_translation_tools import (
+    DEFAULT_TRANSLATION_POLICY,
+    run_literature_translation,
+    translate_literature_metadata,
+    translate_parse_asset_text,
+    translate_standard_note,
+)
 from autodokit.tools.storage_backend import (
     load_reference_tables,
     persist_reference_tables,
@@ -517,6 +532,7 @@ _用户公开工具 = [
     "build_reference_quality_summary",
     "build_online_lookup_placeholder_fields",
     "local_reference_lookup_and_materialize",
+    "incremental_import_bib_into_content_db",
     "generate_knowledge_uid",
     "init_empty_knowledge_index_table",
     "init_empty_knowledge_attachments_table",
@@ -623,6 +639,11 @@ _用户公开工具 = [
     "resolve_content_db_path",
     "load_knowledge_literature_links_df",
     "load_knowledge_evidence_links_df",
+    "DEFAULT_TRANSLATION_POLICY",
+    "translate_literature_metadata",
+    "translate_standard_note",
+    "translate_parse_asset_text",
+    "run_literature_translation",
 ]
 
 _开发者工具 = [
@@ -680,6 +701,11 @@ _开发者工具 = [
     "resolve_content_db_path",
     "load_knowledge_literature_links_df",
     "load_knowledge_evidence_links_df",
+    "DEFAULT_TRANSLATION_POLICY",
+    "translate_literature_metadata",
+    "translate_standard_note",
+    "translate_parse_asset_text",
+    "run_literature_translation",
     "build_cnki_result",
     "run_aob_aoc",
     "run_aob_deploy",
@@ -703,6 +729,7 @@ _开发者工具 = [
     "parse_reference_text_with_llm",
     "process_reference_citation",
     "local_reference_lookup_and_materialize",
+    "incremental_import_bib_into_content_db",
     "build_reference_quality_summary",
     "build_online_lookup_placeholder_fields",
     "generate_knowledge_uid",
