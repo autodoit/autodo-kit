@@ -13,6 +13,7 @@ import pandas as pd
 
 from autodokit.affairs.候选文献视图构建.affair import (
     _collect_structured_variants,
+    _enrich_literature_with_primary_attachments,
     _load_global_config,
     _prepare_review_assets,
     _resolve_content_db_path,
@@ -96,6 +97,7 @@ def execute(config_path: Path) -> List[Path]:
         raise ValueError("A065 需要 content_db（可由节点配置或 config.paths.content_db_path 提供）")
 
     literature_table = load_reference_main_table(content_db)
+    literature_table = _enrich_literature_with_primary_attachments(literature_table, content_db)
     review_read_pool = _build_review_pool_from_queue(content_db, literature_table)
 
     review_read_pool_path = workspace_root / "views" / "review_candidates" / "review_read_pool.csv"

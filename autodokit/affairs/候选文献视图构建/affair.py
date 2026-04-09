@@ -5,6 +5,7 @@ from __future__ import annotations
 from hashlib import sha1
 import json
 from pathlib import Path
+import re
 from typing import Any, Dict, Iterable, List, Tuple
 
 import pandas as pd
@@ -26,6 +27,7 @@ from autodokit.tools import (
     knowledge_note_register,
     knowledge_note_validate_obsidian,
     load_json_or_py,
+    load_literature_attachments_df,
     process_reference_citation,
     refine_reference_lines_with_llm,
 )
@@ -433,6 +435,189 @@ def _resolve_content_db_path(
     if not fallback_path.is_absolute():
         raise ValueError(f"config.paths.content_db_path 必须为绝对路径: {fallback_path}")
     return fallback_path, "config.paths.content_db_path"
+
+
+def _normalize_structured_lookup_key(value: Any) -> str:
+    """把标题、附件名或路径归一化为 structured 目录匹配键。"""
+
+    text = _stringify(value)
+    if not text:
+        return ""
+    stem = Path(text).stem.lower()
+    return re.sub(r"[^\w\u4e00-\u9fff]", "", stem)
+
+
+def _enrich_literature_with_primary_attachments(
+    literature_table: pd.DataFrame,
+    content_db: Path | None,
+) -> pd.DataFrame:
+    """把主附件名和主附件路径补回文献主表。"""
+
+    if literature_table.empty or content_db is None or "uid_literature" not in literature_table.columns:
+        return literature_table.copy()
+
+    attachments = load_literature_attachments_df(content_db).fillna("")
+    if attachments.empty or "uid_literature" not in attachments.columns:
+        return literature_table.copy()
+
+    primary = attachments.copy()
+    primary["uid_literature"] = primary["uid_literature"].astype(str)
+    if "is_primary" in primary.columns:
+        primary["is_primary"] = pd.to_numeric(primary["is_primary"], errors="coerce").fillna(0)
+        primary = primary.sort_values(by=["uid_literature", "is_primary", "attachment_name"], ascending=[True, False, True])
+    primary = primary.drop_duplicates(subset=["uid_literature"], keep="first")
+    primary = primary[["uid_literature", "attachment_name", "storage_path", "source_path"]].rename(
+        columns={
+            "attachment_name": "_primary_attachment_name",
+            "storage_path": "_primary_storage_path",
+            "source_path": "_primary_source_path",
+        }
+    )
+
+    working = literature_table.copy()
+    working["uid_literature"] = working["uid_literature"].astype(str)
+    working = working.merge(primary, on="uid_literature", how="left")
+
+    if "primary_attachment_name" not in working.columns:
+        working["primary_attachment_name"] = ""
+    if "pdf_path" not in working.columns:
+        working["pdf_path"] = ""
+
+    missing_attachment_mask = working["primary_attachment_name"].astype(str).str.strip() == ""
+    working.loc[missing_attachment_mask, "primary_attachment_name"] = working.loc[missing_attachment_mask, "_primary_attachment_name"]
+
+    missing_pdf_mask = working["pdf_path"].astype(str).str.strip() == ""
+    working.loc[missing_pdf_mask, "pdf_path"] = working.loc[missing_pdf_mask, "_primary_storage_path"].astype(str)
+    still_missing_pdf_mask = working["pdf_path"].astype(str).str.strip() == ""
+    working.loc[still_missing_pdf_mask, "pdf_path"] = working.loc[still_missing_pdf_mask, "_primary_source_path"].astype(str)
+
+    helper_columns = ["_primary_attachment_name", "_primary_storage_path", "_primary_source_path"]
+    return working.drop(columns=[column for column in helper_columns if column in working.columns])
+
+
+def _collect_direct_structured_review_rows(
+    literature_table: pd.DataFrame,
+    *,
+    structured_dir: Path,
+    research_topic: str,
+) -> pd.DataFrame:
+    """收集已经存在 structured 解析目录的文献，直接作为 A050 阅读池。"""
+
+    if literature_table.empty or not structured_dir.exists() or not structured_dir.is_dir():
+        return literature_table.iloc[0:0].copy()
+
+    usable_children = [
+        child
+        for child in structured_dir.iterdir()
+        if child.is_dir() and any(item.is_file() for item in child.iterdir())
+    ]
+    exact_folder_lookup = {child.name: child.name for child in usable_children}
+    folder_lookup = {
+        _normalize_structured_lookup_key(child.name): child.name
+        for child in usable_children
+        if _normalize_structured_lookup_key(child.name)
+    }
+    if not exact_folder_lookup and not folder_lookup:
+        return literature_table.iloc[0:0].copy()
+
+    matched_rows: List[Dict[str, Any]] = []
+    for _, row in literature_table.fillna("").iterrows():
+        row_dict = dict(row)
+        match_name = ""
+        attachment_candidates = [
+            Path(_stringify(row_dict.get("primary_attachment_name"))).stem,
+            Path(_stringify(row_dict.get("pdf_path"))).stem,
+        ]
+        for candidate in attachment_candidates:
+            candidate_text = _stringify(candidate)
+            if candidate_text and candidate_text in exact_folder_lookup:
+                match_name = exact_folder_lookup[candidate_text]
+                break
+            lookup_key = _normalize_structured_lookup_key(candidate_text)
+            if lookup_key and lookup_key in folder_lookup:
+                match_name = folder_lookup[lookup_key]
+                break
+        if not match_name:
+            continue
+
+        row_dict["structured_match_name"] = match_name
+        row_dict["research_topic"] = _stringify(row_dict.get("research_topic")) or research_topic
+        row_dict["topic_relevance_score"] = row_dict.get("topic_relevance_score") or 100.0
+        row_dict["topic_group_match_count"] = row_dict.get("topic_group_match_count") or 1
+        row_dict["topic_matched_terms"] = row_dict.get("topic_matched_terms") or "structured_dir_match"
+        matched_rows.append(row_dict)
+
+    if not matched_rows:
+        return literature_table.iloc[0:0].copy()
+    return pd.DataFrame(matched_rows)
+
+
+def _build_direct_structured_review_views(
+    matched_table: pd.DataFrame,
+    *,
+    source_round: str,
+    source_affair: str,
+    batch_size: int,
+    extra_fields: Iterable[str] | None = None,
+) -> Dict[str, pd.DataFrame]:
+    """把已解析目录命中的文献直接转成 A050 综述视图。"""
+
+    if matched_table.empty:
+        empty = pd.DataFrame()
+        return {
+            "review_candidate_pool_index": empty.copy(),
+            "review_candidate_pool_readable": empty.copy(),
+            "review_priority_view": empty.copy(),
+            "review_deep_read_queue_seed": empty.copy(),
+            "review_read_pool": empty.copy(),
+            "review_already_read_exit_view": empty.copy(),
+            "review_reading_batches": pd.DataFrame(),
+        }
+
+    records: List[Dict[str, Any]] = []
+    for _, row in matched_table.fillna("").iterrows():
+        score = row.get("score") or row.get("a05_current_score") or row.get("topic_relevance_score") or 95.0
+        records.append(
+            {
+                "uid_literature": _stringify(row.get("uid_literature")),
+                "cite_key": _stringify(row.get("cite_key")),
+                "view_note": f"structured_preparsed::{_stringify(row.get('structured_match_name'))}",
+                "score": score,
+                "status": _stringify(row.get("a05_current_status") or row.get("run_read_status") or "candidate"),
+            }
+        )
+
+    index_table = build_candidate_view_index(
+        records,
+        source_round=source_round,
+        source_affair=source_affair,
+        min_score=0.0,
+        top_k=None,
+    )
+    readable_table = build_candidate_readable_view(index_table, matched_table, extra_fields=extra_fields)
+    review_priority_view = readable_table.sort_values(by=["score", "year"], ascending=[False, False], na_position="last").reset_index(drop=True)
+    if review_priority_view.empty:
+        review_read_pool = review_priority_view.copy()
+        review_already_read_exit_view = review_priority_view.copy()
+    else:
+        unread_mask = ~review_priority_view.get("status", pd.Series(dtype=str)).astype(str).str.lower().isin(["read", "completed"])
+        review_read_pool = review_priority_view.loc[unread_mask].reset_index(drop=True)
+        review_already_read_exit_view = review_priority_view.loc[~unread_mask].reset_index(drop=True)
+    review_deep_read_queue_seed = review_read_pool.head(min(max(batch_size, 1), 5)).reset_index(drop=True)
+    reading_batches = allocate_reading_batches(
+        index_table,
+        batch_size=batch_size,
+        review_uid_set=index_table.get("uid_literature", pd.Series(dtype=str)).tolist(),
+    )
+    return {
+        "review_candidate_pool_index": index_table,
+        "review_candidate_pool_readable": readable_table,
+        "review_priority_view": review_priority_view,
+        "review_deep_read_queue_seed": review_deep_read_queue_seed,
+        "review_read_pool": review_read_pool,
+        "review_already_read_exit_view": review_already_read_exit_view,
+        "review_reading_batches": reading_batches,
+    }
 
 
 def _ensure_csv(path: Path, headers: Iterable[str]) -> Path:
@@ -1175,6 +1360,7 @@ def execute(config_path: Path) -> List[Path]:
             raise ValueError(f"content_db 必须为绝对路径: {content_db}")
         if content_db.exists():
             literature_table = load_reference_main_table(content_db)
+            literature_table = _enrich_literature_with_primary_attachments(literature_table, content_db)
 
     extra_fields = list(raw_cfg.get("extra_fields") or [])
     for field in ["topic_relevance_score", "topic_group_match_count", "topic_matched_terms", "research_topic"]:
@@ -1183,17 +1369,44 @@ def execute(config_path: Path) -> List[Path]:
 
     scope_key = _build_scope_key(raw_cfg)
     run_uid = _build_run_uid(scope_key)
+    batch_size = int(raw_cfg.get("batch_size") or raw_cfg.get("review_batch_size") or 10)
 
     direct_from_reference_db = not candidates and not literature_table.empty
+    structured_seed_dir_raw = _stringify(raw_cfg.get("direct_review_structured_dir"))
+    structured_seed_dir = Path(structured_seed_dir_raw) if structured_seed_dir_raw else None
+    direct_structured_matches = pd.DataFrame()
+    if structured_seed_dir is not None:
+        if not structured_seed_dir.is_absolute():
+            raise ValueError(f"direct_review_structured_dir 必须为绝对路径: {structured_seed_dir}")
+        direct_structured_matches = _collect_direct_structured_review_rows(
+            literature_table,
+            structured_dir=structured_seed_dir,
+            research_topic=_stringify(raw_cfg.get("research_topic")),
+        )
 
-    if direct_from_reference_db:
+    if not direct_structured_matches.empty:
+        views = _build_direct_structured_review_views(
+            direct_structured_matches,
+            source_round=str(raw_cfg.get("source_round") or "round_direct_structured_review"),
+            source_affair=str(raw_cfg.get("source_affair") or "A050_direct_structured_review_seed"),
+            batch_size=batch_size,
+            extra_fields=extra_fields,
+        )
+        review_candidate_pool_index = views["review_candidate_pool_index"]
+        review_candidate_pool_readable = views["review_candidate_pool_readable"]
+        review_priority_view = views["review_priority_view"]
+        review_deep_read_queue_seed = views["review_deep_read_queue_seed"]
+        review_read_pool = views["review_read_pool"]
+        review_already_read_exit_view = views["review_already_read_exit_view"]
+        review_reading_batches = views["review_reading_batches"]
+    elif direct_from_reference_db:
         views = build_review_candidate_views(
             literature_table,
             source_round=str(raw_cfg.get("source_round") or "round_direct_topic"),
             source_affair=str(raw_cfg.get("source_affair") or "review_candidate_views"),
             min_score=float(raw_cfg.get("min_score") or 0.0),
             top_k=int(raw_cfg.get("top_k")) if raw_cfg.get("top_k") else None,
-            batch_size=int(raw_cfg.get("batch_size") or raw_cfg.get("review_batch_size") or 10),
+            batch_size=batch_size,
             extra_fields=extra_fields,
             research_topic=str(raw_cfg.get("research_topic") or "").strip(),
             topic_terms=raw_cfg.get("topic_terms") or [],
@@ -1236,7 +1449,7 @@ def execute(config_path: Path) -> List[Path]:
         review_deep_read_queue_seed = review_read_pool.head(min(max(int(raw_cfg.get("batch_size") or 10), 1), 5)).reset_index(drop=True)
         review_reading_batches = allocate_reading_batches(
             review_candidate_pool_index,
-            batch_size=int(raw_cfg.get("batch_size") or raw_cfg.get("review_batch_size") or 10),
+            batch_size=batch_size,
             review_uid_set=review_uids,
         )
 
@@ -1284,25 +1497,28 @@ def execute(config_path: Path) -> List[Path]:
         "mapped_reference_count": 0,
         "validation_errors": [],
     }
-    a060_queue_count = 0
+    queue_stage = "A060"
+    if not direct_structured_matches.empty and bool(raw_cfg.get("skip_a060_when_structured_ready", False)):
+        queue_stage = _stringify(raw_cfg.get("direct_review_queue_stage")) or "A065"
+    next_stage_queue_count = 0
     if content_db is not None:
-        a060_queue_rows: List[Dict[str, Any]] = []
+        queue_rows: List[Dict[str, Any]] = []
         for _, row in review_read_pool.fillna("").iterrows():
             uid_literature = _stringify(row.get("uid_literature"))
             cite_key = _stringify(row.get("cite_key"))
             if not uid_literature and not cite_key:
                 continue
-            a060_queue_rows.append(
+            queue_rows.append(
                 {
                     "uid_literature": uid_literature,
                     "cite_key": cite_key,
-                    "stage": "A060",
+                    "stage": queue_stage,
                     "source_affair": "A050",
                     "queue_status": "queued",
                     "priority": row.get("score") or row.get("priority") or 70.0,
-                    "bucket": "review_read_pool",
-                    "preferred_next_stage": "A060",
-                    "recommended_reason": _stringify(row.get("recommended_reason")) or "A050 review read pool",
+                    "bucket": "review_read_pool_preparsed" if queue_stage == "A065" else "review_read_pool",
+                    "preferred_next_stage": queue_stage,
+                    "recommended_reason": _stringify(row.get("recommended_reason")) or ("A050 structured review seed already prepared, skip A060" if queue_stage == "A065" else "A050 review read pool"),
                     "theme_relation": _stringify(row.get("research_topic")) or _stringify(raw_cfg.get("research_topic")) or "A050_topic",
                     "source_round": _stringify(raw_cfg.get("source_round")) or "a050",
                     "run_uid": run_uid,
@@ -1310,19 +1526,19 @@ def execute(config_path: Path) -> List[Path]:
                     "is_current": 1,
                 }
             )
-        if a060_queue_rows:
-            upsert_reading_queue_rows(content_db, a060_queue_rows)
-            a060_queue_count = len(a060_queue_rows)
+        if queue_rows:
+            upsert_reading_queue_rows(content_db, queue_rows)
+            next_stage_queue_count = len(queue_rows)
             replace_tags_for_namespace(
                 content_db,
-                namespace="queue/a060",
+                namespace=f"queue/{queue_stage.lower()}",
                 tag_rows=[
                     {
                         "uid_literature": _stringify(item.get("uid_literature")),
                         "cite_key": _stringify(item.get("cite_key")),
                         "tag": "status/queued",
                     }
-                    for item in a060_queue_rows
+                    for item in queue_rows
                 ],
                 source_type="a050_queue",
             )
@@ -1330,14 +1546,15 @@ def execute(config_path: Path) -> List[Path]:
     gate_review = build_gate_review(
         node_uid="A05",
         node_name="候选文献视图构建",
-        summary=f"基于文献总库生成综述候选 {len(review_candidate_pool_index)} 条，可读视图 {len(review_candidate_pool_readable)} 条，阅读批次 {review_reading_batches['batch_id'].nunique() if not review_reading_batches.empty else 0} 个，并写入 A060 当前态队列 {a060_queue_count} 条。",
+        summary=f"基于文献总库生成综述候选 {len(review_candidate_pool_index)} 条，可读视图 {len(review_candidate_pool_readable)} 条，阅读批次 {review_reading_batches['batch_id'].nunique() if not review_reading_batches.empty else 0} 个，并写入 {queue_stage} 当前态队列 {next_stage_queue_count} 条。",
         checks=[
             {"name": "review_candidate_count", "value": len(review_candidate_pool_index)},
             {"name": "review_read_pool_count", "value": len(review_read_pool)},
             {"name": "batch_count", "value": int(review_reading_batches['batch_id'].nunique()) if not review_reading_batches.empty else 0},
             {"name": "created_note_count", "value": prepared_assets["created_note_count"]},
             {"name": "mapped_reference_count", "value": prepared_assets["mapped_reference_count"]},
-            {"name": "a060_queue_count", "value": a060_queue_count},
+            {"name": "next_stage_queue_count", "value": next_stage_queue_count},
+            {"name": "next_stage", "value": queue_stage},
             {"name": "reference_total_count", "value": (prepared_assets.get("quality_summary") or {}).get("total_reference_count", 0)},
             {"name": "llm_recognized_count", "value": (prepared_assets.get("quality_summary") or {}).get("llm_recognized_count", 0)},
             {"name": "placeholder_count", "value": (prepared_assets.get("quality_summary") or {}).get("placeholder_count", 0)},
@@ -1366,6 +1583,8 @@ def execute(config_path: Path) -> List[Path]:
         issues=(prepared_assets["validation_errors"] or []) if len(review_candidate_pool_index) > 0 else ["当前文献总库在给定年份窗口与主题条件下未筛出可用综述候选，建议回流 A04 补充专题综述来源。"],
         metadata={
             "direct_from_reference_db": direct_from_reference_db,
+            "direct_structured_match_count": int(len(direct_structured_matches)),
+            "direct_structured_dir": str(structured_seed_dir) if structured_seed_dir is not None else "",
             "scope_key": scope_key,
             "run_uid": run_uid,
             "workspace_root": str(workspace_root),
@@ -1378,7 +1597,8 @@ def execute(config_path: Path) -> List[Path]:
             "recent_years": raw_cfg.get("recent_years"),
             "created_note_count": prepared_assets["created_note_count"],
             "mapped_reference_count": prepared_assets["mapped_reference_count"],
-            "a060_queue_count": a060_queue_count,
+            "next_stage": queue_stage,
+            "next_stage_queue_count": next_stage_queue_count,
             "reference_quality_summary": prepared_assets.get("quality_summary") or {},
         },
     )
@@ -1402,7 +1622,7 @@ def execute(config_path: Path) -> List[Path]:
         handler_name="候选文献视图构建",
         agent_names=["ar_A050_综述候选文献视图构建事务智能体_v5"],
         skill_names=["ar_A050_综述候选文献视图构建_v5", "m_ObsidianMarkdown_v1"],
-        reasoning_summary="生成综述候选视图，并为 A060 预处理与 A070 研读准备输入资产。",
+        reasoning_summary="生成综述候选视图，并根据解析资产就绪情况推进到 A060 或直接进入 A065。",
         gate_review=gate_review,
         gate_review_path=gate_path,
         artifact_paths=[
@@ -1421,7 +1641,8 @@ def execute(config_path: Path) -> List[Path]:
             "review_candidate_count": len(review_candidate_pool_index),
             "read_pool_count": len(review_read_pool),
             "batch_count": int(review_reading_batches['batch_id'].nunique()) if not review_reading_batches.empty else 0,
-            "a060_queue_count": a060_queue_count,
+            "next_stage": queue_stage,
+            "next_stage_queue_count": next_stage_queue_count,
         },
     )
     mirror_artifacts_to_legacy(
