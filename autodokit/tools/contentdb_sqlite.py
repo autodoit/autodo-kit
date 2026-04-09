@@ -8,6 +8,7 @@
 """
 from __future__ import annotations
 
+import hashlib
 import os
 from pathlib import Path
 import sqlite3
@@ -20,6 +21,8 @@ from autodokit.tools.time_utils import now_iso
 
 DEFAULT_CONTENT_DB_NAME = "content.db"
 CONTENT_DB_DIRECTORY_NAME = "content"
+ATTACHMENT_TABLE_NAME = "attachments"
+ATTACHMENT_LINK_TABLE_NAME = "literature_attachment_links"
 KNOWLEDGE_LINK_TABLE_NAME = "knowledge_literature_links"
 KNOWLEDGE_EVIDENCE_TABLE_NAME = "knowledge_evidence_links"
 KNOWLEDGE_NOTES_TABLE_NAME = "knowledge_notes"
@@ -397,13 +400,15 @@ def _refresh_reading_state_views(conn: sqlite3.Connection) -> None:
     overview_select_sql = f"""
     WITH attachment_summary AS (
         SELECT
-            uid_literature,
+            lnk.uid_literature,
             COUNT(*) AS attachment_count,
-            MAX(CASE WHEN COALESCE(is_primary, 0) = 1 THEN attachment_name ELSE '' END) AS primary_attachment_name,
-            MAX(CASE WHEN COALESCE(is_primary, 0) = 1 THEN storage_path ELSE '' END) AS primary_attachment_path,
-            MAX(CASE WHEN COALESCE(is_primary, 0) = 1 THEN status ELSE '' END) AS primary_attachment_status
-        FROM literature_attachments
-        GROUP BY uid_literature
+            MAX(CASE WHEN COALESCE(lnk.is_primary, 0) = 1 THEN att.attachment_name ELSE '' END) AS primary_attachment_name,
+            MAX(CASE WHEN COALESCE(lnk.is_primary, 0) = 1 THEN att.storage_path ELSE '' END) AS primary_attachment_path,
+            MAX(CASE WHEN COALESCE(lnk.is_primary, 0) = 1 THEN att.status ELSE '' END) AS primary_attachment_status
+        FROM {ATTACHMENT_LINK_TABLE_NAME} AS lnk
+        LEFT JOIN {ATTACHMENT_TABLE_NAME} AS att
+            ON att.uid_attachment = lnk.uid_attachment
+        GROUP BY lnk.uid_literature
     ),
     parse_summary AS (
         SELECT
@@ -502,6 +507,166 @@ def _refresh_reading_state_views(conn: sqlite3.Connection) -> None:
         _create_or_replace_view(conn, view_name, view_sql)
 
 
+def _attachment_entity_uid(
+    *,
+    checksum: str,
+    storage_path: str,
+    source_path: str,
+    attachment_name: str,
+) -> str:
+    token = checksum or storage_path or source_path or attachment_name
+    normalized = str(token or "").strip().lower()
+    return f"att-{hashlib.md5(normalized.encode('utf-8')).hexdigest()}"
+
+
+def _attachment_link_uid(uid_literature: str, uid_attachment: str, legacy_uid_attachment: str) -> str:
+    token = legacy_uid_attachment or f"{uid_literature}|{uid_attachment}"
+    normalized = str(token or "").strip().lower()
+    return f"attlnk-{hashlib.md5(normalized.encode('utf-8')).hexdigest()}"
+
+
+def _build_attachment_normalized_frames(legacy_df: pd.DataFrame) -> tuple[pd.DataFrame, pd.DataFrame]:
+    attachment_columns = [
+        "uid_attachment",
+        "attachment_name",
+        "attachment_type",
+        "file_ext",
+        "storage_path",
+        "source_path",
+        "checksum",
+        "status",
+        "created_at",
+        "updated_at",
+    ]
+    link_columns = [
+        "uid_attachment_link",
+        "uid_literature",
+        "uid_attachment",
+        "link_role",
+        "is_primary",
+        "source_type",
+        "legacy_uid_attachment",
+        "created_at",
+        "updated_at",
+    ]
+    if legacy_df is None or legacy_df.empty:
+        return pd.DataFrame(columns=attachment_columns), pd.DataFrame(columns=link_columns)
+
+    attachment_rows_by_uid: dict[str, dict[str, object]] = {}
+    link_rows: list[dict[str, object]] = []
+    now = _utc_now_iso()
+
+    for _, row in legacy_df.fillna("").iterrows():
+        uid_literature = str(row.get("uid_literature") or "").strip()
+        if not uid_literature:
+            continue
+        checksum = str(row.get("checksum") or "").strip()
+        storage_path = str(row.get("storage_path") or "").strip()
+        source_path = str(row.get("source_path") or "").strip()
+        attachment_name = str(row.get("attachment_name") or "").strip()
+        if not any([checksum, storage_path, source_path, attachment_name]):
+            continue
+
+        uid_attachment = _attachment_entity_uid(
+            checksum=checksum,
+            storage_path=storage_path,
+            source_path=source_path,
+            attachment_name=attachment_name,
+        )
+        existing_attachment_row = attachment_rows_by_uid.get(uid_attachment, {})
+        attachment_rows_by_uid[uid_attachment] = {
+            "uid_attachment": uid_attachment,
+            "attachment_name": attachment_name or str(existing_attachment_row.get("attachment_name") or ""),
+            "attachment_type": str(row.get("attachment_type") or existing_attachment_row.get("attachment_type") or "").strip(),
+            "file_ext": str(row.get("file_ext") or existing_attachment_row.get("file_ext") or "").strip(),
+            "storage_path": storage_path or str(existing_attachment_row.get("storage_path") or ""),
+            "source_path": source_path or str(existing_attachment_row.get("source_path") or ""),
+            "checksum": checksum or str(existing_attachment_row.get("checksum") or ""),
+            "status": str(row.get("status") or existing_attachment_row.get("status") or "available").strip() or "available",
+            "created_at": str(existing_attachment_row.get("created_at") or row.get("created_at") or now).strip() or now,
+            "updated_at": str(row.get("updated_at") or existing_attachment_row.get("updated_at") or now).strip() or now,
+        }
+
+        legacy_uid_attachment = str(row.get("uid_attachment") or "").strip()
+        link_rows.append(
+            {
+                "uid_attachment_link": _attachment_link_uid(uid_literature, uid_attachment, legacy_uid_attachment),
+                "uid_literature": uid_literature,
+                "uid_attachment": uid_attachment,
+                "link_role": str(row.get("attachment_type") or "attached").strip() or "attached",
+                "is_primary": int(pd.to_numeric(row.get("is_primary"), errors="coerce") or 0),
+                "source_type": "legacy_literature_attachments",
+                "legacy_uid_attachment": legacy_uid_attachment,
+                "created_at": str(row.get("created_at") or now).strip() or now,
+                "updated_at": str(row.get("updated_at") or now).strip() or now,
+            }
+        )
+
+    attachments_df = pd.DataFrame(list(attachment_rows_by_uid.values()), columns=attachment_columns)
+    links_df = pd.DataFrame(link_rows, columns=link_columns)
+    if not links_df.empty:
+        links_df = links_df.sort_values(
+            by=["uid_literature", "uid_attachment", "is_primary", "updated_at"],
+            ascending=[True, True, False, False],
+            na_position="last",
+        )
+        links_df = links_df.drop_duplicates(subset=["uid_literature", "uid_attachment"], keep="first").reset_index(drop=True)
+    return attachments_df, links_df
+
+
+def _build_legacy_attachment_projection(conn: sqlite3.Connection) -> pd.DataFrame:
+    return pd.read_sql_query(
+        f"""
+        SELECT
+            COALESCE(lnk.legacy_uid_attachment, lnk.uid_attachment_link, att.uid_attachment) AS uid_attachment,
+            lnk.uid_literature,
+            att.attachment_name,
+            COALESCE(NULLIF(lnk.link_role, ''), att.attachment_type) AS attachment_type,
+            att.file_ext,
+            att.storage_path,
+            att.source_path,
+            att.checksum,
+            COALESCE(lnk.is_primary, 0) AS is_primary,
+            att.status,
+            COALESCE(lnk.created_at, att.created_at) AS created_at,
+            COALESCE(lnk.updated_at, att.updated_at) AS updated_at
+        FROM {ATTACHMENT_LINK_TABLE_NAME} AS lnk
+        LEFT JOIN {ATTACHMENT_TABLE_NAME} AS att
+            ON att.uid_attachment = lnk.uid_attachment
+        ORDER BY lnk.uid_literature, COALESCE(lnk.is_primary, 0) DESC, att.attachment_name
+        """,
+        conn,
+    )
+
+
+def _sync_attachment_normalized_tables(conn: sqlite3.Connection) -> None:
+    if _sqlite_object_type(conn, "literature_attachments") != "table":
+        return
+
+    attachment_count = conn.execute(f"SELECT COUNT(1) FROM {ATTACHMENT_TABLE_NAME}").fetchone()
+    link_count = conn.execute(f"SELECT COUNT(1) FROM {ATTACHMENT_LINK_TABLE_NAME}").fetchone()
+    attachment_total = int((attachment_count or [0])[0] or 0)
+    link_total = int((link_count or [0])[0] or 0)
+
+    # 规范化两层表优先作为真相源，旧表仅保留兼容投影。
+    if attachment_total > 0 or link_total > 0:
+        if link_total > 0:
+            legacy_projection_df = _build_legacy_attachment_projection(conn)
+            _replace_table_rows(conn, "literature_attachments", legacy_projection_df)
+        return
+
+    legacy_df = pd.read_sql_query("SELECT * FROM literature_attachments", conn)
+    if legacy_df.empty:
+        _replace_table_rows(conn, ATTACHMENT_LINK_TABLE_NAME, pd.DataFrame())
+        _replace_table_rows(conn, ATTACHMENT_TABLE_NAME, pd.DataFrame())
+        return
+
+    attachments_df, links_df = _build_attachment_normalized_frames(legacy_df)
+    _replace_table_rows(conn, ATTACHMENT_LINK_TABLE_NAME, pd.DataFrame())
+    _replace_table_rows(conn, ATTACHMENT_TABLE_NAME, attachments_df)
+    _replace_table_rows(conn, ATTACHMENT_LINK_TABLE_NAME, links_df)
+
+
 def init_content_db(db_path: str | Path) -> Path:
     """初始化统一内容主库。"""
 
@@ -585,6 +750,48 @@ def init_content_db(db_path: str | Path) -> Path:
             """
         )
         _create_index_if_table(conn, "literature_attachments", "CREATE INDEX IF NOT EXISTS idx_att_lit ON literature_attachments(uid_literature)")
+
+        cur.execute(
+            f"""
+            CREATE TABLE IF NOT EXISTS {ATTACHMENT_TABLE_NAME} (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                uid_attachment TEXT UNIQUE,
+                attachment_name TEXT,
+                attachment_type TEXT,
+                file_ext TEXT,
+                storage_path TEXT,
+                source_path TEXT,
+                checksum TEXT,
+                status TEXT,
+                created_at TEXT,
+                updated_at TEXT
+            )
+            """
+        )
+        _create_index_if_table(conn, ATTACHMENT_TABLE_NAME, f"CREATE INDEX IF NOT EXISTS idx_attachment_path ON {ATTACHMENT_TABLE_NAME}(storage_path)")
+        _create_index_if_table(conn, ATTACHMENT_TABLE_NAME, f"CREATE INDEX IF NOT EXISTS idx_attachment_checksum ON {ATTACHMENT_TABLE_NAME}(checksum)")
+
+        cur.execute(
+            f"""
+            CREATE TABLE IF NOT EXISTS {ATTACHMENT_LINK_TABLE_NAME} (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                uid_attachment_link TEXT UNIQUE,
+                uid_literature TEXT,
+                uid_attachment TEXT,
+                link_role TEXT,
+                is_primary INTEGER,
+                source_type TEXT,
+                legacy_uid_attachment TEXT,
+                created_at TEXT,
+                updated_at TEXT,
+                UNIQUE(uid_literature, uid_attachment),
+                FOREIGN KEY(uid_literature) REFERENCES literatures(uid_literature),
+                FOREIGN KEY(uid_attachment) REFERENCES {ATTACHMENT_TABLE_NAME}(uid_attachment)
+            )
+            """
+        )
+        _create_index_if_table(conn, ATTACHMENT_LINK_TABLE_NAME, f"CREATE INDEX IF NOT EXISTS idx_attachment_link_lit ON {ATTACHMENT_LINK_TABLE_NAME}(uid_literature)")
+        _create_index_if_table(conn, ATTACHMENT_LINK_TABLE_NAME, f"CREATE INDEX IF NOT EXISTS idx_attachment_link_attachment ON {ATTACHMENT_LINK_TABLE_NAME}(uid_attachment)")
 
         cur.execute(
             """
@@ -914,6 +1121,7 @@ def init_content_db(db_path: str | Path) -> Path:
             f"CREATE INDEX IF NOT EXISTS idx_ke_uid_type ON {KNOWLEDGE_EVIDENCE_TABLE_NAME}(uid_knowledge, evidence_type)",
         )
 
+        _sync_attachment_normalized_tables(conn)
         _refresh_reading_state_views(conn)
 
         conn.commit()
@@ -924,6 +1132,18 @@ def load_knowledge_literature_links_df(db_path: str | Path) -> pd.DataFrame:
     init_content_db(db_path)
     with connect_sqlite(db_path) as conn:
         return pd.read_sql_query(f"SELECT * FROM {KNOWLEDGE_LINK_TABLE_NAME}", conn)
+
+
+def load_attachment_entities_df(db_path: str | Path) -> pd.DataFrame:
+    init_content_db(db_path)
+    with connect_sqlite(db_path) as conn:
+        return pd.read_sql_query(f"SELECT * FROM {ATTACHMENT_TABLE_NAME}", conn)
+
+
+def load_literature_attachment_links_df(db_path: str | Path) -> pd.DataFrame:
+    init_content_db(db_path)
+    with connect_sqlite(db_path) as conn:
+        return pd.read_sql_query(f"SELECT * FROM {ATTACHMENT_LINK_TABLE_NAME}", conn)
 
 
 def load_knowledge_evidence_links_df(db_path: str | Path) -> pd.DataFrame:
@@ -1245,6 +1465,8 @@ def upsert_knowledge_literature_link(
 
 
 __all__ = [
+    "ATTACHMENT_LINK_TABLE_NAME",
+    "ATTACHMENT_TABLE_NAME",
     "CONTENT_DB_DIRECTORY_NAME",
     "DEFAULT_CONTENT_DB_NAME",
     "KNOWLEDGE_EVIDENCE_TABLE_NAME",
@@ -1261,8 +1483,10 @@ __all__ = [
     "get_pdf_structured_variant_spec",
     "infer_workspace_root_from_content_db",
     "init_content_db",
+    "load_attachment_entities_df",
     "load_knowledge_evidence_links_df",
     "load_knowledge_literature_links_df",
+    "load_literature_attachment_links_df",
     "load_translation_assets_df",
     "resolve_content_db_config",
     "resolve_content_db_path",

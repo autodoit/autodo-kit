@@ -363,8 +363,10 @@ from autodokit.tools.knowledgedb_sqlite import (
 )
 from autodokit.tools.contentdb_sqlite import (
     init_content_db,
+    load_attachment_entities_df,
     load_knowledge_evidence_links_df,
     load_knowledge_literature_links_df,
+    load_literature_attachment_links_df,
     resolve_content_db_path,
 )
 from autodokit.tools.literature_translation_tools import (
@@ -677,7 +679,9 @@ _开发者工具 = [
     "init_references_db",
     "init_knowledge_db",
     "init_content_db",
+    "load_attachment_entities_df",
     "load_literatures_df",
+    "load_literature_attachment_links_df",
     "load_literature_attachments_df",
     "load_literature_tags_df",
     "load_chunk_sets_df",

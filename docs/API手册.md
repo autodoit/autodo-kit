@@ -1362,12 +1362,18 @@ print(outputs)
 
 # 6. 内容主库新契约补记
 
-自 content.db 极简重构完成后，以下规则是新项目默认口径：
+自 content.db 进入 SQLite 主库阶段后，以下规则是新项目默认口径：
 
-- `content.db` 只保留六张直接表与阅读队列表，不再维护 SQLite `VIEW`。
-- 任何名为 `view` 的下游产物，默认都应理解为 CSV 导出物或阶段快照，而不是数据库视图。
-- A010 初始化脚本 `C:\Users\Ethan\.copilot\skills\A010_项目初始化_v5\scripts\generate_config.py` 会在初始化完成后写入自检结果，确保 `content.db` 零视图。
-- `review_read_pool_current_view`、`review_candidate_current_view`、`review_priority_current_view` 等旧 current view 仅保留在历史文档中，不再作为新项目运行时契约。
+- 程序只读写物理表；SQLite 视图允许存在，但只用于人类查询、巡检与排查。
+- 任何名为 `view` 的下游产物，默认优先理解为 CSV 导出物、阶段快照或人类可读对象；若数据库内存在同名视图，也不应作为程序写入目标。
+- A010 初始化脚本 `C:\Users\Ethan\.copilot\skills\A010_项目初始化_v5\scripts\generate_config.py` 的自检重点，应改为确认“主链不向视图写入”，而不是要求 `content.db` 零视图。
+- `review_read_pool_current_view`、`review_candidate_current_view`、`review_priority_current_view` 与中文阅读状态视图可继续保留为只读对象，不再视为需要从库中清除的异常残留。
+
+附件与标签关系补记：
+
+- `literature_tags` 是文献-标签的简化 n 对 n 关系表。
+- `literature_attachments` 当前属于迁移期兼容扁平表，同时承载关系边与附件元数据。
+- 新的规范化方向是拆分为 `attachments`（附件实体表）与 `literature_attachment_links`（文献-附件关系表），以支持附件去重、共享与版本治理。
 
 ## 7. 附录：AOK CLI 工具（aok_tool）简介
 

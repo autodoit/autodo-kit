@@ -27,6 +27,7 @@ from autodokit.tools.bibliodb_sqlite import (
     upsert_reading_queue_rows,
     upsert_reading_state_rows,
 )
+from autodokit.tools.contentdb_sqlite import init_content_db
 
 
 def test_incremental_import_tool_should_merge_records_and_preserve_runtime_tables(tmp_path: Path) -> None:
@@ -135,6 +136,10 @@ def test_incremental_import_tool_should_merge_records_and_preserve_runtime_table
     assert set(attachments_df["uid_literature"].tolist()) == {"lit-old-001"}
     assert set(tags_df["tag"].tolist()) == {"科学学", "学术影响力"}
     assert set(reading_state_df["uid_literature"].tolist()) == {"lit-old-001"}
+    assert "imported_at" in literatures_df.columns
+    assert literatures_df["created_at"].astype(str).str.contains("+08:00", regex=False).all()
+    assert literatures_df["updated_at"].astype(str).str.contains("+08:00", regex=False).all()
+    assert literatures_df["imported_at"].astype(str).str.contains("+08:00", regex=False).all()
 
 
 def test_rebuild_reference_relation_tables_from_config_should_fill_attachment_and_tag_tables(tmp_path: Path) -> None:
@@ -147,9 +152,9 @@ def test_rebuild_reference_relation_tables_from_config_should_fill_attachment_an
                 "id": 1,
                 "uid_literature": "lit-001",
                 "cite_key": "lit-001",
-                "title": "房地产价格波动与银行系统性风险",
-                "abstract": "讨论房价波动和金融稳定",
-                "keywords": "房地产;系统性风险",
+                "title": "科研产出与学术影响力测度",
+                "abstract": "讨论科研产出与学术评价",
+                "keywords": "科研评价;科学学",
                 "pdf_path": "workspace/references/attachments/a.pdf",
                 "primary_attachment_name": "a.pdf",
                 "created_at": "",
@@ -175,7 +180,7 @@ def test_rebuild_reference_relation_tables_from_config_should_fill_attachment_an
     config_path.write_text(
         json.dumps(
             {
-                "tag_list": ["房地产", "系统性风险"],
+                "tag_list": ["科研评价", "科学学"],
                 "tag_match_fields": ["title", "abstract", "keywords"],
             },
             ensure_ascii=False,
@@ -193,7 +198,7 @@ def test_rebuild_reference_relation_tables_from_config_should_fill_attachment_an
     assert summary["literature_tags"] == 2
     assert len(attachments_df) == 1
     assert len(tags_df) == 2
-    assert set(tags_df["tag"].tolist()) == {"房地产", "系统性风险"}
+    assert set(tags_df["tag"].tolist()) == {"科研评价", "科学学"}
 
 
 def test_structured_state_and_chunk_index_tables_should_roundtrip(tmp_path: Path) -> None:
@@ -204,8 +209,8 @@ def test_structured_state_and_chunk_index_tables_should_roundtrip(tmp_path: Path
         [
             {
                 "uid_literature": "lit-001",
-                "cite_key": "wang-2024-demo",
-                "title": "Demo Paper",
+                "cite_key": "sci-2024-demo",
+                "title": "科学学示例论文",
                 "created_at": "",
                 "updated_at": "",
             }
@@ -217,7 +222,7 @@ def test_structured_state_and_chunk_index_tables_should_roundtrip(tmp_path: Path
         db_path,
         uid_literature="lit-001",
         structured_status="ready",
-        structured_abs_path=str((tmp_path / "wang-2024-demo.structured.json").resolve()),
+        structured_abs_path=str((tmp_path / "sci-2024-demo.structured.json").resolve()),
         structured_backend="local_pipeline_v2",
         structured_task_type="full_fine_grained",
         structured_updated_at="2026-04-01T10:00:00+00:00",
@@ -243,7 +248,7 @@ def test_structured_state_and_chunk_index_tables_should_roundtrip(tmp_path: Path
                 "chunk_id": "chunk-001",
                 "chunks_uid": "chunks-001",
                 "uid_literature": "lit-001",
-                "cite_key": "wang-2024-demo",
+                "cite_key": "sci-2024-demo",
                 "shard_abs_path": str((tmp_path / "chunks-001.part-001.jsonl").resolve()),
                 "chunk_index": 1,
                 "chunk_type": "paragraph_bundle",
@@ -256,7 +261,7 @@ def test_structured_state_and_chunk_index_tables_should_roundtrip(tmp_path: Path
                 "chunk_id": "chunk-002",
                 "chunks_uid": "chunks-001",
                 "uid_literature": "lit-001",
-                "cite_key": "wang-2024-demo",
+                "cite_key": "sci-2024-demo",
                 "shard_abs_path": str((tmp_path / "chunks-001.part-001.jsonl").resolve()),
                 "chunk_index": 2,
                 "chunk_type": "paragraph_bundle",
@@ -390,7 +395,7 @@ def test_reading_state_views_should_expose_human_facing_live_lists(tmp_path: Pat
                     "uid_literature": "lit-pre",
                     "cite_key": "pre-001",
                     "title": "预处理中的文献",
-                    "first_author": "张三",
+                    "first_author": "研究者甲",
                     "year": "2024",
                     "entry_type": "article",
                     "has_fulltext": 0,
@@ -402,7 +407,7 @@ def test_reading_state_views_should_expose_human_facing_live_lists(tmp_path: Pat
                     "uid_literature": "lit-rough",
                     "cite_key": "rough-001",
                     "title": "待泛读文献",
-                    "first_author": "李四",
+                    "first_author": "研究者乙",
                     "year": "2023",
                     "entry_type": "article",
                     "has_fulltext": 1,
@@ -414,7 +419,7 @@ def test_reading_state_views_should_expose_human_facing_live_lists(tmp_path: Pat
                     "uid_literature": "lit-parse",
                     "cite_key": "deep-001",
                     "title": "待批判性研读文献",
-                    "first_author": "王五",
+                    "first_author": "研究者丙",
                     "year": "2022",
                     "entry_type": "article",
                     "has_fulltext": 1,
@@ -510,6 +515,177 @@ def test_reading_state_views_should_expose_human_facing_live_lists(tmp_path: Pat
     assert pending_rough == [("lit-rough", "rough.pdf", "human")]
     assert pending_critical == [("lit-parse", "ready", "parse_ready")]
     assert overview_row == ("lit-parse", "待批判性研读文献", "待批判性研读", 0, "ready")
+
+
+def test_attachment_normalization_tables_should_support_shared_assets(tmp_path: Path) -> None:
+    """附件规范化后应允许一个附件实体关联多篇文献。"""
+
+    db_path = tmp_path / "content.db"
+    shared_pdf = str((tmp_path / "shared.pdf").resolve())
+    appendix_pdf = str((tmp_path / "appendix.pdf").resolve())
+
+    save_tables(
+        db_path,
+        literatures_df=pd.DataFrame(
+            [
+                {
+                    "uid_literature": "lit-001",
+                    "cite_key": "lit-001",
+                    "title": "文献一",
+                    "created_at": "",
+                    "updated_at": "",
+                },
+                {
+                    "uid_literature": "lit-002",
+                    "cite_key": "lit-002",
+                    "title": "文献二",
+                    "created_at": "",
+                    "updated_at": "",
+                },
+            ]
+        ),
+        attachments_df=pd.DataFrame(
+            [
+                {
+                    "uid_attachment": "legacy-att-001",
+                    "uid_literature": "lit-001",
+                    "attachment_name": "shared.pdf",
+                    "attachment_type": "fulltext",
+                    "file_ext": "pdf",
+                    "storage_path": shared_pdf,
+                    "source_path": shared_pdf,
+                    "checksum": "checksum-shared",
+                    "is_primary": 1,
+                    "status": "available",
+                    "created_at": "",
+                    "updated_at": "",
+                },
+                {
+                    "uid_attachment": "legacy-att-002",
+                    "uid_literature": "lit-002",
+                    "attachment_name": "shared.pdf",
+                    "attachment_type": "fulltext",
+                    "file_ext": "pdf",
+                    "storage_path": shared_pdf,
+                    "source_path": shared_pdf,
+                    "checksum": "checksum-shared",
+                    "is_primary": 1,
+                    "status": "available",
+                    "created_at": "",
+                    "updated_at": "",
+                },
+                {
+                    "uid_attachment": "legacy-att-003",
+                    "uid_literature": "lit-001",
+                    "attachment_name": "appendix.pdf",
+                    "attachment_type": "supplement",
+                    "file_ext": "pdf",
+                    "storage_path": appendix_pdf,
+                    "source_path": appendix_pdf,
+                    "checksum": "checksum-appendix",
+                    "is_primary": 0,
+                    "status": "available",
+                    "created_at": "",
+                    "updated_at": "",
+                },
+            ]
+        ),
+        if_exists="replace",
+    )
+
+    with sqlite3.connect(db_path) as conn:
+        attachment_count = conn.execute("SELECT COUNT(*) FROM attachments").fetchone()[0]
+        link_count = conn.execute("SELECT COUNT(*) FROM literature_attachment_links").fetchone()[0]
+        shared_link_count = conn.execute(
+            "SELECT COUNT(*) FROM literature_attachment_links WHERE uid_attachment IN (SELECT uid_attachment FROM attachments WHERE checksum = ?)",
+            ("checksum-shared",),
+        ).fetchone()[0]
+
+    attachments_df = load_attachments_df(db_path)
+
+    assert attachment_count == 2
+    assert link_count == 3
+    assert shared_link_count == 2
+    assert len(attachments_df) == 3
+
+
+def test_normalized_attachments_should_be_source_of_truth_for_legacy_projection(tmp_path: Path) -> None:
+    """规范化附件表存在时，旧扁平表应由其投影生成，不应反向污染。"""
+
+    db_path = tmp_path / "content.db"
+    storage_path = str((tmp_path / "paper.pdf").resolve())
+
+    save_tables(
+        db_path,
+        literatures_df=pd.DataFrame(
+            [
+                {
+                    "uid_literature": "lit-001",
+                    "cite_key": "lit-001",
+                    "title": "文献一",
+                    "created_at": "",
+                    "updated_at": "",
+                }
+            ]
+        ),
+        attachments_df=pd.DataFrame(
+            [
+                {
+                    "uid_attachment": "legacy-att-001",
+                    "uid_literature": "lit-001",
+                    "attachment_name": "paper.pdf",
+                    "attachment_type": "fulltext",
+                    "file_ext": "pdf",
+                    "storage_path": storage_path,
+                    "source_path": storage_path,
+                    "checksum": "checksum-paper",
+                    "is_primary": 1,
+                    "status": "available",
+                    "created_at": "",
+                    "updated_at": "",
+                }
+            ]
+        ),
+        if_exists="replace",
+    )
+
+    with sqlite3.connect(db_path) as conn:
+        conn.execute("DELETE FROM literature_attachments")
+        conn.execute(
+            """
+            INSERT INTO literature_attachments
+            (uid_attachment, uid_literature, attachment_name, attachment_type, file_ext, storage_path, source_path, checksum, is_primary, status, created_at, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                "legacy-stale",
+                "lit-001",
+                "stale.pdf",
+                "fulltext",
+                "pdf",
+                "C:/stale/stale.pdf",
+                "C:/stale/stale.pdf",
+                "checksum-stale",
+                1,
+                "available",
+                "",
+                "",
+            ),
+        )
+        conn.commit()
+
+    init_content_db(db_path)
+
+    with sqlite3.connect(db_path) as conn:
+        legacy_rows = conn.execute(
+            "SELECT uid_attachment, attachment_name, checksum FROM literature_attachments ORDER BY uid_attachment"
+        ).fetchall()
+        normalized_link_count = conn.execute("SELECT COUNT(*) FROM literature_attachment_links").fetchone()[0]
+
+    assert normalized_link_count == 1
+    assert len(legacy_rows) == 1
+    assert legacy_rows[0][1] == "paper.pdf"
+    assert legacy_rows[0][2] == "checksum-paper"
 
 
 def test_merge_reference_records_should_keep_existing_uid_and_runtime_tables(tmp_path: Path) -> None:

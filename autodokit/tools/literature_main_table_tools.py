@@ -15,6 +15,7 @@ from autodokit.tools.bibliodb import (
     generate_uid,
     parse_year_int,
 )
+from autodokit.tools.obsidian_note_timezone_tools import get_current_time_iso
 
 
 def build_literature_main_table(
@@ -35,6 +36,7 @@ def build_literature_main_table(
     """
     rows: List[Dict[str, Any]] = []
     used_uid: set[str] = set()
+    now_iso = get_current_time_iso("Asia/Shanghai")
 
     for record, (has_pdf, pdf_path) in zip(records, pdf_matches):
         row: Dict[str, Any] = {}
@@ -69,8 +71,9 @@ def build_literature_main_table(
         row["has_fulltext"] = int(bool(has_pdf))
         row["primary_attachment_name"] = Path(pdf_path).name if pdf_path else ""
         row["standard_note_uid"] = ""
-        row["created_at"] = ""
-        row["updated_at"] = ""
+        row["created_at"] = now_iso
+        row["updated_at"] = now_iso
+        row["imported_at"] = now_iso
         row["authors"] = str(getattr(record, "fields", {}).get("author", ""))
         row["abstract"] = str(getattr(record, "fields", {}).get("abstract", ""))
         row["keywords"] = str(getattr(record, "fields", {}).get("keywords", ""))

@@ -19,6 +19,8 @@ import pandas as pd
 from autodokit.tools.time_utils import now_iso
 
 from .contentdb_sqlite import (
+    ATTACHMENT_LINK_TABLE_NAME,
+    ATTACHMENT_TABLE_NAME,
     KNOWLEDGE_LINK_TABLE_NAME,
     PDF_STRUCTURED_VARIANT_PATH_COLUMNS,
     READING_STATE_TABLE_NAME,
@@ -634,6 +636,30 @@ def load_attachments_df(db_path: Path) -> pd.DataFrame:
     init_db(db_path)
     conn = _connect(db_path)
     try:
+        link_count = conn.execute(f"SELECT COUNT(1) FROM {ATTACHMENT_LINK_TABLE_NAME}").fetchone()
+        if int((link_count or [0])[0] or 0) > 0:
+            return pd.read_sql_query(
+                f"""
+                SELECT
+                    COALESCE(lnk.legacy_uid_attachment, lnk.uid_attachment_link, att.uid_attachment) AS uid_attachment,
+                    lnk.uid_literature,
+                    att.attachment_name,
+                    COALESCE(NULLIF(lnk.link_role, ''), att.attachment_type) AS attachment_type,
+                    att.file_ext,
+                    att.storage_path,
+                    att.source_path,
+                    att.checksum,
+                    COALESCE(lnk.is_primary, 0) AS is_primary,
+                    att.status,
+                    COALESCE(lnk.created_at, att.created_at) AS created_at,
+                    COALESCE(lnk.updated_at, att.updated_at) AS updated_at
+                FROM {ATTACHMENT_LINK_TABLE_NAME} AS lnk
+                LEFT JOIN {ATTACHMENT_TABLE_NAME} AS att
+                    ON att.uid_attachment = lnk.uid_attachment
+                ORDER BY lnk.uid_literature, COALESCE(lnk.is_primary, 0) DESC, att.attachment_name
+                """,
+                conn,
+            )
         return pd.read_sql_query(f"SELECT * FROM {LITERATURE_ATTACHMENT_TABLE_NAME}", conn)
     finally:
         conn.close()
@@ -1036,6 +1062,129 @@ def _normalize_attachments_df(frame: pd.DataFrame | None) -> pd.DataFrame:
     return working
 
 
+def _stable_attachment_entity_uid(checksum: str, storage_path: str, source_path: str, attachment_name: str) -> str:
+    token = _stringify(checksum) or _stringify(storage_path) or _stringify(source_path) or _stringify(attachment_name)
+    normalized = token.lower()
+    return f"att-{hashlib.md5(normalized.encode('utf-8')).hexdigest()}"
+
+
+def _stable_attachment_link_uid(uid_literature: str, uid_attachment: str, legacy_uid_attachment: str) -> str:
+    token = _stringify(legacy_uid_attachment) or f"{_stringify(uid_literature)}|{_stringify(uid_attachment)}"
+    normalized = token.lower()
+    return f"attlnk-{hashlib.md5(normalized.encode('utf-8')).hexdigest()}"
+
+
+def _build_normalized_attachment_frames(flat_attachments_df: pd.DataFrame) -> tuple[pd.DataFrame, pd.DataFrame]:
+    attachment_columns = [
+        "uid_attachment",
+        "attachment_name",
+        "attachment_type",
+        "file_ext",
+        "storage_path",
+        "source_path",
+        "checksum",
+        "status",
+        "created_at",
+        "updated_at",
+    ]
+    link_columns = [
+        "uid_attachment_link",
+        "uid_literature",
+        "uid_attachment",
+        "link_role",
+        "is_primary",
+        "source_type",
+        "legacy_uid_attachment",
+        "created_at",
+        "updated_at",
+    ]
+    if flat_attachments_df is None or flat_attachments_df.empty:
+        return pd.DataFrame(columns=attachment_columns), pd.DataFrame(columns=link_columns)
+
+    attachment_rows_by_uid: dict[str, dict[str, Any]] = {}
+    link_rows: list[dict[str, Any]] = []
+    now = _utc_now_iso()
+    for _, row in flat_attachments_df.fillna("").iterrows():
+        uid_literature = _stringify(row.get("uid_literature"))
+        if not uid_literature:
+            continue
+        checksum = _stringify(row.get("checksum"))
+        storage_path = _stringify(row.get("storage_path"))
+        source_path = _stringify(row.get("source_path"))
+        attachment_name = _stringify(row.get("attachment_name"))
+        if not any([checksum, storage_path, source_path, attachment_name]):
+            continue
+
+        uid_attachment = _stable_attachment_entity_uid(checksum, storage_path, source_path, attachment_name)
+        legacy_uid_attachment = _stringify(row.get("uid_attachment"))
+        existing_attachment = attachment_rows_by_uid.get(uid_attachment, {})
+        attachment_rows_by_uid[uid_attachment] = {
+            "uid_attachment": uid_attachment,
+            "attachment_name": attachment_name or _stringify(existing_attachment.get("attachment_name")),
+            "attachment_type": _stringify(row.get("attachment_type")) or _stringify(existing_attachment.get("attachment_type")),
+            "file_ext": _stringify(row.get("file_ext")) or _stringify(existing_attachment.get("file_ext")),
+            "storage_path": storage_path or _stringify(existing_attachment.get("storage_path")),
+            "source_path": source_path or _stringify(existing_attachment.get("source_path")),
+            "checksum": checksum or _stringify(existing_attachment.get("checksum")),
+            "status": _stringify(row.get("status")) or _stringify(existing_attachment.get("status")) or "available",
+            "created_at": _stringify(existing_attachment.get("created_at")) or _stringify(row.get("created_at")) or now,
+            "updated_at": _stringify(row.get("updated_at")) or _stringify(existing_attachment.get("updated_at")) or now,
+        }
+        link_rows.append(
+            {
+                "uid_attachment_link": _stable_attachment_link_uid(uid_literature, uid_attachment, legacy_uid_attachment),
+                "uid_literature": uid_literature,
+                "uid_attachment": uid_attachment,
+                "link_role": _stringify(row.get("attachment_type")) or "attached",
+                "is_primary": int(pd.to_numeric(row.get("is_primary"), errors="coerce") or 0),
+                "source_type": "bibliodb_flat_attachments",
+                "legacy_uid_attachment": legacy_uid_attachment,
+                "created_at": _stringify(row.get("created_at")) or now,
+                "updated_at": _stringify(row.get("updated_at")) or now,
+            }
+        )
+
+    attachments_df = pd.DataFrame(list(attachment_rows_by_uid.values()), columns=attachment_columns)
+    links_df = pd.DataFrame(link_rows, columns=link_columns)
+    if not links_df.empty:
+        links_df = links_df.sort_values(
+            by=["uid_literature", "uid_attachment", "is_primary", "updated_at"],
+            ascending=[True, True, False, False],
+            na_position="last",
+        ).drop_duplicates(subset=["uid_literature", "uid_attachment"], keep="first").reset_index(drop=True)
+    return attachments_df, links_df
+
+
+def _write_normalized_attachment_tables(
+    conn: sqlite3.Connection,
+    flat_attachments_df: pd.DataFrame,
+    *,
+    if_exists: str,
+) -> None:
+    attachments_df, links_df = _build_normalized_attachment_frames(flat_attachments_df)
+    _ensure_columns(conn, ATTACHMENT_TABLE_NAME, {column: "TEXT" for column in attachments_df.columns})
+    _ensure_columns(conn, ATTACHMENT_LINK_TABLE_NAME, {column: "TEXT" for column in links_df.columns})
+
+    if if_exists == "replace":
+        _delete_all_if_table(conn, ATTACHMENT_LINK_TABLE_NAME)
+        _delete_all_if_table(conn, ATTACHMENT_TABLE_NAME)
+
+    if not attachments_df.empty:
+        attachments_df.where(pd.notnull(attachments_df), None).to_sql(
+            ATTACHMENT_TABLE_NAME,
+            conn,
+            if_exists="append",
+            index=False,
+        )
+    if not links_df.empty:
+        links_df.where(pd.notnull(links_df), None).to_sql(
+            ATTACHMENT_LINK_TABLE_NAME,
+            conn,
+            if_exists="append",
+            index=False,
+        )
+
+
 def _normalize_tags_df(frame: pd.DataFrame | None) -> pd.DataFrame:
     working = _ensure_reference_columns(frame, _LITERATURE_TAG_COLUMNS)
     if working.empty:
@@ -1131,7 +1280,6 @@ def _merge_literature_row(existing_row: Dict[str, Any], incoming_row: Dict[str, 
         "primary_attachment_name",
         "pdf_path",
         "created_at",
-        "updated_at",
     }
 
     for column, incoming_value in incoming_row.items():
@@ -1280,6 +1428,7 @@ def merge_reference_records(
     incoming_attachments = _normalize_attachments_df(incoming_attachments_df)
     existing_tags = _normalize_tags_df(existing_tags_df)
     incoming_tags = _normalize_tags_df(incoming_tags_df)
+    now_iso_text = now_iso()
 
     if incoming_literatures.empty:
         return existing_literatures, existing_attachments, existing_tags, {
@@ -1312,6 +1461,9 @@ def merge_reference_records(
             existing_index = current_df[mask].index[0]
             merged_row = _merge_literature_row(current_df.loc[existing_index].to_dict(), incoming_dict)
             merged_row["uid_literature"] = matched_uid
+            merged_row["created_at"] = _stringify(merged_row.get("created_at")) or _stringify(incoming_dict.get("created_at")) or now_iso_text
+            merged_row["updated_at"] = now_iso_text
+            merged_row["imported_at"] = now_iso_text
             current_df.loc[existing_index, list(merged_row.keys())] = list(merged_row.values())
             uid_mapping[incoming_uid] = matched_uid
             matched_existing_count += 1
@@ -1320,6 +1472,9 @@ def merge_reference_records(
         next_id += 1
         new_row = incoming_dict
         new_row["id"] = next_id
+        new_row["created_at"] = _stringify(new_row.get("created_at")) or now_iso_text
+        new_row["updated_at"] = _stringify(new_row.get("updated_at")) or now_iso_text
+        new_row["imported_at"] = _stringify(new_row.get("imported_at")) or now_iso_text
         current_df = pd.concat([current_df, pd.DataFrame([new_row])], ignore_index=True)
         uid_mapping[incoming_uid] = incoming_uid
         inserted_count += 1
@@ -1418,6 +1573,7 @@ def replace_reference_tables_only(
             _delete_all_if_table(conn, attachment_target)
             if not working_attachments.empty:
                 working_attachments.where(pd.notnull(working_attachments), None).to_sql(attachment_target, conn, if_exists="append", index=False)
+            _write_normalized_attachment_tables(conn, working_attachments, if_exists="replace")
 
         if tags_df is not None and tag_target:
             working_tags = _normalize_tags_df(tags_df)
@@ -1642,6 +1798,8 @@ def save_tables(
                 _delete_all_if_table(conn, PARSE_ASSET_TABLE_NAME)
                 _delete_all_if_table(conn, READING_QUEUE_TABLE_NAME)
                 _delete_all_if_table(conn, READING_STATE_TABLE_NAME)
+                _delete_all_if_table(conn, ATTACHMENT_LINK_TABLE_NAME)
+                _delete_all_if_table(conn, ATTACHMENT_TABLE_NAME)
                 _delete_all_if_table(conn, attachment_target)
                 _delete_all_if_table(conn, tag_target)
                 _delete_all_if_table(conn, literature_target)
@@ -1660,6 +1818,7 @@ def save_tables(
             else:
                 if not working.empty:
                     working.to_sql(attachment_target, conn, if_exists=if_exists, index=False)
+            _write_normalized_attachment_tables(conn, _normalize_attachments_df(attachments_df), if_exists=if_exists)
         if tags_df is not None and tag_target:
             _ensure_columns(conn, tag_target, {column: "TEXT" for column in tags_df.columns})
             working = tags_df.where(pd.notnull(tags_df), None) if not tags_df.empty else pd.DataFrame(columns=[
@@ -1686,7 +1845,34 @@ def get_literature_by_uid(db_path: Path, uid: str) -> dict:
         if df.empty:
             raise KeyError(f"uid={uid} not found")
         record = df.iloc[0].to_dict()
-        att = pd.read_sql_query("SELECT * FROM literature_attachments WHERE uid_literature = ?", conn, params=(uid,))
+        link_count = conn.execute(f"SELECT COUNT(1) FROM {ATTACHMENT_LINK_TABLE_NAME}").fetchone()
+        if int((link_count or [0])[0] or 0) > 0:
+            att = pd.read_sql_query(
+                f"""
+                SELECT
+                    COALESCE(lnk.legacy_uid_attachment, lnk.uid_attachment_link, att.uid_attachment) AS uid_attachment,
+                    lnk.uid_literature,
+                    att.attachment_name,
+                    COALESCE(NULLIF(lnk.link_role, ''), att.attachment_type) AS attachment_type,
+                    att.file_ext,
+                    att.storage_path,
+                    att.source_path,
+                    att.checksum,
+                    COALESCE(lnk.is_primary, 0) AS is_primary,
+                    att.status,
+                    COALESCE(lnk.created_at, att.created_at) AS created_at,
+                    COALESCE(lnk.updated_at, att.updated_at) AS updated_at
+                FROM {ATTACHMENT_LINK_TABLE_NAME} AS lnk
+                LEFT JOIN {ATTACHMENT_TABLE_NAME} AS att
+                    ON att.uid_attachment = lnk.uid_attachment
+                WHERE lnk.uid_literature = ?
+                ORDER BY COALESCE(lnk.is_primary, 0) DESC, att.attachment_name
+                """,
+                conn,
+                params=(uid,),
+            )
+        else:
+            att = pd.read_sql_query("SELECT * FROM literature_attachments WHERE uid_literature = ?", conn, params=(uid,))
         record["attachments"] = [dict(row) for _, row in att.iterrows()]
         tags = pd.read_sql_query(f"SELECT * FROM {LITERATURE_TAG_TABLE_NAME} WHERE uid_literature = ?", conn, params=(uid,))
         record["tags"] = [dict(row) for _, row in tags.iterrows()]
@@ -1701,7 +1887,32 @@ def export_csv(db_path: Path, out_dir: Path) -> None:
     conn = _connect(db_path)
     try:
         df_items = pd.read_sql_query("SELECT * FROM literatures", conn)
-        df_att = pd.read_sql_query("SELECT * FROM literature_attachments", conn)
+        link_count = conn.execute(f"SELECT COUNT(1) FROM {ATTACHMENT_LINK_TABLE_NAME}").fetchone()
+        if int((link_count or [0])[0] or 0) > 0:
+            df_att = pd.read_sql_query(
+                f"""
+                SELECT
+                    COALESCE(lnk.legacy_uid_attachment, lnk.uid_attachment_link, att.uid_attachment) AS uid_attachment,
+                    lnk.uid_literature,
+                    att.attachment_name,
+                    COALESCE(NULLIF(lnk.link_role, ''), att.attachment_type) AS attachment_type,
+                    att.file_ext,
+                    att.storage_path,
+                    att.source_path,
+                    att.checksum,
+                    COALESCE(lnk.is_primary, 0) AS is_primary,
+                    att.status,
+                    COALESCE(lnk.created_at, att.created_at) AS created_at,
+                    COALESCE(lnk.updated_at, att.updated_at) AS updated_at
+                FROM {ATTACHMENT_LINK_TABLE_NAME} AS lnk
+                LEFT JOIN {ATTACHMENT_TABLE_NAME} AS att
+                    ON att.uid_attachment = lnk.uid_attachment
+                ORDER BY lnk.uid_literature, COALESCE(lnk.is_primary, 0) DESC, att.attachment_name
+                """,
+                conn,
+            )
+        else:
+            df_att = pd.read_sql_query("SELECT * FROM literature_attachments", conn)
         df_tags = pd.read_sql_query(f"SELECT * FROM {LITERATURE_TAG_TABLE_NAME}", conn)
         df_items.to_csv(out_dir / "literatures.csv", index=False, encoding="utf-8-sig")
         df_att.to_csv(out_dir / "literature_attachments.csv", index=False, encoding="utf-8-sig")

@@ -26,6 +26,7 @@ import pandas as pd
 from bibtexparser import loads as bibtex_loads
 from autodokit.tools import bibliodb_sqlite
 from autodokit.tools.atomic.task_aok.post_affair_git_commit import affair_auto_git_commit
+from autodokit.tools.incremental_bib_import_tools import incremental_import_bib_into_content_db
 from autodokit.tools.literature_translation_tools import run_literature_translation
 
 # 归一化规则列表：在此列表中出现的规则会被应用
@@ -49,6 +50,7 @@ DEFAULT_CONFIG: Dict[str, Any] = {
     "output_dir": "output",
     "output_table_csv": "literatures.csv",
     "storage_backend": "sqlite",
+    "incremental_only": False,
     "sqlite_db_path": "database/references/references.db",
     "tag_list": ["graph", "risk", "bank", "systemic"],
     "tag_match_fields": ["title", "abstract", "keywords"],
@@ -939,31 +941,43 @@ def _run_and_write_all_outputs(config_path: Path) -> List[Path]:
         persisted = persist_literature_table(table, output_dir, config.output_table_csv, backend=backend, db_path=db_path)
         written_files.extend(persisted)
     elif backend == "sqlite" and db_path is not None:
-        incoming_literatures_df = table.reset_index()
-        incoming_attachment_relations_df = bibliodb_sqlite.build_attachments_df_from_literatures(incoming_literatures_df)
-        incoming_tag_relations_df = bibliodb_sqlite.build_tags_df_from_inverted_index(
-            incoming_literatures_df,
-            tag_inv,
-            normalize_text_fn=normalize_text,
-        )
-        existing_literatures_df = bibliodb_sqlite.load_literatures_df(db_path) if db_path.exists() else pd.DataFrame()
-        existing_attachment_relations_df = bibliodb_sqlite.load_attachments_df(db_path) if db_path.exists() else pd.DataFrame()
-        existing_tag_relations_df = bibliodb_sqlite.load_tags_df(db_path) if db_path.exists() else pd.DataFrame()
-        merged_literatures_df, merged_attachment_relations_df, merged_tag_relations_df, merge_summary = bibliodb_sqlite.merge_reference_records(
-            existing_literatures_df=existing_literatures_df,
-            existing_attachments_df=existing_attachment_relations_df,
-            existing_tags_df=existing_tag_relations_df,
-            incoming_literatures_df=incoming_literatures_df,
-            incoming_attachments_df=incoming_attachment_relations_df,
-            incoming_tags_df=incoming_tag_relations_df,
-        )
-        bibliodb_sqlite.replace_reference_tables_only(
-            db_path,
-            literatures_df=merged_literatures_df,
-            attachments_df=merged_attachment_relations_df,
-            tags_df=merged_tag_relations_df,
-        )
-        published_literature_df = merged_literatures_df
+        incremental_only = bool(merged_cfg.get("incremental_only", False))
+        if incremental_only:
+            merge_summary = incremental_import_bib_into_content_db(
+                db_path=db_path,
+                bib_paths=bibtex_path,
+                tag_list=config.tag_list,
+                tag_match_fields=config.tag_match_fields,
+                has_pdf_enable=bool(config.has_pdf_enable),
+                pdf_dir=pdf_dir,
+            )
+            published_literature_df = bibliodb_sqlite.load_literatures_df(db_path)
+        else:
+            incoming_literatures_df = table.reset_index()
+            incoming_attachment_relations_df = bibliodb_sqlite.build_attachments_df_from_literatures(incoming_literatures_df)
+            incoming_tag_relations_df = bibliodb_sqlite.build_tags_df_from_inverted_index(
+                incoming_literatures_df,
+                tag_inv,
+                normalize_text_fn=normalize_text,
+            )
+            existing_literatures_df = bibliodb_sqlite.load_literatures_df(db_path) if db_path.exists() else pd.DataFrame()
+            existing_attachment_relations_df = bibliodb_sqlite.load_attachments_df(db_path) if db_path.exists() else pd.DataFrame()
+            existing_tag_relations_df = bibliodb_sqlite.load_tags_df(db_path) if db_path.exists() else pd.DataFrame()
+            merged_literatures_df, merged_attachment_relations_df, merged_tag_relations_df, merge_summary = bibliodb_sqlite.merge_reference_records(
+                existing_literatures_df=existing_literatures_df,
+                existing_attachments_df=existing_attachment_relations_df,
+                existing_tags_df=existing_tag_relations_df,
+                incoming_literatures_df=incoming_literatures_df,
+                incoming_attachments_df=incoming_attachment_relations_df,
+                incoming_tags_df=incoming_tag_relations_df,
+            )
+            bibliodb_sqlite.replace_reference_tables_only(
+                db_path,
+                literatures_df=merged_literatures_df,
+                attachments_df=merged_attachment_relations_df,
+                tags_df=merged_tag_relations_df,
+            )
+            published_literature_df = merged_literatures_df
         written_files.append(db_path)
 
     published_paths = [
