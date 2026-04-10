@@ -14,7 +14,12 @@ from autodokit.tools.bibliodb_sqlite import load_reading_state_df, upsert_readin
 from autodokit.tools.contentdb_sqlite import CONTENT_DB_DIRECTORY_NAME, DEFAULT_CONTENT_DB_NAME, resolve_content_db_config
 from autodokit.tools.literature_translation_tools import run_literature_translation
 from autodokit.tools.ocr.aliyun_multimodal.aliyun_multimodal_postprocess_tools import postprocess_aliyun_multimodal_parse_outputs
-from autodokit.tools.ocr.classic.pdf_parse_asset_manager import ensure_multimodal_parse_asset, ensure_pdf_text_fallback_asset
+from autodokit.tools.ocr.runtime.monkeyocr_manifest_runtime import (
+    resolve_parse_runtime_settings,
+    resolve_postprocess_settings,
+    run_parse_manifest,
+)
+from autodokit.tools.ocr.classic.pdf_parse_asset_manager import ensure_pdf_text_fallback_asset
 from autodokit.tools.atomic.task_aok.post_affair_git_commit import affair_auto_git_commit
 
 
@@ -86,84 +91,66 @@ def execute(config_path: Path) -> List[Path]:
     if max_items > 0:
         state_df = state_df.head(max_items).reset_index(drop=True)
 
-    parse_model = _stringify(raw_cfg.get("parse_model")) or "auto"
     overwrite_parse_asset = bool(raw_cfg.get("overwrite_parse_asset", False))
     allow_pdf_text_fallback_on_parse_failure = bool(raw_cfg.get("allow_pdf_text_fallback_on_parse_failure", True))
-    enable_aliyun_postprocess = bool(raw_cfg.get("enable_aliyun_postprocess", True))
-    enable_llm_basic_cleanup = bool(raw_cfg.get("enable_llm_basic_cleanup", True))
-    basic_cleanup_llm_model = _stringify(raw_cfg.get("basic_cleanup_llm_model")) or "qwen3.5-flash"
-    basic_cleanup_llm_sdk_backend = _stringify(raw_cfg.get("basic_cleanup_llm_sdk_backend")) or None
-    basic_cleanup_llm_region = _stringify(raw_cfg.get("basic_cleanup_llm_region")) or "cn-beijing"
-    enable_llm_structure_resolution = bool(raw_cfg.get("enable_llm_structure_resolution", True))
-    structure_llm_model = _stringify(raw_cfg.get("structure_llm_model")) or "qwen3.5-plus"
-    structure_llm_sdk_backend = _stringify(raw_cfg.get("structure_llm_sdk_backend")) or None
-    structure_llm_region = _stringify(raw_cfg.get("structure_llm_region")) or "cn-beijing"
-    enable_llm_contamination_filter = bool(raw_cfg.get("enable_llm_contamination_filter", True))
-    contamination_llm_model = _stringify(raw_cfg.get("contamination_llm_model")) or "qwen3-max"
-    contamination_llm_sdk_backend = _stringify(raw_cfg.get("contamination_llm_sdk_backend")) or None
-    contamination_llm_region = _stringify(raw_cfg.get("contamination_llm_region")) or "cn-beijing"
-    postprocess_rewrite_structured = bool(raw_cfg.get("postprocess_rewrite_structured", True))
-    postprocess_rewrite_markdown = bool(raw_cfg.get("postprocess_rewrite_markdown", True))
-    postprocess_keep_page_markers = bool(raw_cfg.get("postprocess_keep_page_markers", False))
     translation_policy = dict(raw_cfg.get("translation_policy") or {})
+    global_config_path = workspace_root / "config" / "config.json"
+    parse_runtime = resolve_parse_runtime_settings(raw_cfg, workspace_root=workspace_root, global_config_path=global_config_path)
+    postprocess_settings = resolve_postprocess_settings(raw_cfg, workspace_root=workspace_root)
 
     result_rows: List[Dict[str, Any]] = []
     state_updates: List[Dict[str, Any]] = []
     failures: List[str] = []
     postprocess_success_count = 0
 
-    for _, row in state_df.fillna("").iterrows():
-        uid_literature = _stringify(row.get("uid_literature"))
-        cite_key = _stringify(row.get("cite_key")) or uid_literature
-        source_origin = _stringify(row.get("source_origin")) or "auto"
+    if not state_df.empty:
         upsert_reading_state_rows(
             content_db,
             [
                 {
-                    "uid_literature": uid_literature,
-                    "cite_key": cite_key,
+                    "uid_literature": _stringify(row.get("uid_literature")),
+                    "cite_key": _stringify(row.get("cite_key")) or _stringify(row.get("uid_literature")),
                     "pending_deep_read": 0,
                     "in_deep_read": 1,
-                    "deep_read_done": 0,
+                    "deep_read_done": int(row.get("deep_read_done") or 0),
                     "deep_read_decision": "in_parse",
                 }
+                for _, row in state_df.fillna("").iterrows()
+                if _stringify(row.get("uid_literature"))
             ],
         )
+
+    manifest_result = run_parse_manifest(
+        content_db=content_db,
+        source_df=state_df,
+        output_dir=output_dir,
+        source_stage="A100",
+        upstream_stage="A095",
+        downstream_stage="A105",
+        parse_level="non_review_deep",
+        literature_scope="non_review",
+        runtime_settings=parse_runtime,
+        postprocess_settings=postprocess_settings,
+        global_config_path=global_config_path,
+        overwrite_existing=overwrite_parse_asset,
+        max_items=max_items,
+    )
+    manifest_df = manifest_result["manifest_df"]
+    failures.extend(manifest_result["failures"])
+
+    for _, row in manifest_df.fillna("").iterrows():
+        uid_literature = _stringify(row.get("uid_literature"))
+        cite_key = _stringify(row.get("cite_key")) or uid_literature
+        source_origin = _stringify(row.get("source_origin")) or "auto"
+        manifest_status = _stringify(row.get("manifest_status"))
+        failure_reason = _stringify(row.get("failure_reason"))
         try:
-            parse_asset = ensure_multimodal_parse_asset(
-                content_db=content_db,
-                parse_level="non_review_deep",
-                uid_literature=uid_literature,
-                cite_key=cite_key,
-                source_stage="A100",
-                global_config_path=workspace_root / "config" / "config.json",
-                overwrite_existing=overwrite_parse_asset,
-                model=parse_model,
-            )
-            postprocess_summary: Dict[str, Any] = {}
-            if enable_aliyun_postprocess:
-                postprocess_summary = postprocess_aliyun_multimodal_parse_outputs(
-                    normalized_structured_path=_stringify(parse_asset.get("normalized_structured_path")),
-                    reconstructed_markdown_path=_stringify(parse_asset.get("reconstructed_markdown_path")),
-                    rewrite_structured=postprocess_rewrite_structured,
-                    rewrite_markdown=postprocess_rewrite_markdown,
-                    keep_page_markers=postprocess_keep_page_markers,
-                    enable_llm_basic_cleanup=enable_llm_basic_cleanup,
-                    basic_cleanup_llm_model=basic_cleanup_llm_model,
-                    basic_cleanup_llm_sdk_backend=basic_cleanup_llm_sdk_backend,
-                    basic_cleanup_llm_region=basic_cleanup_llm_region,
-                    enable_llm_structure_resolution=enable_llm_structure_resolution,
-                    structure_llm_model=structure_llm_model,
-                    structure_llm_sdk_backend=structure_llm_sdk_backend,
-                    structure_llm_region=structure_llm_region,
-                    enable_llm_contamination_filter=enable_llm_contamination_filter,
-                    contamination_llm_model=contamination_llm_model,
-                    contamination_llm_sdk_backend=contamination_llm_sdk_backend,
-                    contamination_llm_region=contamination_llm_region,
-                    config_path=workspace_root / "config" / "config.json",
-                )
+            if manifest_status == "failed":
+                raise RuntimeError(failure_reason or "parse_failed")
+
+            structured_json = _stringify(row.get("normalized_structured_path"))
+            if int(row.get("postprocess_ok") or 0):
                 postprocess_success_count += 1
-            structured_json = _stringify(parse_asset.get("normalized_structured_path"))
             state_updates.append(
                 {
                     "uid_literature": uid_literature,
@@ -184,16 +171,16 @@ def execute(config_path: Path) -> List[Path]:
                     "uid_literature": uid_literature,
                     "cite_key": cite_key,
                     "structured_json": structured_json,
-                    "asset_dir": _stringify(parse_asset.get("asset_dir")),
-                    "parse_status": _stringify(parse_asset.get("parse_status")) or "ready",
-                    "postprocess_enabled": int(enable_aliyun_postprocess),
-                    "postprocess_ok": int(bool(postprocess_summary) or (not enable_aliyun_postprocess)),
-                    "postprocess_removed_noise_lines": int(postprocess_summary.get("removed_noise_lines") or 0),
-                    "postprocess_llm_basic_cleanup_status": _stringify(postprocess_summary.get("llm_basic_cleanup_status")),
-                    "postprocess_llm_structure_status": _stringify(postprocess_summary.get("llm_structure_resolution_status")),
-                    "postprocess_contamination_removed_block_count": int(postprocess_summary.get("contamination_removed_block_count") or 0),
-                    "postprocess_markdown_path": _stringify(postprocess_summary.get("postprocessed_markdown_path")),
-                    "postprocess_audit_path": _stringify(postprocess_summary.get("postprocess_audit_path")),
+                    "asset_dir": _stringify(row.get("asset_dir")),
+                    "parse_status": "ready",
+                    "postprocess_enabled": int(postprocess_settings.get("enabled", True)),
+                    "postprocess_ok": int(row.get("postprocess_ok") or 0),
+                    "postprocess_removed_noise_lines": 0,
+                    "postprocess_llm_basic_cleanup_status": _stringify(row.get("postprocess_llm_basic_cleanup_status")),
+                    "postprocess_llm_structure_status": _stringify(row.get("postprocess_llm_structure_status")),
+                    "postprocess_contamination_removed_block_count": int(row.get("postprocess_contamination_removed_block_count") or 0),
+                    "postprocess_markdown_path": _stringify(row.get("reconstructed_markdown_path")),
+                    "postprocess_audit_path": "",
                     "parse_translation_status": "SKIP",
                     "parse_translation_markdown_path": "",
                     "parse_translation_audit_path": "",
@@ -302,29 +289,34 @@ def execute(config_path: Path) -> List[Path]:
             {"name": "postprocess_success_count", "value": postprocess_success_count},
             {"name": "failure_count", "value": len(failures)},
         ],
-        artifacts=[str(index_path)],
+        artifacts=[str(index_path), str(manifest_result["manifest_path"]), str(manifest_result["management_table_path"]), str(manifest_result["handoff_path"])],
         recommendation="pass" if result_rows else "retry_current",
         score=max(45.0, 93.0 - len(failures) * 10.0),
         issues=failures,
         metadata={
             "workspace_root": str(workspace_root),
             "content_db": str(content_db),
-            "enable_aliyun_postprocess": enable_aliyun_postprocess,
-            "postprocess_rewrite_structured": postprocess_rewrite_structured,
-            "postprocess_rewrite_markdown": postprocess_rewrite_markdown,
-            "postprocess_keep_page_markers": postprocess_keep_page_markers,
-            "enable_llm_basic_cleanup": enable_llm_basic_cleanup,
-            "basic_cleanup_llm_model": basic_cleanup_llm_model,
-            "basic_cleanup_llm_sdk_backend": basic_cleanup_llm_sdk_backend,
-            "basic_cleanup_llm_region": basic_cleanup_llm_region,
-            "enable_llm_structure_resolution": enable_llm_structure_resolution,
-            "structure_llm_model": structure_llm_model,
-            "structure_llm_sdk_backend": structure_llm_sdk_backend,
-            "structure_llm_region": structure_llm_region,
-            "enable_llm_contamination_filter": enable_llm_contamination_filter,
-            "contamination_llm_model": contamination_llm_model,
-            "contamination_llm_sdk_backend": contamination_llm_sdk_backend,
-            "contamination_llm_region": contamination_llm_region,
+            "manifest_path": str(manifest_result["manifest_path"]),
+            "management_table_path": str(manifest_result["management_table_path"]),
+            "handoff_path": str(manifest_result["handoff_path"]),
+            "batch_report_path": str(manifest_result["batch_report_path"]),
+            "parse_runtime": parse_runtime,
+            "enable_aliyun_postprocess": bool(postprocess_settings.get("enabled", True)),
+            "postprocess_rewrite_structured": bool(postprocess_settings.get("rewrite_structured", True)),
+            "postprocess_rewrite_markdown": bool(postprocess_settings.get("rewrite_markdown", True)),
+            "postprocess_keep_page_markers": bool(postprocess_settings.get("keep_page_markers", False)),
+            "enable_llm_basic_cleanup": bool(postprocess_settings.get("enable_llm_basic_cleanup", True)),
+            "basic_cleanup_llm_model": postprocess_settings.get("basic_cleanup_llm_model"),
+            "basic_cleanup_llm_sdk_backend": postprocess_settings.get("basic_cleanup_llm_sdk_backend"),
+            "basic_cleanup_llm_region": postprocess_settings.get("basic_cleanup_llm_region"),
+            "enable_llm_structure_resolution": bool(postprocess_settings.get("enable_llm_structure_resolution", True)),
+            "structure_llm_model": postprocess_settings.get("structure_llm_model"),
+            "structure_llm_sdk_backend": postprocess_settings.get("structure_llm_sdk_backend"),
+            "structure_llm_region": postprocess_settings.get("structure_llm_region"),
+            "enable_llm_contamination_filter": bool(postprocess_settings.get("enable_llm_contamination_filter", True)),
+            "contamination_llm_model": postprocess_settings.get("contamination_llm_model"),
+            "contamination_llm_sdk_backend": postprocess_settings.get("contamination_llm_sdk_backend"),
+            "contamination_llm_region": postprocess_settings.get("contamination_llm_region"),
             "allow_pdf_text_fallback_on_parse_failure": allow_pdf_text_fallback_on_parse_failure,
         },
     )
@@ -343,15 +335,15 @@ def execute(config_path: Path) -> List[Path]:
             project_root=workspace_root,
             affair_code="A100",
             handler_name="文献精解析资产化",
-            agent_names=["ar_A100_文献研读与正式知识回写事务智能体_v6"],
+            agent_names=["ar_A100_文献精解析资产化事务智能体_v6"],
             skill_names=[],
             reasoning_summary="消费 literature_reading_state.pending_deep_read=1，仅完成 non_review_deep 解析资产准备并移交 A105。",
             gate_review=gate_review,
             gate_review_path=gate_path,
-            artifact_paths=[str(index_path)],
+            artifact_paths=[str(index_path), str(manifest_result["manifest_path"]), str(manifest_result["management_table_path"]), str(manifest_result["handoff_path"])],
         )
     except Exception:
         pass
 
-    return [index_path, gate_path]
+    return [index_path, gate_path, manifest_result["manifest_path"], manifest_result["management_table_path"], manifest_result["batch_report_path"], manifest_result["handoff_path"]]
 

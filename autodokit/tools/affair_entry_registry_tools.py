@@ -21,7 +21,7 @@ MAINLINE_AFFAIR_ENTRY_MAP: dict[str, dict[str, Any]] = {
     "A080": {"node_name": "非综述候选与预处理编排", "affair_uid": "非综述候选视图构建", "module": "autodokit.affairs.非综述候选视图构建.affair", "callable": "execute", "implemented": True},
     "A090": {"node_name": "文献泛读与轻量分析", "affair_uid": "文献泛读与粗读", "module": "autodokit.affairs.文献泛读与粗读.affair", "callable": "execute", "implemented": True},
     "A095": {"node_name": "泛读批次分析汇总", "affair_uid": "泛读批次分析汇总", "module": "autodokit.affairs.泛读批次分析汇总.affair", "callable": "execute", "implemented": True},
-    "A100": {"node_name": "文献研读与正式知识回写", "affair_uid": "文献研读与正式知识回写", "module": "autodokit.affairs.文献研读与正式知识回写.affair", "callable": "execute", "implemented": True},
+    "A100": {"node_name": "文献精解析资产化", "affair_uid": "文献研读与正式知识回写", "module": "autodokit.affairs.文献研读与正式知识回写.affair", "callable": "execute", "implemented": True},
     "A105": {"node_name": "文献批判性研读与标准笔记", "affair_uid": "文献批判性研读与标准笔记", "module": "autodokit.affairs.文献批判性研读与标准笔记.affair", "callable": "execute", "implemented": True},
     "A110": {"node_name": "文献矩阵与研究缺口", "affair_uid": "文献矩阵", "module": "autodokit.affairs.文献矩阵.affair", "callable": "execute", "implemented": True},
     "A120": {"node_name": "研究脉络梳理", "affair_uid": "研究脉络梳理", "module": "autodokit.affairs.研究脉络梳理.affair", "callable": "execute", "implemented": True},
