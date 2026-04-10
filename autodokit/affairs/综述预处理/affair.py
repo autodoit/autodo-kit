@@ -23,7 +23,7 @@ from autodokit.tools import append_aok_log_event, build_gate_review, load_json_o
 from autodokit.tools.atomic.task_aok.task_instance_dir import create_task_instance_dir, mirror_artifacts_to_legacy, resolve_legacy_output_dir
 from autodokit.tools.llm_clients import postprocess_aliyun_multimodal_parse_outputs
 from autodokit.tools.atomic.task_aok.post_affair_git_commit import affair_auto_git_commit
-from autodokit.tools.bibliodb_sqlite import load_reading_queue_df, upsert_reading_queue_rows
+from autodokit.tools.bibliodb_sqlite import load_reading_queue_df, load_review_state_df, upsert_reading_queue_rows, upsert_review_state_rows
 from autodokit.tools.storage_backend import load_reference_main_table
 from autodokit.tools.time_utils import now_compact
 
@@ -61,6 +61,22 @@ def _build_review_pool_from_queue(content_db: Path, literature_table: pd.DataFra
         literature["uid_literature"] = literature.get("uid_literature", pd.Series(dtype=str)).astype(str)
         merged = merged.merge(literature, on="uid_literature", how="left", suffixes=("_queue", ""))
     merged["cite_key"] = merged.get("cite_key", merged.get("cite_key_queue", pd.Series(dtype=str))).fillna("")
+    return merged.fillna("")
+
+
+def _build_review_pool_from_state(content_db: Path, literature_table: pd.DataFrame) -> pd.DataFrame:
+    """从 review_state 构建 A060 输入池。"""
+
+    state_df = load_review_state_df(content_db, flag_filters={"pending_review_parse": 1})
+    if state_df.empty:
+        return pd.DataFrame()
+    merged = state_df.copy()
+    merged["uid_literature"] = merged.get("uid_literature", pd.Series(dtype=str)).astype(str)
+    if literature_table is not None and not literature_table.empty and "uid_literature" in literature_table.columns:
+        literature = literature_table.copy()
+        literature["uid_literature"] = literature.get("uid_literature", pd.Series(dtype=str)).astype(str)
+        merged = merged.merge(literature, on="uid_literature", how="left", suffixes=("_state", ""))
+    merged["cite_key"] = merged.get("cite_key", merged.get("cite_key_state", pd.Series(dtype=str))).fillna("")
     return merged.fillna("")
 
 
@@ -137,7 +153,9 @@ def execute(config_path: Path) -> List[Path]:
         raise ValueError("A060 需要 content_db（可由节点配置或 config.paths.content_db_path 提供）")
 
     literature_table = load_reference_main_table(content_db)
-    review_read_pool = _build_review_pool_from_queue(content_db, literature_table)
+    review_read_pool = _build_review_pool_from_state(content_db, literature_table)
+    if review_read_pool.empty:
+        review_read_pool = _build_review_pool_from_queue(content_db, literature_table)
 
     review_read_pool_path = workspace_root / "views" / "review_candidates" / "review_read_pool.csv"
     if review_read_pool.empty and review_read_pool_path.exists():
@@ -258,6 +276,25 @@ def execute(config_path: Path) -> List[Path]:
     a065_queue_rows = _build_a065_queue_rows(review_read_pool, run_uid=run_uid, topic=topic)
     if a065_queue_rows:
         upsert_reading_queue_rows(content_db, a065_queue_rows)
+    review_state_rows: List[Dict[str, Any]] = []
+    for _, row in review_read_pool.fillna("").iterrows():
+        uid_literature = str(row.get("uid_literature") or "").strip()
+        cite_key = str(row.get("cite_key") or "").strip()
+        if not uid_literature and not cite_key:
+            continue
+        review_state_rows.append(
+            {
+                "uid_literature": uid_literature,
+                "cite_key": cite_key,
+                "source_stage": "A060",
+                "pending_review_parse": 0,
+                "review_parse_ready": 1,
+                "pending_reference_preprocess": 1,
+                "reference_preprocessed": 0,
+            }
+        )
+    if review_state_rows:
+        upsert_review_state_rows(content_db, review_state_rows)
 
     gate_review = build_gate_review(
         node_uid="A060",

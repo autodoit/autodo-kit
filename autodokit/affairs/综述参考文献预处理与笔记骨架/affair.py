@@ -23,7 +23,7 @@ from autodokit.affairs.候选文献视图构建.affair import (
 from autodokit.tools import append_aok_log_event, batch_rewrite_obsidian_note_timestamps, build_gate_review, load_json_or_py
 from autodokit.tools.atomic.task_aok.task_instance_dir import create_task_instance_dir, mirror_artifacts_to_legacy, resolve_legacy_output_dir
 from autodokit.tools.atomic.task_aok.post_affair_git_commit import affair_auto_git_commit
-from autodokit.tools.bibliodb_sqlite import load_reading_queue_df, upsert_reading_queue_rows
+from autodokit.tools.bibliodb_sqlite import load_reading_queue_df, load_review_state_df, upsert_reading_queue_rows, upsert_review_state_rows
 from autodokit.tools.storage_backend import load_reference_main_table
 
 
@@ -72,6 +72,22 @@ def _build_review_pool_from_queue(content_db: Path, literature_table: pd.DataFra
     return merged.fillna("")
 
 
+def _build_review_pool_from_state(content_db: Path, literature_table: pd.DataFrame) -> pd.DataFrame:
+    """从 review_state 构建 A065 输入池。"""
+
+    state_df = load_review_state_df(content_db, flag_filters={"pending_reference_preprocess": 1})
+    if state_df.empty:
+        return pd.DataFrame()
+    merged = state_df.copy()
+    merged["uid_literature"] = merged.get("uid_literature", pd.Series(dtype=str)).astype(str)
+    if literature_table is not None and not literature_table.empty and "uid_literature" in literature_table.columns:
+        literature = literature_table.copy()
+        literature["uid_literature"] = literature.get("uid_literature", pd.Series(dtype=str)).astype(str)
+        merged = merged.merge(literature, on="uid_literature", how="left", suffixes=("_state", ""))
+    merged["cite_key"] = merged.get("cite_key", merged.get("cite_key_state", pd.Series(dtype=str))).fillna("")
+    return merged.fillna("")
+
+
 @affair_auto_git_commit("A065")
 def execute(config_path: Path) -> List[Path]:
     raw_cfg = load_json_or_py(config_path)
@@ -98,7 +114,9 @@ def execute(config_path: Path) -> List[Path]:
 
     literature_table = load_reference_main_table(content_db)
     literature_table = _enrich_literature_with_primary_attachments(literature_table, content_db)
-    review_read_pool = _build_review_pool_from_queue(content_db, literature_table)
+    review_read_pool = _build_review_pool_from_state(content_db, literature_table)
+    if review_read_pool.empty:
+        review_read_pool = _build_review_pool_from_queue(content_db, literature_table)
 
     review_read_pool_path = workspace_root / "views" / "review_candidates" / "review_read_pool.csv"
     if review_read_pool.empty and review_read_pool_path.exists():
@@ -185,6 +203,24 @@ def execute(config_path: Path) -> List[Path]:
         )
     if a080_queue_rows:
         upsert_reading_queue_rows(content_db, a080_queue_rows)
+    review_state_rows: List[Dict[str, Any]] = []
+    for _, row in review_read_pool.fillna("").iterrows():
+        uid_literature = str(row.get("uid_literature") or "").strip()
+        cite_key = str(row.get("cite_key") or "").strip()
+        if not uid_literature and not cite_key:
+            continue
+        review_state_rows.append(
+            {
+                "uid_literature": uid_literature,
+                "cite_key": cite_key,
+                "source_stage": "A065",
+                "pending_reference_preprocess": 0,
+                "reference_preprocessed": 1,
+                "pending_review_read": 1,
+            }
+        )
+    if review_state_rows:
+        upsert_review_state_rows(content_db, review_state_rows)
 
     gate_review = build_gate_review(
         node_uid="A065",

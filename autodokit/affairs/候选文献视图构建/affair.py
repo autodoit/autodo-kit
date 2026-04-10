@@ -33,8 +33,7 @@ from autodokit.tools import (
 )
 from autodokit.tools.llm_clients import postprocess_aliyun_multimodal_parse_outputs
 from autodokit.tools.ocr.classic.pdf_parse_asset_manager import ensure_multimodal_parse_asset
-from autodokit.tools.bibliodb_sqlite import replace_tags_for_namespace, save_structured_state
-from autodokit.tools.bibliodb_sqlite import replace_tags_for_namespace, save_structured_state, upsert_reading_queue_rows
+from autodokit.tools.bibliodb_sqlite import replace_tags_for_namespace, save_structured_state, upsert_reading_queue_rows, upsert_review_state_rows
 from autodokit.tools.contentdb_sqlite import get_pdf_structured_variant_column, resolve_content_db_config, resolve_pdf_structured_variant_output_dir
 from autodokit.tools.ocr.classic.pdf_to_structured_data_converter_local_pipeline_v2 import convert_pdf_to_structured_data_file as convert_pdf_to_structured_data_file_local_v2
 from autodokit.tools.ocr.babeldoc.pdf_to_structure_data_converter_use_babeldoc import convert_pdf_to_structured_data_file as convert_pdf_to_structured_data_file_babeldoc
@@ -1501,8 +1500,10 @@ def execute(config_path: Path) -> List[Path]:
     if not direct_structured_matches.empty and bool(raw_cfg.get("skip_a060_when_structured_ready", False)):
         queue_stage = _stringify(raw_cfg.get("direct_review_queue_stage")) or "A065"
     next_stage_queue_count = 0
+    review_state_count = 0
     if content_db is not None:
         queue_rows: List[Dict[str, Any]] = []
+        review_rows: List[Dict[str, Any]] = []
         for _, row in review_read_pool.fillna("").iterrows():
             uid_literature = _stringify(row.get("uid_literature"))
             cite_key = _stringify(row.get("cite_key"))
@@ -1526,6 +1527,25 @@ def execute(config_path: Path) -> List[Path]:
                     "is_current": 1,
                 }
             )
+            review_rows.append(
+                {
+                    "uid_literature": uid_literature,
+                    "cite_key": cite_key,
+                    "source_stage": "A050",
+                    "source_origin": "auto",
+                    "recommended_reason": _stringify(row.get("recommended_reason")) or "A050 review candidate",
+                    "pending_review_candidate": 0,
+                    "review_candidate_ready": 1,
+                    "pending_review_parse": 1,
+                    "review_parse_ready": 0,
+                    "pending_reference_preprocess": 0,
+                    "reference_preprocessed": 0,
+                    "pending_review_read": 0,
+                    "in_review_read": 0,
+                    "review_read_done": 0,
+                    "review_read_count": 0,
+                }
+            )
         if queue_rows:
             upsert_reading_queue_rows(content_db, queue_rows)
             next_stage_queue_count = len(queue_rows)
@@ -1542,6 +1562,9 @@ def execute(config_path: Path) -> List[Path]:
                 ],
                 source_type="a050_queue",
             )
+        if review_rows:
+            upsert_review_state_rows(content_db, review_rows)
+            review_state_count = len(review_rows)
 
     gate_review = build_gate_review(
         node_uid="A05",
@@ -1554,6 +1577,7 @@ def execute(config_path: Path) -> List[Path]:
             {"name": "created_note_count", "value": prepared_assets["created_note_count"]},
             {"name": "mapped_reference_count", "value": prepared_assets["mapped_reference_count"]},
             {"name": "next_stage_queue_count", "value": next_stage_queue_count},
+            {"name": "review_state_count", "value": review_state_count},
             {"name": "next_stage", "value": queue_stage},
             {"name": "reference_total_count", "value": (prepared_assets.get("quality_summary") or {}).get("total_reference_count", 0)},
             {"name": "llm_recognized_count", "value": (prepared_assets.get("quality_summary") or {}).get("llm_recognized_count", 0)},

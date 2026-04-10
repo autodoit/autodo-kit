@@ -40,6 +40,7 @@ from typing import Any, Dict, List, Optional, Set, Tuple
 
 from autodokit.tools.atomic.task_aok.post_affair_git_commit import affair_auto_git_commit
 from autodokit.tools.atomic.task_aok.task_instance_dir import create_task_instance_dir, mirror_artifacts_to_legacy, resolve_legacy_output_dir
+from autodokit.tools import bibliodb_sqlite
 
 from autodokit.tools.llm_clients import invoke_aliyun_llm
 from autodokit.tools.llm_parsing import (
@@ -1227,6 +1228,28 @@ def execute(config_path: Path) -> List[Path]:
 
     written_files = [json_path, txt_path, pairs_path, debug_path, domains_path]
     mirror_artifacts_to_legacy(written_files, legacy_output_dir, output_dir)
+
+    try:
+        content_db = workspace_root / "database" / "content" / "content.db"
+        bibliodb_sqlite.upsert_workspace_node_state_rows(
+            content_db,
+            [
+                {
+                    "node_code": "A030",
+                    "node_name": "研究问题与关键词生成",
+                    "pending_run": 0,
+                    "in_progress": 0,
+                    "completed": 1,
+                    "gate_status": "pass_next",
+                    "summary": "A030 关键词集合生成完成",
+                    "next_node_code": "A040",
+                    "failure_reason": "",
+                    "retry_count": 0,
+                }
+            ],
+        )
+    except Exception:
+        pass
     return written_files
 
 

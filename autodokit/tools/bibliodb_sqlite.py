@@ -39,6 +39,8 @@ LITERATURE_CHUNK_TABLE_NAME = "literature_chunks"
 LEGACY_READING_QUEUE_TABLE_NAME = "reading_queue"
 READING_QUEUE_TABLE_NAME = "literature_reading_queue"
 PARSE_ASSET_TABLE_NAME = "literature_parse_assets"
+WORKSPACE_NODE_STATE_TABLE_NAME = "workspace_node_state"
+LITERATURE_REVIEW_STATE_TABLE_NAME = "literature_review_state"
 A05_CURRENT_STATE_COLUMNS: Dict[str, str] = {
     "a05_scope_key": "TEXT",
     "a05_is_review_candidate": "INTEGER",
@@ -120,6 +122,46 @@ READING_STATE_COLUMNS: Dict[str, str] = {
     "innovation_synced": "INTEGER",
     "last_batch_id": "TEXT",
     "created_at": "TEXT",
+    "updated_at": "TEXT",
+}
+WORKSPACE_NODE_STATE_COLUMNS: Dict[str, str] = {
+    "node_code": "TEXT PRIMARY KEY",
+    "node_name": "TEXT",
+    "pending_run": "INTEGER",
+    "in_progress": "INTEGER",
+    "completed": "INTEGER",
+    "gate_status": "TEXT",
+    "last_task_uid": "TEXT",
+    "current_task_uid": "TEXT",
+    "last_run_at": "TEXT",
+    "completed_at": "TEXT",
+    "summary": "TEXT",
+    "next_node_code": "TEXT",
+    "failure_reason": "TEXT",
+    "retry_count": "INTEGER",
+    "updated_at": "TEXT",
+}
+REVIEW_STATE_COLUMNS: Dict[str, str] = {
+    "uid_literature": "TEXT PRIMARY KEY",
+    "cite_key": "TEXT",
+    "pending_review_candidate": "INTEGER",
+    "review_candidate_ready": "INTEGER",
+    "pending_review_parse": "INTEGER",
+    "review_parse_ready": "INTEGER",
+    "pending_reference_preprocess": "INTEGER",
+    "reference_preprocessed": "INTEGER",
+    "pending_review_read": "INTEGER",
+    "in_review_read": "INTEGER",
+    "review_read_done": "INTEGER",
+    "review_read_count": "INTEGER",
+    "source_stage": "TEXT",
+    "source_origin": "TEXT",
+    "recommended_reason": "TEXT",
+    "reading_objective": "TEXT",
+    "manual_guidance": "TEXT",
+    "parse_asset_uid": "TEXT",
+    "structured_abs_path": "TEXT",
+    "note_uid": "TEXT",
     "updated_at": "TEXT",
 }
 PARSE_ASSET_COLUMNS: Dict[str, str] = {
@@ -233,6 +275,10 @@ def init_db(db_path: Path) -> None:
         _ensure_columns(conn, READING_QUEUE_TABLE_NAME, READING_QUEUE_COLUMNS)
         conn.execute(f"CREATE TABLE IF NOT EXISTS {READING_STATE_TABLE_NAME} (uid_literature TEXT PRIMARY KEY)")
         _ensure_columns(conn, READING_STATE_TABLE_NAME, {key: value for key, value in READING_STATE_COLUMNS.items() if key != "uid_literature"})
+        conn.execute(f"CREATE TABLE IF NOT EXISTS {WORKSPACE_NODE_STATE_TABLE_NAME} (node_code TEXT PRIMARY KEY)")
+        _ensure_columns(conn, WORKSPACE_NODE_STATE_TABLE_NAME, {key: value for key, value in WORKSPACE_NODE_STATE_COLUMNS.items() if key != "node_code"})
+        conn.execute(f"CREATE TABLE IF NOT EXISTS {LITERATURE_REVIEW_STATE_TABLE_NAME} (uid_literature TEXT PRIMARY KEY)")
+        _ensure_columns(conn, LITERATURE_REVIEW_STATE_TABLE_NAME, {key: value for key, value in REVIEW_STATE_COLUMNS.items() if key != "uid_literature"})
         conn.execute(f"CREATE TABLE IF NOT EXISTS {PARSE_ASSET_TABLE_NAME} (id INTEGER PRIMARY KEY AUTOINCREMENT)")
         _ensure_columns(conn, PARSE_ASSET_TABLE_NAME, PARSE_ASSET_COLUMNS)
 
@@ -293,6 +339,11 @@ def init_db(db_path: Path) -> None:
         _create_index_if_table(conn, READING_STATE_TABLE_NAME, f"CREATE INDEX IF NOT EXISTS idx_reading_state_rough ON {READING_STATE_TABLE_NAME}(pending_rough_read, rough_read_done)")
         _create_index_if_table(conn, READING_STATE_TABLE_NAME, f"CREATE INDEX IF NOT EXISTS idx_reading_state_deep ON {READING_STATE_TABLE_NAME}(pending_deep_read, deep_read_done)")
         _create_index_if_table(conn, READING_STATE_TABLE_NAME, f"CREATE INDEX IF NOT EXISTS idx_reading_state_cite ON {READING_STATE_TABLE_NAME}(cite_key)")
+        _create_index_if_table(conn, WORKSPACE_NODE_STATE_TABLE_NAME, f"CREATE INDEX IF NOT EXISTS idx_workspace_node_gate ON {WORKSPACE_NODE_STATE_TABLE_NAME}(gate_status, in_progress, pending_run)")
+        _create_index_if_table(conn, LITERATURE_REVIEW_STATE_TABLE_NAME, f"CREATE INDEX IF NOT EXISTS idx_review_state_parse ON {LITERATURE_REVIEW_STATE_TABLE_NAME}(pending_review_parse, review_parse_ready)")
+        _create_index_if_table(conn, LITERATURE_REVIEW_STATE_TABLE_NAME, f"CREATE INDEX IF NOT EXISTS idx_review_state_ref ON {LITERATURE_REVIEW_STATE_TABLE_NAME}(pending_reference_preprocess, reference_preprocessed)")
+        _create_index_if_table(conn, LITERATURE_REVIEW_STATE_TABLE_NAME, f"CREATE INDEX IF NOT EXISTS idx_review_state_read ON {LITERATURE_REVIEW_STATE_TABLE_NAME}(pending_review_read, review_read_done)")
+        _create_index_if_table(conn, LITERATURE_REVIEW_STATE_TABLE_NAME, f"CREATE INDEX IF NOT EXISTS idx_review_state_cite ON {LITERATURE_REVIEW_STATE_TABLE_NAME}(cite_key)")
         _create_index_if_table(conn, PARSE_ASSET_TABLE_NAME, f"CREATE INDEX IF NOT EXISTS idx_parse_asset_lit_level ON {PARSE_ASSET_TABLE_NAME}(uid_literature, parse_level)")
         _create_index_if_table(conn, PARSE_ASSET_TABLE_NAME, f"CREATE INDEX IF NOT EXISTS idx_parse_asset_current ON {PARSE_ASSET_TABLE_NAME}(parse_level, is_current)")
         conn.commit()
@@ -349,6 +400,29 @@ def _normalize_reading_state_frame(frame: pd.DataFrame | None) -> pd.DataFrame:
         "deep_read_count",
         "analysis_formal_synced",
         "innovation_synced",
+    ]
+    for column in integer_columns:
+        if column in working.columns:
+            working[column] = pd.to_numeric(working[column], errors="coerce").fillna(0).astype(int)
+    return working
+
+
+def _normalize_review_state_frame(frame: pd.DataFrame | None) -> pd.DataFrame:
+    working = frame.copy() if frame is not None else pd.DataFrame()
+    for column in REVIEW_STATE_COLUMNS:
+        if column not in working.columns:
+            working[column] = None
+    integer_columns = [
+        "pending_review_candidate",
+        "review_candidate_ready",
+        "pending_review_parse",
+        "review_parse_ready",
+        "pending_reference_preprocess",
+        "reference_preprocessed",
+        "pending_review_read",
+        "in_review_read",
+        "review_read_done",
+        "review_read_count",
     ]
     for column in integer_columns:
         if column in working.columns:
@@ -422,6 +496,126 @@ def upsert_reading_state_rows(db_path: Path, rows: Sequence[dict[str, Any]] | pd
                 INSERT INTO {READING_STATE_TABLE_NAME} ({', '.join(_quote_identifier(column) for column in writable_columns)})
                 VALUES ({placeholders})
                 ON CONFLICT(uid_literature) DO UPDATE SET
+                    {update_sql}
+                """,
+                values,
+            )
+        conn.commit()
+
+
+def load_review_state_df(
+    db_path: Path,
+    *,
+    flag_filters: Optional[Dict[str, Any]] = None,
+) -> pd.DataFrame:
+    """读取综述阅读状态表，并按标志列过滤。"""
+
+    init_db(db_path)
+    conn = _connect(db_path)
+    try:
+        state_df = pd.read_sql_query(f"SELECT * FROM {LITERATURE_REVIEW_STATE_TABLE_NAME}", conn)
+    finally:
+        conn.close()
+
+    state_df = _normalize_review_state_frame(state_df)
+    for column, expected in (flag_filters or {}).items():
+        if column not in state_df.columns:
+            continue
+        if isinstance(expected, bool):
+            state_df = state_df[state_df[column].fillna(0).astype(int) == int(expected)]
+        else:
+            state_df = state_df[state_df[column].astype(str) == str(expected)]
+    return state_df.reset_index(drop=True)
+
+
+def upsert_review_state_rows(db_path: Path, rows: Sequence[dict[str, Any]] | pd.DataFrame) -> None:
+    """按 uid_literature 回写综述阅读状态表。"""
+
+    init_db(db_path)
+    incoming_df = rows.copy() if isinstance(rows, pd.DataFrame) else pd.DataFrame(list(rows or []))
+    if incoming_df.empty:
+        return
+
+    incoming_df = _normalize_review_state_frame(incoming_df)
+    now_iso = _utc_now_iso()
+    for index, row in incoming_df.iterrows():
+        uid_literature = _stringify(row.get("uid_literature"))
+        if not uid_literature:
+            continue
+        incoming_df.at[index, "uid_literature"] = uid_literature
+        incoming_df.at[index, "updated_at"] = _stringify(row.get("updated_at")) or now_iso
+
+    incoming_df = incoming_df[incoming_df["uid_literature"].astype(str).ne("")].reset_index(drop=True)
+    if incoming_df.empty:
+        return
+
+    writable_columns = list(REVIEW_STATE_COLUMNS.keys())
+    update_columns = [column for column in writable_columns if column != "uid_literature"]
+    placeholders = ", ".join(["?"] * len(writable_columns))
+    update_sql = ", ".join([f"{_quote_identifier(column)} = excluded.{_quote_identifier(column)}" for column in update_columns])
+
+    with _connect(db_path) as conn:
+        for _, row in incoming_df.iterrows():
+            row_dict = row.to_dict()
+            values = [None if pd.isna(row_dict.get(column)) else row_dict.get(column) for column in writable_columns]
+            conn.execute(
+                f"""
+                INSERT INTO {LITERATURE_REVIEW_STATE_TABLE_NAME} ({', '.join(_quote_identifier(column) for column in writable_columns)})
+                VALUES ({placeholders})
+                ON CONFLICT(uid_literature) DO UPDATE SET
+                    {update_sql}
+                """,
+                values,
+            )
+        conn.commit()
+
+
+def load_workspace_node_state_df(db_path: Path) -> pd.DataFrame:
+    """读取工作区节点状态表。"""
+
+    init_db(db_path)
+    conn = _connect(db_path)
+    try:
+        frame = pd.read_sql_query(f"SELECT * FROM {WORKSPACE_NODE_STATE_TABLE_NAME}", conn)
+    finally:
+        conn.close()
+    return frame.reset_index(drop=True)
+
+
+def upsert_workspace_node_state_rows(db_path: Path, rows: Sequence[dict[str, Any]] | pd.DataFrame) -> None:
+    """按 node_code 回写工作区节点状态表。"""
+
+    init_db(db_path)
+    incoming_df = rows.copy() if isinstance(rows, pd.DataFrame) else pd.DataFrame(list(rows or []))
+    if incoming_df.empty:
+        return
+
+    for column in WORKSPACE_NODE_STATE_COLUMNS:
+        if column not in incoming_df.columns:
+            incoming_df[column] = None
+
+    now_iso = _utc_now_iso()
+    incoming_df["node_code"] = incoming_df["node_code"].astype(str).str.strip()
+    incoming_df = incoming_df[incoming_df["node_code"].ne("")].reset_index(drop=True)
+    if incoming_df.empty:
+        return
+    incoming_df["updated_at"] = incoming_df["updated_at"].fillna("").astype(str)
+    incoming_df.loc[incoming_df["updated_at"].eq(""), "updated_at"] = now_iso
+
+    writable_columns = list(WORKSPACE_NODE_STATE_COLUMNS.keys())
+    update_columns = [column for column in writable_columns if column != "node_code"]
+    placeholders = ", ".join(["?"] * len(writable_columns))
+    update_sql = ", ".join([f"{_quote_identifier(column)} = excluded.{_quote_identifier(column)}" for column in update_columns])
+
+    with _connect(db_path) as conn:
+        for _, row in incoming_df.iterrows():
+            row_dict = row.to_dict()
+            values = [None if pd.isna(row_dict.get(column)) else row_dict.get(column) for column in writable_columns]
+            conn.execute(
+                f"""
+                INSERT INTO {WORKSPACE_NODE_STATE_TABLE_NAME} ({', '.join(_quote_identifier(column) for column in writable_columns)})
+                VALUES ({placeholders})
+                ON CONFLICT(node_code) DO UPDATE SET
                     {update_sql}
                 """,
                 values,

@@ -21,6 +21,7 @@ from autodokit.tools.atomic.task_aok.git_snapshot_ledger import git_workspace_in
 from autodokit.tools.atomic.task_aok.post_affair_git_commit import affair_auto_git_commit
 from autodokit.tools.atomic.task_aok.task_instance_dir import resolve_legacy_output_dir
 from autodokit.tools.bibliodb_sqlite import init_db as init_references_db
+from autodokit.tools.bibliodb_sqlite import upsert_workspace_node_state_rows
 from autodokit.tools.contentdb_sqlite import (
     CONTENT_DB_DIRECTORY_NAME,
     DEFAULT_CONTENT_DB_NAME,
@@ -631,6 +632,32 @@ def execute(config_path: Path) -> List[Path]:
     if not isinstance(raw_cfg, dict):
         raise ValueError("A010 配置必须为字典")
     result = ProjectInitializationEngine().run(config_path=config_path, raw_cfg=raw_cfg)
+
+    try:
+        workspace_root = Path(str(result.get("workspace_root") or "")).resolve()
+        content_db = workspace_root / "database" / CONTENT_DB_DIRECTORY_NAME / DEFAULT_CONTENT_DB_NAME
+        upsert_workspace_node_state_rows(
+            content_db,
+            [
+                {
+                    "node_code": "A010",
+                    "node_name": "项目初始化",
+                    "pending_run": 0,
+                    "in_progress": 0,
+                    "completed": 1,
+                    "gate_status": "pass_next",
+                    "last_task_uid": str(result.get("task_instance_name") or ""),
+                    "current_task_uid": "",
+                    "summary": "A010 初始化完成",
+                    "next_node_code": "A020",
+                    "failure_reason": "",
+                    "retry_count": 0,
+                }
+            ],
+        )
+    except Exception:
+        # 节点状态写入失败不阻断初始化主流程。
+        pass
 
     output_dir = resolve_legacy_output_dir(raw_cfg, config_path)
 

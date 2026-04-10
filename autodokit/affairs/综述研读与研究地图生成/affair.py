@@ -47,7 +47,7 @@ from autodokit.tools import (
 )
 from autodokit.tools.atomic.task_aok.task_instance_dir import create_task_instance_dir, mirror_artifacts_to_legacy, resolve_legacy_output_dir
 from autodokit.tools.contentdb_sqlite import resolve_content_db_config
-from autodokit.tools.bibliodb_sqlite import load_reading_queue_df, replace_tags_for_namespace, upsert_reading_queue_rows
+from autodokit.tools.bibliodb_sqlite import load_reading_queue_df, load_reading_state_df, load_review_state_df, replace_tags_for_namespace, upsert_reading_queue_rows, upsert_reading_state_rows, upsert_review_state_rows
 from autodokit.tools.storage_backend import (
     load_knowledge_tables,
     load_reference_tables,
@@ -221,6 +221,7 @@ def _a05_asset_paths(workspace_root: Path) -> Dict[str, Path]:
 
 
 def _load_review_read_pool(raw_cfg: Dict[str, Any], workspace_root: Path, content_db: Path) -> pd.DataFrame:
+    allow_legacy_queue_fallback = bool((raw_cfg.get("state_contract") or {}).get("legacy_queue_fallback", False))
     csv_value = _stringify(raw_cfg.get("review_read_pool_csv"))
     if csv_value:
         csv_path = Path(csv_value)
@@ -229,21 +230,26 @@ def _load_review_read_pool(raw_cfg: Dict[str, Any], workspace_root: Path, conten
         if csv_path.exists():
             return pd.read_csv(csv_path, dtype=str, keep_default_na=False)
 
-    queue_df = load_reading_queue_df(
-        content_db,
-        stage="A065",
-        only_current=True,
-        queue_statuses=["queued", "candidate", "in_progress"],
-    )
-    if queue_df.empty:
+    review_state_df = load_review_state_df(content_db, flag_filters={"pending_review_read": 1})
+    if not review_state_df.empty:
+        return review_state_df.fillna("")
+
+    if allow_legacy_queue_fallback:
         queue_df = load_reading_queue_df(
             content_db,
-            stage="A060",
+            stage="A065",
             only_current=True,
             queue_statuses=["queued", "candidate", "in_progress"],
         )
-    if not queue_df.empty:
-        return queue_df.fillna("")
+        if queue_df.empty:
+            queue_df = load_reading_queue_df(
+                content_db,
+                stage="A060",
+                only_current=True,
+                queue_statuses=["queued", "candidate", "in_progress"],
+            )
+        if not queue_df.empty:
+            return queue_df.fillna("")
 
     canonical_csv = workspace_root / "views" / "review_candidates" / "review_read_pool.csv"
     if canonical_csv.exists():
@@ -256,8 +262,12 @@ def _load_review_read_pool(raw_cfg: Dict[str, Any], workspace_root: Path, conten
             try:
                 table = pd.read_sql_query("SELECT * FROM review_read_pool_current_view", connection)
             except Exception as view_exc:
+                if allow_legacy_queue_fallback:
+                    raise FileNotFoundError(
+                        "未找到可用的综述阅读池（review_state、A065/A060 队列、review_read_pool 表或 review_read_pool_current_view 视图）。"
+                    ) from view_exc
                 raise FileNotFoundError(
-                    "未找到可用的综述阅读池（A065/A060 队列、review_read_pool 表或 review_read_pool_current_view 视图）。"
+                    "未找到可用的综述阅读池（review_state 或 review_read_pool/review_read_pool_current_view）。当前已禁用 legacy queue fallback。"
                 ) from view_exc
     return table.fillna("")
 
@@ -1960,7 +1970,8 @@ def execute(config_path: Path) -> List[Path]:
     persist_knowledge_tables(index_df=knowledge_index, attachments_df=knowledge_attachments, db_path=content_db_path)
     persist_reference_tables(literatures_df=literature_table, attachments_df=attachment_table, db_path=content_db_path)
 
-    if not queue_df.empty:
+    allow_legacy_queue_write = bool((raw_cfg.get("state_contract") or {}).get("legacy_queue_fallback", False))
+    if allow_legacy_queue_write and not queue_df.empty:
         upsert_reading_queue_rows(content_db_path, queue_df)
         a080_tag_rows = [
             {"uid_literature": _stringify(row.get("uid_literature")), "cite_key": _stringify(row.get("cite_key")), "tag": f"queued/{_stringify(row.get('queue_status'))}"}
@@ -1983,6 +1994,52 @@ def execute(config_path: Path) -> List[Path]:
             replace_tags_for_namespace(content_db_path, namespace="bucket", tag_rows=a080_bucket_rows, source_type="a070_downstream")
         if a090_tag_rows:
             replace_tags_for_namespace(content_db_path, namespace="queue/a090", tag_rows=a090_tag_rows, source_type="a070_downstream")
+
+    review_state_updates: List[Dict[str, Any]] = []
+    for state in review_states:
+        uid_literature = _stringify(state.get("uid_literature"))
+        cite_key = _stringify(state.get("cite_key"))
+        if not uid_literature and not cite_key:
+            continue
+        review_state_updates.append(
+            {
+                "uid_literature": uid_literature,
+                "cite_key": cite_key,
+                "source_stage": "A070",
+                "pending_review_read": 0,
+                "in_review_read": 0,
+                "review_read_done": 1,
+                "review_read_count": int(state.get("review_read_count") or 1),
+            }
+        )
+    if review_state_updates:
+        upsert_review_state_rows(content_db_path, review_state_updates)
+
+    if not queue_df.empty:
+        reading_state_seed: List[Dict[str, Any]] = []
+        for _, row in queue_df[queue_df["stage"].astype(str) == "A080"].fillna("").iterrows():
+            uid_literature = _stringify(row.get("uid_literature"))
+            cite_key = _stringify(row.get("cite_key"))
+            if not uid_literature and not cite_key:
+                continue
+            reading_state_seed.append(
+                {
+                    "uid_literature": uid_literature,
+                    "cite_key": cite_key,
+                    "source_stage": "A070",
+                    "recommended_reason": _stringify(row.get("recommended_reason")) or "A070 downstream",
+                    "theme_relation": _stringify(row.get("theme_relation")) or "a070_downstream",
+                    "pending_preprocess": 1,
+                    "preprocessed": 0,
+                    "pending_rough_read": 0,
+                    "rough_read_done": 0,
+                    "pending_deep_read": 0,
+                    "deep_read_done": 0,
+                    "deep_read_count": 0,
+                }
+            )
+        if reading_state_seed:
+            upsert_reading_state_rows(content_db_path, reading_state_seed)
 
     issues = missing_attachments + missing_text + missing_assets
     evidence_unit_count = sum(

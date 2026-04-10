@@ -9,6 +9,7 @@ from typing import Any, Literal
 from uuid import uuid4
 
 from autodokit.tools import load_json_or_py
+from autodokit.tools import bibliodb_sqlite
 from autodokit.tools.atomic.task_aok.task_instance_dir import create_task_instance_dir, mirror_artifacts_to_legacy, resolve_legacy_output_dir
 from autodokit.tools.atomic.task_aok.post_affair_git_commit import affair_auto_git_commit
 from autodokit.tools.literature_translation_tools import run_literature_translation
@@ -172,4 +173,25 @@ def execute(config_path: Path) -> list[Path]:
             out_path.write_text(json.dumps(result, ensure_ascii=False, indent=2), encoding="utf-8")
 
     mirror_artifacts_to_legacy(written_files, legacy_output_dir, output_dir)
+    try:
+        content_db_path = workspace_root / "database" / "content" / "content.db"
+        bibliodb_sqlite.upsert_workspace_node_state_rows(
+            content_db_path,
+            [
+                {
+                    "node_code": "A040",
+                    "node_name": "文献检索与入库",
+                    "pending_run": 0,
+                    "in_progress": 0,
+                    "completed": 1,
+                    "gate_status": "pass_next",
+                    "summary": "A040 检索治理完成",
+                    "next_node_code": "A050",
+                    "failure_reason": "",
+                    "retry_count": 0,
+                }
+            ],
+        )
+    except Exception:
+        pass
     return written_files

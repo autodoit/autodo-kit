@@ -29,6 +29,27 @@ KNOWLEDGE_NOTES_TABLE_NAME = "knowledge_notes"
 TRANSLATION_ASSET_TABLE_NAME = "literature_translation_assets"
 READING_STATE_TABLE_NAME = "literature_reading_state"
 READING_STATE_OVERVIEW_VIEW_NAME = "阅读状态总视图"
+WORKSPACE_NODE_STATE_TABLE_NAME = "workspace_node_state"
+REVIEW_STATE_TABLE_NAME = "literature_review_state"
+WORKSPACE_NODE_OVERVIEW_VIEW_NAME = "工作区节点状态总视图"
+WORKSPACE_NODE_FILTER_VIEWS: tuple[tuple[str, str], ...] = (
+    ("待执行节点清单", "IFNULL(待执行, 0) = 1"),
+    ("执行中节点清单", "IFNULL(执行中, 0) = 1"),
+    ("已完成节点清单", "IFNULL(已完成, 0) = 1"),
+    ("闸门待处理节点清单", "IFNULL(闸门状态, '') IN ('retry_current', 'fallback_current', 'pause_current', 'stop_workflow')"),
+    ("失败待重试节点清单", "IFNULL(失败原因, '') <> ''"),
+)
+REVIEW_STATE_OVERVIEW_VIEW_NAME = "综述阅读状态总视图"
+REVIEW_STATE_FILTER_VIEWS: tuple[tuple[str, str], ...] = (
+    ("待综述筛选文献清单", "IFNULL(待综述筛选, 0) = 1"),
+    ("综述候选文献清单", "IFNULL(已入综述候选, 0) = 1"),
+    ("待综述解析文献清单", "IFNULL(待综述解析确认, 0) = 1"),
+    ("已解析综述文献清单", "IFNULL(综述解析已就绪, 0) = 1"),
+    ("待参考文献预处理综述清单", "IFNULL(待参考文献预处理, 0) = 1"),
+    ("待综述阅读文献清单", "IFNULL(待综述阅读, 0) = 1"),
+    ("正综述阅读文献清单", "IFNULL(正综述阅读, 0) = 1"),
+    ("已综述阅读文献清单", "IFNULL(已综述阅读, 0) = 1"),
+)
 READING_STATE_FILTER_VIEWS: tuple[tuple[str, str], ...] = (
     ("待预处理文献清单", "IFNULL(pending_preprocess, 0) = 1"),
     (
@@ -101,6 +122,44 @@ READING_STATE_REQUIRED_COLUMNS: dict[str, str] = {
     "innovation_synced": "INTEGER",
     "last_batch_id": "TEXT",
     "created_at": "TEXT",
+    "updated_at": "TEXT",
+}
+WORKSPACE_NODE_STATE_REQUIRED_COLUMNS: dict[str, str] = {
+    "node_name": "TEXT",
+    "pending_run": "INTEGER",
+    "in_progress": "INTEGER",
+    "completed": "INTEGER",
+    "gate_status": "TEXT",
+    "last_task_uid": "TEXT",
+    "current_task_uid": "TEXT",
+    "last_run_at": "TEXT",
+    "completed_at": "TEXT",
+    "summary": "TEXT",
+    "next_node_code": "TEXT",
+    "failure_reason": "TEXT",
+    "retry_count": "INTEGER",
+    "updated_at": "TEXT",
+}
+REVIEW_STATE_REQUIRED_COLUMNS: dict[str, str] = {
+    "cite_key": "TEXT",
+    "pending_review_candidate": "INTEGER",
+    "review_candidate_ready": "INTEGER",
+    "pending_review_parse": "INTEGER",
+    "review_parse_ready": "INTEGER",
+    "pending_reference_preprocess": "INTEGER",
+    "reference_preprocessed": "INTEGER",
+    "pending_review_read": "INTEGER",
+    "in_review_read": "INTEGER",
+    "review_read_done": "INTEGER",
+    "review_read_count": "INTEGER",
+    "source_stage": "TEXT",
+    "source_origin": "TEXT",
+    "recommended_reason": "TEXT",
+    "reading_objective": "TEXT",
+    "manual_guidance": "TEXT",
+    "parse_asset_uid": "TEXT",
+    "structured_abs_path": "TEXT",
+    "note_uid": "TEXT",
     "updated_at": "TEXT",
 }
 PDF_STRUCTURED_VARIANT_SPECS: tuple[dict[str, str], ...] = (
@@ -505,6 +564,101 @@ def _refresh_reading_state_views(conn: sqlite3.Connection) -> None:
         ORDER BY updated_at DESC, year DESC, cite_key, uid_literature
         """
         _create_or_replace_view(conn, view_name, view_sql)
+
+    workspace_overview_sql = f"""
+    SELECT
+        node_code AS 节点编码,
+        COALESCE(node_name, '') AS 节点名称,
+        COALESCE(pending_run, 0) AS 待执行,
+        COALESCE(in_progress, 0) AS 执行中,
+        COALESCE(completed, 0) AS 已完成,
+        COALESCE(gate_status, '') AS 闸门状态,
+        COALESCE(last_task_uid, '') AS 最近任务,
+        COALESCE(current_task_uid, '') AS 当前任务,
+        COALESCE(next_node_code, '') AS 下一节点,
+        COALESCE(failure_reason, '') AS 失败原因,
+        COALESCE(updated_at, '') AS 更新时间
+    FROM {WORKSPACE_NODE_STATE_TABLE_NAME}
+    ORDER BY 更新时间 DESC, 节点编码
+    """
+    _create_or_replace_view(conn, WORKSPACE_NODE_OVERVIEW_VIEW_NAME, workspace_overview_sql)
+    quoted_workspace_name = _quote_identifier(WORKSPACE_NODE_OVERVIEW_VIEW_NAME)
+    for view_name, where_clause in WORKSPACE_NODE_FILTER_VIEWS:
+        view_sql = f"""
+        SELECT *
+        FROM {quoted_workspace_name}
+        WHERE {where_clause}
+        ORDER BY 更新时间 DESC, 节点编码
+        """
+        _create_or_replace_view(conn, view_name, view_sql)
+
+    review_overview_sql = f"""
+    SELECT
+        rs.uid_literature AS 文献标识,
+        COALESCE(rs.cite_key, lit.cite_key, '') AS 引文键,
+        COALESCE(lit.title, '') AS 标题,
+        COALESCE(lit.first_author, '') AS 作者,
+        COALESCE(lit.year, '') AS 年份,
+        COALESCE(rs.pending_review_candidate, 0) AS 待综述筛选,
+        COALESCE(rs.review_candidate_ready, 0) AS 已入综述候选,
+        COALESCE(rs.pending_review_parse, 0) AS 待综述解析确认,
+        COALESCE(rs.review_parse_ready, 0) AS 综述解析已就绪,
+        COALESCE(rs.pending_reference_preprocess, 0) AS 待参考文献预处理,
+        COALESCE(rs.reference_preprocessed, 0) AS 参考文献预处理完成,
+        COALESCE(rs.pending_review_read, 0) AS 待综述阅读,
+        COALESCE(rs.in_review_read, 0) AS 正综述阅读,
+        COALESCE(rs.review_read_done, 0) AS 已综述阅读,
+        COALESCE(rs.review_read_count, 0) AS 阅读次数,
+        COALESCE(rs.source_stage, '') AS 来源阶段,
+        COALESCE(rs.source_origin, '') AS 来源类型,
+        COALESCE(rs.recommended_reason, '') AS 推荐原因,
+        COALESCE(rs.reading_objective, '') AS 阅读目标,
+        COALESCE(rs.manual_guidance, '') AS 手动提示语,
+        COALESCE(rs.structured_abs_path, '') AS 结构化正文路径,
+        COALESCE(rs.note_uid, '') AS 标准笔记,
+        COALESCE(rs.updated_at, '') AS 更新时间
+    FROM {REVIEW_STATE_TABLE_NAME} AS rs
+    LEFT JOIN literatures AS lit
+        ON lit.uid_literature = rs.uid_literature
+    ORDER BY 更新时间 DESC, 文献标识
+    """
+    _create_or_replace_view(conn, REVIEW_STATE_OVERVIEW_VIEW_NAME, review_overview_sql)
+    quoted_review_name = _quote_identifier(REVIEW_STATE_OVERVIEW_VIEW_NAME)
+    for view_name, where_clause in REVIEW_STATE_FILTER_VIEWS:
+        view_sql = f"""
+        SELECT *
+        FROM {quoted_review_name}
+        WHERE {where_clause}
+        ORDER BY 更新时间 DESC, 文献标识
+        """
+        _create_or_replace_view(conn, view_name, view_sql)
+
+    workflow_overview_sql = f"""
+    SELECT '节点推进' AS 类别, COUNT(1) AS 数量, '执行中' AS 状态
+    FROM {WORKSPACE_NODE_STATE_TABLE_NAME}
+    WHERE IFNULL(in_progress, 0) = 1
+    UNION ALL
+    SELECT '综述链' AS 类别, COUNT(1) AS 数量, '待解析' AS 状态
+    FROM {REVIEW_STATE_TABLE_NAME}
+    WHERE IFNULL(pending_review_parse, 0) = 1
+    UNION ALL
+    SELECT '综述链' AS 类别, COUNT(1) AS 数量, '待阅读' AS 状态
+    FROM {REVIEW_STATE_TABLE_NAME}
+    WHERE IFNULL(pending_review_read, 0) = 1
+    UNION ALL
+    SELECT '普通阅读链' AS 类别, COUNT(1) AS 数量, '待预处理' AS 状态
+    FROM {READING_STATE_TABLE_NAME}
+    WHERE IFNULL(pending_preprocess, 0) = 1
+    UNION ALL
+    SELECT '普通阅读链' AS 类别, COUNT(1) AS 数量, '待泛读' AS 状态
+    FROM {READING_STATE_TABLE_NAME}
+    WHERE IFNULL(pending_rough_read, 0) = 1
+    UNION ALL
+    SELECT '普通阅读链' AS 类别, COUNT(1) AS 数量, '待研读' AS 状态
+    FROM {READING_STATE_TABLE_NAME}
+    WHERE IFNULL(pending_deep_read, 0) = 1
+    """
+    _create_or_replace_view(conn, "工作流总览视图", workflow_overview_sql)
 
 
 def _attachment_entity_uid(
@@ -956,6 +1110,63 @@ def init_content_db(db_path: str | Path) -> Path:
         _create_index_if_table(conn, READING_STATE_TABLE_NAME, f"CREATE INDEX IF NOT EXISTS idx_reading_state_rough ON {READING_STATE_TABLE_NAME}(pending_rough_read, rough_read_done)")
         _create_index_if_table(conn, READING_STATE_TABLE_NAME, f"CREATE INDEX IF NOT EXISTS idx_reading_state_deep ON {READING_STATE_TABLE_NAME}(pending_deep_read, deep_read_done)")
         _create_index_if_table(conn, READING_STATE_TABLE_NAME, f"CREATE INDEX IF NOT EXISTS idx_reading_state_cite ON {READING_STATE_TABLE_NAME}(cite_key)")
+
+        cur.execute(
+            f"""
+            CREATE TABLE IF NOT EXISTS {WORKSPACE_NODE_STATE_TABLE_NAME} (
+                node_code TEXT PRIMARY KEY,
+                node_name TEXT,
+                pending_run INTEGER,
+                in_progress INTEGER,
+                completed INTEGER,
+                gate_status TEXT,
+                last_task_uid TEXT,
+                current_task_uid TEXT,
+                last_run_at TEXT,
+                completed_at TEXT,
+                summary TEXT,
+                next_node_code TEXT,
+                failure_reason TEXT,
+                retry_count INTEGER,
+                updated_at TEXT
+            )
+            """
+        )
+        _ensure_table_columns(conn, WORKSPACE_NODE_STATE_TABLE_NAME, WORKSPACE_NODE_STATE_REQUIRED_COLUMNS)
+        _create_index_if_table(conn, WORKSPACE_NODE_STATE_TABLE_NAME, f"CREATE INDEX IF NOT EXISTS idx_workspace_node_gate ON {WORKSPACE_NODE_STATE_TABLE_NAME}(gate_status, in_progress, pending_run)")
+
+        cur.execute(
+            f"""
+            CREATE TABLE IF NOT EXISTS {REVIEW_STATE_TABLE_NAME} (
+                uid_literature TEXT PRIMARY KEY,
+                cite_key TEXT,
+                pending_review_candidate INTEGER,
+                review_candidate_ready INTEGER,
+                pending_review_parse INTEGER,
+                review_parse_ready INTEGER,
+                pending_reference_preprocess INTEGER,
+                reference_preprocessed INTEGER,
+                pending_review_read INTEGER,
+                in_review_read INTEGER,
+                review_read_done INTEGER,
+                review_read_count INTEGER,
+                source_stage TEXT,
+                source_origin TEXT,
+                recommended_reason TEXT,
+                reading_objective TEXT,
+                manual_guidance TEXT,
+                parse_asset_uid TEXT,
+                structured_abs_path TEXT,
+                note_uid TEXT,
+                updated_at TEXT,
+                FOREIGN KEY(uid_literature) REFERENCES literatures(uid_literature)
+            )
+            """
+        )
+        _ensure_table_columns(conn, REVIEW_STATE_TABLE_NAME, REVIEW_STATE_REQUIRED_COLUMNS)
+        _create_index_if_table(conn, REVIEW_STATE_TABLE_NAME, f"CREATE INDEX IF NOT EXISTS idx_review_state_parse ON {REVIEW_STATE_TABLE_NAME}(pending_review_parse, review_parse_ready)")
+        _create_index_if_table(conn, REVIEW_STATE_TABLE_NAME, f"CREATE INDEX IF NOT EXISTS idx_review_state_ref ON {REVIEW_STATE_TABLE_NAME}(pending_reference_preprocess, reference_preprocessed)")
+        _create_index_if_table(conn, REVIEW_STATE_TABLE_NAME, f"CREATE INDEX IF NOT EXISTS idx_review_state_read ON {REVIEW_STATE_TABLE_NAME}(pending_review_read, review_read_done)")
 
         cur.execute(
             """

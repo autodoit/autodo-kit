@@ -1084,7 +1084,31 @@ def execute(config_path: Path) -> List[Path]:
     Returns:
         写出的文件路径列表。
     """
-    return _run_and_write_all_outputs(config_path)
+    written = _run_and_write_all_outputs(config_path)
+    try:
+        raw_cfg = load_json_or_py(config_path)
+        workspace_root = Path(str(raw_cfg.get("workspace_root") or config_path.parents[2])).resolve()
+        content_db = workspace_root / "database" / "content" / "content.db"
+        bibliodb_sqlite.upsert_workspace_node_state_rows(
+            content_db,
+            [
+                {
+                    "node_code": "A020",
+                    "node_name": "文献导入与预处理",
+                    "pending_run": 0,
+                    "in_progress": 0,
+                    "completed": 1,
+                    "gate_status": "pass_next",
+                    "summary": "A020 导入与预处理完成",
+                    "next_node_code": "A030",
+                    "failure_reason": "",
+                    "retry_count": 0,
+                }
+            ],
+        )
+    except Exception:
+        pass
+    return written
 
 
 def main() -> None:
