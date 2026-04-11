@@ -54,6 +54,7 @@ from .taskdb import (
     task_status_append,
     validate_aok_taskdb,
 )
+from .postprocess_runtime import normalize_affair_receipt, postprocess_affair_execution
 
 __all__ = [
     "DEFAULT_AOK_TASK_COLUMNS",
@@ -104,4 +105,6 @@ __all__ = [
     "git_workspace_init",
     "git_create_snapshot_for_task",
     "git_rollback_by_task_uid",
+    "normalize_affair_receipt",
+    "postprocess_affair_execution",
 ]
