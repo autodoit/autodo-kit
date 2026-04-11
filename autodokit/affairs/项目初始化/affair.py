@@ -318,10 +318,18 @@ class ProjectInitializationEngine:
 
     def _run_git(self, project_root: Path, args: list[str]) -> subprocess.CompletedProcess[str]:
         env = dict(os.environ)
-        env.setdefault("GIT_AUTHOR_NAME", "autodokit")
-        env.setdefault("GIT_AUTHOR_EMAIL", "autodokit@example.com")
-        env.setdefault("GIT_COMMITTER_NAME", "autodokit")
-        env.setdefault("GIT_COMMITTER_EMAIL", "autodokit@example.com")
+        global_cfg = self._load_global_config(project_root)
+        project_cfg = global_cfg.get("project") if isinstance(global_cfg.get("project"), dict) else {}
+        git_cfg = global_cfg.get("git") if isinstance(global_cfg.get("git"), dict) else {}
+        project_name = str(project_cfg.get("project_name") or "").strip() or "project"
+        author_name = str(git_cfg.get("author_name") or project_name).strip() or project_name
+        author_email = str(git_cfg.get("author_email") or f"{author_name}@localhost").strip() or f"{author_name}@localhost"
+        committer_name = str(git_cfg.get("committer_name") or author_name).strip() or author_name
+        committer_email = str(git_cfg.get("committer_email") or author_email).strip() or author_email
+        env.setdefault("GIT_AUTHOR_NAME", author_name)
+        env.setdefault("GIT_AUTHOR_EMAIL", author_email)
+        env.setdefault("GIT_COMMITTER_NAME", committer_name)
+        env.setdefault("GIT_COMMITTER_EMAIL", committer_email)
         return subprocess.run(
             ["git", *args],
             cwd=str(project_root),

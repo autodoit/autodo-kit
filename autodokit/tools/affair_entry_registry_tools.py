@@ -10,7 +10,7 @@ from autodokit.tools.obsidian_note_timezone_tools import get_current_time_iso
 
 
 MAINLINE_AFFAIR_ENTRY_MAP: dict[str, dict[str, Any]] = {
-    "A010": {"node_name": "项目初始化", "affair_uid": "项目初始化", "module": "autodokit.affairs.项目初始化.affair", "callable": "execute", "implemented": True},
+    "A010": {"node_name": "项目初始化", "affair_uid": "项目初始化", "module": "autodokit.tools.a010_skill_bootstrap_runner", "callable": "execute", "implemented": True, "notes": "A010 当前只走技能脚本冷启动，不再默认走 autodokit.affairs.项目初始化.affair。"},
     "A020": {"node_name": "文献导入与预处理", "affair_uid": "导入和预处理文献元数据", "module": "autodokit.affairs.导入和预处理文献元数据.affair", "callable": "execute", "implemented": True},
     "A030": {"node_name": "研究问题与关键词生成", "affair_uid": "生成关键词集合", "module": "autodokit.affairs.生成关键词集合.affair", "callable": "execute", "implemented": True},
     "A040": {"node_name": "文献检索与入库", "affair_uid": "检索治理", "module": "autodokit.affairs.检索治理.affair", "callable": "execute", "implemented": True},

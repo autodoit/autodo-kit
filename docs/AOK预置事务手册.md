@@ -10544,7 +10544,7 @@ print(outputs)
 3. 若当前视图缺失，再回退到 `workspace/views/review_candidates/review_read_pool.csv`。
 4. 仅为兼容旧数据时，最后才回退到旧表 `review_read_pool`。
 
-说明：新项目不再生成 `review_read_pool_current_view` 这类 SQLite 视图；`review_read_pool.csv` 应理解为导出物或阶段快照，主状态以 `literature_reading_queue` 为准。
+说明：新项目不再生成 `review_read_pool_current_view` 这类 SQLite 视图；`review_read_pool.csv` 应理解为导出物或阶段快照，主状态以 `literature_reading_state` 为准。
 
 - 输出
 

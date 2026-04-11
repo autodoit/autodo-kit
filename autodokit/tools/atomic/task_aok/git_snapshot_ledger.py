@@ -325,12 +325,59 @@ def ledger_get_snapshot_by_task_uid(
     }
 
 
+def _sanitize_email_localpart(value: str) -> str:
+    cleaned = "".join(ch for ch in value.lower() if ch.isascii() and (ch.isalnum() or ch in {".", "_", "-"}))
+    return cleaned or "project"
+
+
+def _sanitize_email_domain(value: str) -> str:
+    cleaned = "".join(ch for ch in value.lower() if ch.isascii() and (ch.isalnum() or ch in {".", "-"})).strip(".-")
+    return cleaned or "localhost"
+
+
+def _normalize_git_email(email_value: str, fallback_name: str) -> str:
+    raw = str(email_value or "").strip()
+    if not raw:
+        return f"{_sanitize_email_localpart(fallback_name)}@localhost"
+    if "@" not in raw:
+        return f"{_sanitize_email_localpart(raw)}@localhost"
+    local_part, domain_part = raw.split("@", 1)
+    return f"{_sanitize_email_localpart(local_part)}@{_sanitize_email_domain(domain_part)}"
+
+
+def _resolve_git_identity(workspace_root: Path) -> dict[str, str]:
+    config_path = workspace_root / "config" / "config.json"
+    payload: dict[str, Any] = {}
+    if config_path.exists():
+        try:
+            loaded = json.loads(config_path.read_text(encoding="utf-8-sig"))
+            if isinstance(loaded, dict):
+                payload = loaded
+        except Exception:
+            payload = {}
+
+    project_cfg = payload.get("project") if isinstance(payload.get("project"), dict) else {}
+    git_cfg = payload.get("git") if isinstance(payload.get("git"), dict) else {}
+    project_name = str(project_cfg.get("project_name") or "").strip() or "project"
+    author_name = str(git_cfg.get("author_name") or project_name).strip() or project_name
+    author_email = _normalize_git_email(str(git_cfg.get("author_email") or f"{author_name}@localhost"), author_name)
+    committer_name = str(git_cfg.get("committer_name") or author_name).strip() or author_name
+    committer_email = _normalize_git_email(str(git_cfg.get("committer_email") or author_email), committer_name)
+    return {
+        "author_name": author_name,
+        "author_email": author_email,
+        "committer_name": committer_name,
+        "committer_email": committer_email,
+    }
+
+
 def _run_git(workspace_root: Path, args: list[str]) -> subprocess.CompletedProcess[str]:
     env = os.environ.copy()
-    env.setdefault("GIT_AUTHOR_NAME", "autodokit")
-    env.setdefault("GIT_AUTHOR_EMAIL", "autodokit@example.com")
-    env.setdefault("GIT_COMMITTER_NAME", "autodokit")
-    env.setdefault("GIT_COMMITTER_EMAIL", "autodokit@example.com")
+    identity = _resolve_git_identity(workspace_root)
+    env.setdefault("GIT_AUTHOR_NAME", identity.get("author_name") or "project")
+    env.setdefault("GIT_AUTHOR_EMAIL", identity.get("author_email") or "project@localhost")
+    env.setdefault("GIT_COMMITTER_NAME", identity.get("committer_name") or identity.get("author_name") or "project")
+    env.setdefault("GIT_COMMITTER_EMAIL", identity.get("committer_email") or identity.get("author_email") or "project@localhost")
     return subprocess.run(
         ["git", *args],
         cwd=str(workspace_root),
@@ -347,23 +394,27 @@ def git_workspace_init(workspace_root: str | Path, *, branch: str = "main") -> d
     root = _resolve_workspace_root(workspace_root)
     git_dir = root / ".git"
     gitignore_path = _ensure_gitignore_entry(root)
-    if git_dir.exists():
-        return {
-            "status": "PASS",
-            "workspace_root": str(root),
-            "git_dir": str(git_dir),
-            "gitignore_path": str(gitignore_path),
-            "created": False,
-        }
-    result = _run_git(root, ["init", "-b", branch])
-    if result.returncode != 0:
-        raise RuntimeError((result.stderr or result.stdout or "git init 失败").strip())
+    created = False
+    if not git_dir.exists():
+        result = _run_git(root, ["init", "-b", branch])
+        if result.returncode != 0:
+            raise RuntimeError((result.stderr or result.stdout or "git init 失败").strip())
+        created = True
+
+    identity = _resolve_git_identity(root)
+    set_name_result = _run_git(root, ["config", "user.name", identity.get("author_name") or "project"])
+    if set_name_result.returncode != 0:
+        raise RuntimeError((set_name_result.stderr or set_name_result.stdout or "git config user.name 失败").strip())
+    set_email_result = _run_git(root, ["config", "user.email", identity.get("author_email") or "project@localhost"])
+    if set_email_result.returncode != 0:
+        raise RuntimeError((set_email_result.stderr or set_email_result.stdout or "git config user.email 失败").strip())
+
     return {
         "status": "PASS",
         "workspace_root": str(root),
         "git_dir": str(git_dir),
         "gitignore_path": str(gitignore_path),
-        "created": True,
+        "created": created,
     }
 
 

@@ -2,14 +2,14 @@
 
 autodo-kit 对外公开的是“事务内容 + 事务工具 + 本地运行时 API”。默认由 autodo-kit 内置运行时执行事务；如安装 autodo-engine，可继续接入其高级调度能力。
 
-## 0. A080-A100 普通文献阅读状态契约
+## 0. A080-A105 普通文献阅读状态契约
 
-当前普通文献阅读主链的正式节点顺序是：A080 -> A090 -> A095 -> A100。
+当前普通文献阅读主链的正式节点顺序是：A080 -> A090 -> A095 -> A100 -> A105。
 
-状态真相源分两层：
+状态真相源统一为 `literature_reading_state`：
 
-1. 综述链到普通文献链的入口兼容层，仍允许使用 `literature_reading_queue(stage='A080')` 作为候选灌入入口。
-2. 一旦进入 A080，A080/A090/A095/A100 的正式当前态真相源统一为 `literature_reading_state`。
+1. A070 或上游综述链直接把普通文献候选写入 `pending_preprocess=1`。
+2. A080/A090/A095/A100/A105 的正式当前态真相源统一为 `literature_reading_state`。
 
 这条链显式区分 `待读` 与 `正读`：
 
@@ -25,14 +25,14 @@ autodo-kit 对外公开的是“事务内容 + 事务工具 + 本地运行时 AP
 | 待泛读清单 | `pending_rough_read` | A090 | A080 | 等待下一轮进入泛读。 |
 | 正泛读清单 | `in_rough_read` | - | A090 | 当前轮已被 A090 接管。 |
 | 已泛读清单 | `rough_read_done` | A095 | A090 | 已完成逐篇泛读。 |
-| 待研读清单 | `pending_deep_read` | A100 | A090 | 等待下一轮进入深读。 |
+| 待研读清单 | `pending_deep_read` | A100 | A090 | 等待下一轮进入深读资产准备。 |
 | 正研读清单 | `in_deep_read` | - | A100 | 当前轮已被 A100 接管。 |
-| 已研读清单 | `deep_read_done` | - | A100 | 已完成至少一轮正式深读。 |
-| 研读次数 | `deep_read_count` | - | A100 | 每完成一轮深读加 1。 |
+| 已研读清单 | `deep_read_done` | A105 | A105 | 已完成至少一轮批判性研读并收口。 |
+| 研读次数 | `deep_read_count` | A105 | A105 | 每完成一轮批判性研读加 1。 |
 | 轻量分析已同步 | `analysis_light_synced` | - | A090 | 五类分析笔记已完成轻量补写。 |
 | 批次分析已同步 | `analysis_batch_synced` | A095 | A095 | 当前条目已进入 A095 批次汇总。 |
-| 正式分析已同步 | `analysis_formal_synced` | - | A100 | 五类分析笔记已完成正式修订。 |
-| 创新点已同步 | `innovation_synced` | - | A100 | 创新点笔记已完成更新。 |
+| 正式分析已同步 | `analysis_formal_synced` | - | A105 | 五类分析笔记已完成正式修订。 |
+| 创新点已同步 | `innovation_synced` | - | A105 | 创新点笔记已完成更新。 |
 | 条目来源类型 | `source_origin` | A080/A090/A100 | A080 | 标记 `human`/`auto`/`legacy_queue`/`recovery`。 |
 | 阅读目标 | `reading_objective` | A090/A100 | A080 | 逐文献的阅读目标说明。 |
 | 用户提示语 | `manual_guidance` | A090/A100 | A080 | 逐文献阅读指令，用于影响粗读/深读输出。 |
@@ -42,8 +42,9 @@ autodo-kit 对外公开的是“事务内容 + 事务工具 + 本地运行时 AP
 1. A080 读取 `pending_preprocess=1`，成功后写 `preprocessed=1` 和 `pending_rough_read=1`。
 2. A090 先把当前条目从 `pending_rough_read=1` 迁到 `in_rough_read=1`，处理完成后写 `rough_read_done=1`，并按条件写 `pending_deep_read=1`。
 3. A095 只消费 `rough_read_done=1 AND analysis_batch_synced=0`，不直接做单篇筛选。
-4. A100 先把当前条目从 `pending_deep_read=1` 迁到 `in_deep_read=1`，处理完成后写 `deep_read_done=1` 和 `deep_read_count += 1`。
-5. A090 与 A100 都允许发现新候选，但不再一律回写到 `pending_preprocess=1`。
+4. A100 先把当前条目从 `pending_deep_read=1` 迁到 `in_deep_read=1`，处理完成后写 `deep_read_decision=parse_ready`。
+5. A105 读取 `deep_read_decision=parse_ready`，完成批判性研读后写 `deep_read_done=1` 和 `deep_read_count += 1`。
+6. A090 与 A100 都允许发现新候选，但不再一律回写到 `pending_preprocess=1`。
 6. 若新候选已完成预处理（`preprocessed=1`），则直接进入 `pending_rough_read=1`。
 7. 若新候选尚未完成预处理，则进入 `pending_preprocess=1`。
 8. 若新候选已经 `rough_read_done=1`，则不再重复回到待泛读清单。
@@ -141,7 +142,7 @@ autodo-kit 对外公开的是“事务内容 + 事务工具 + 本地运行时 AP
 补充说明：
 
 - 候选与阅读相关事务不再依赖 `review_candidate_current_view`、`review_read_pool_current_view`、`review_priority_current_view` 这类旧 SQLite current view 作为运行时真相源。
-- 综述链的阶段队列仍可使用 `literature_reading_queue`；普通文献阅读主链 A080-A100 则以 `literature_reading_state` 为正式真相源。
+- 新项目默认不再使用 `literature_reading_queue` 作为综述链到普通文献链的入口；普通文献阅读主链 A080-A105 统一以 `literature_reading_state` 为正式真相源。
 - CSV 与 Markdown 导出物用于审计、人工阅读与兼容迁移，不作为 A080-A100 的正式当前态来源。
 
 ### 1.4 autodokit.import_user_affair(...)
@@ -1366,7 +1367,7 @@ print(outputs)
 
 - 程序只读写物理表；SQLite 视图允许存在，但只用于人类查询、巡检与排查。
 - 任何名为 `view` 的下游产物，默认优先理解为 CSV 导出物、阶段快照或人类可读对象；若数据库内存在同名视图，也不应作为程序写入目标。
-- A010 初始化脚本 `C:\Users\Ethan\.copilot\skills\A010_项目初始化_v5\scripts\generate_config.py` 的自检重点，应改为确认“主链不向视图写入”，而不是要求 `content.db` 零视图。
+- A010 初始化脚本 `C:\Users\Ethan\.copilot\skills\A010_项目初始化_v5\scripts\generate_config.py` 的自检重点，应改为确认“主链不向视图写入”，而不是要求 `content.db` 零视图；新版模板统一写 `workspace/tasks/`，并默认只生成 snapshot 计划等待人类确认。
 - `review_read_pool_current_view`、`review_candidate_current_view`、`review_priority_current_view` 与中文阅读状态视图可继续保留为只读对象，不再视为需要从库中清除的异常残留。
 
 附件与标签关系补记：
