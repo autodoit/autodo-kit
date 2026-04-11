@@ -17,10 +17,7 @@ from types import ModuleType
 from typing import Any
 
 from autodokit.tools import load_json_or_py, resolve_paths_to_absolute
-from autodokit.tools.atomic.task_aok.postprocess_runtime import (
-    normalize_affair_receipt,
-    postprocess_affair_execution,
-)
+from autodokit.tools.atomic.task_aok.postprocess_runtime import run_unified_postprocess
 from autodokit.tools.time_utils import now_iso
 
 
@@ -128,7 +125,11 @@ def run_affair(
     config_path: str | Path | None = None,
     workspace_root: str | Path | None = None,
 ) -> list[Path]:
-    """执行事务并返回产物路径。"""
+    """执行事务并返回产物路径。
+
+    该入口会在事务执行结束后执行统一后处理。
+    对于已通过装饰器托管后处理的事务，不重复执行。
+    """
 
     prepared = prepare_affair_config(config=config, config_path=config_path, workspace_root=workspace_root)
     module = import_affair_module(affair_uid=affair_uid, workspace_root=workspace_root)
@@ -149,52 +150,31 @@ def run_affair(
         resolved_config_path = temp_file_path
 
     started_at = now_iso()
+    execute_error: BaseException | None = None
     outputs: Any = []
-    execute_error: Exception | None = None
-
     try:
         try:
             outputs = execute(resolved_config_path, workspace_root=root)
         except TypeError:
             outputs = execute(resolved_config_path)
-    except Exception as exc:  # noqa: BLE001
+    except BaseException as exc:  # noqa: BLE001
         execute_error = exc
+        raise
     finally:
-        ended_at = now_iso()
-        try:
-            node_code = str(affair_uid).strip() or "user_affair"
-            receipt = normalize_affair_receipt(
-                affair_uid=str(affair_uid),
-                node_code=node_code,
-                workspace_root=root,
+        postprocess_managed = bool(getattr(execute, "_aok_postprocess_managed", False))
+        if not postprocess_managed:
+            run_unified_postprocess(
                 config_path=resolved_config_path,
+                node_code=affair_uid,
                 execute_result=outputs,
+                execute_error=execute_error,
+                workspace_root=root,
                 started_at=started_at,
-                ended_at=ended_at,
-                error=execute_error,
+                ended_at=now_iso(),
             )
-            postprocess_affair_execution(receipt=receipt)
-        except Exception:
-            # 后处理失败不覆盖事务本身异常，保持向后兼容。
-            pass
-
         if temp_file_path is not None and temp_file_path.exists():
             temp_file_path.unlink(missing_ok=True)
 
-    if execute_error is not None:
-        raise execute_error
-
-    if outputs is None:
-        return []
-    if isinstance(outputs, dict):
-        candidate_paths = outputs.get("artifact_paths") or outputs.get("outputs") or []
-        if isinstance(candidate_paths, (str, Path)):
-            return [Path(candidate_paths)]
-        if isinstance(candidate_paths, list):
-            return [Path(path) for path in candidate_paths]
-        return []
-    if isinstance(outputs, (str, Path)):
-        return [Path(outputs)]
     return [Path(path) for path in outputs]
 
 
