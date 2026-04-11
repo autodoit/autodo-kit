@@ -298,7 +298,7 @@ def execute(config_path: Path) -> List[Path]:
             source_stage="single_deep_read",
             api_key_file=merged.get("api_key_file"),
             global_config_path=global_config_path if global_config_path.exists() else None,
-            overwrite_existing=bool(merged.get("overwrite_parse_asset", False)),
+            overwrite_existing=False,
             model=str(merged.get("parse_model") or merged.get("structured_model") or "auto"),
         )
         postprocess_aliyun_multimodal_parse_outputs(
@@ -390,5 +390,6 @@ def execute(config_path: Path) -> List[Path]:
     )
     written_paths.insert(0, out_path)
     return written_paths
+
 
 

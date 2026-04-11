@@ -1,4 +1,4 @@
-"""综述参考文献预处理与笔记骨架事务。
+﻿"""综述参考文献预处理与笔记骨架事务。
 
 A065 承接 A060 已就绪的综述解析资产，执行参考文献处理、标准笔记骨架生成，并写入 A080。
 """
@@ -141,7 +141,7 @@ def execute(config_path: Path) -> List[Path]:
         structured_variants=structured_variants,
         structured_converter=str(raw_cfg.get("structured_converter") or "aliyun_multimodal"),
         structured_task_type=str(raw_cfg.get("structured_task_type") or "review_deep"),
-        structured_overwrite=bool(raw_cfg.get("structured_overwrite") or raw_cfg.get("overwrite_parse_asset")),
+
         structured_generation_required=bool(raw_cfg.get("structured_generation_required", False)),
         structured_extractors=raw_cfg.get("structured_extractors") if isinstance(raw_cfg.get("structured_extractors"), dict) else None,
         api_key_file=str(raw_cfg.get("api_key_file") or ""),
@@ -307,3 +307,5 @@ def execute(config_path: Path) -> List[Path]:
         prepared_assets["quality_summary_path"],
         gate_path,
     ]
+
+

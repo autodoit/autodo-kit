@@ -275,7 +275,7 @@ def execute(config_path: Path) -> List[Path]:
             source_stage="single_rough_read",
             api_key_file=raw_cfg.get("api_key_file"),
             global_config_path=global_config_path if global_config_path.exists() else None,
-            overwrite_existing=bool(raw_cfg.get("overwrite_parse_asset", False)),
+            overwrite_existing=False,
             model=str(raw_cfg.get("parse_model") or raw_cfg.get("structured_model") or "auto"),
         )
         postprocess_aliyun_multimodal_parse_outputs(
@@ -371,4 +371,5 @@ def execute(config_path: Path) -> List[Path]:
     written_paths.insert(0, json_path)
     written_paths.insert(0, markdown_path)
     return written_paths
+
 

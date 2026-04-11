@@ -259,7 +259,7 @@ def _ensure_structured_reference_lines(
     structured_variants: List[Tuple[str, str]],
     structured_converter: str,
     structured_task_type: str,
-    structured_overwrite: bool,
+
     structured_generation_required: bool,
     structured_extractors: Dict[str, Any] | None,
     api_key_file: str = "",
@@ -305,7 +305,7 @@ def _ensure_structured_reference_lines(
                 source_stage="A050",
                 api_key_file=api_key_file or None,
                 global_config_path=global_config_path if global_config_path.exists() else None,
-                overwrite_existing=structured_overwrite,
+                overwrite_existing=False,
                 model=parse_model or "auto",
             )
             if enable_aliyun_postprocess:
@@ -342,7 +342,7 @@ def _ensure_structured_reference_lines(
             output_dir.mkdir(parents=True, exist_ok=True)
             output_name = _stringify(source_record.get("cite_key")) or _stringify(source_record.get("uid_literature")) or pdf_file.stem
             structured_path = (output_dir / f"{output_name}.structured.json").resolve()
-            if not structured_path.exists() or structured_overwrite:
+            if not structured_path.exists():
                 if structured_converter == "local_pipeline_v2":
                     convert_pdf_to_structured_data_file_local_v2(
                         pdf_file.resolve(),
@@ -922,7 +922,7 @@ def _prepare_review_assets(
     structured_variants: List[Tuple[str, str]] | None = None,
     structured_converter: str = "local_pipeline_v2",
     structured_task_type: str = "reference_context",
-    structured_overwrite: bool = False,
+
     structured_generation_required: bool = True,
     structured_extractors: Dict[str, Any] | None = None,
     api_key_file: str = "",
@@ -1055,7 +1055,7 @@ def _prepare_review_assets(
                 structured_variants=structured_variants or list(DEFAULT_STRUCTURED_VARIANTS),
                 structured_converter=structured_converter,
                 structured_task_type=structured_task_type,
-                structured_overwrite=structured_overwrite,
+
                 structured_generation_required=structured_generation_required,
                 structured_extractors=structured_extractors,
                 api_key_file=api_key_file,
@@ -1340,7 +1340,7 @@ def execute(config_path: Path) -> List[Path]:
     structured_variants = _collect_structured_variants(raw_cfg)
     structured_converter = structured_variants[0][0]
     structured_task_type = structured_variants[0][1]
-    structured_overwrite = bool(raw_cfg.get("structured_overwrite", False))
+
     structured_generation_required = bool(raw_cfg.get("structured_generation_required", True))
     structured_extractors = raw_cfg.get("structured_extractors") if isinstance(raw_cfg.get("structured_extractors"), dict) else None
     structured_babeldoc = raw_cfg.get("structured_babeldoc") if isinstance(raw_cfg.get("structured_babeldoc"), dict) else None
@@ -1689,3 +1689,10 @@ def execute(config_path: Path) -> List[Path]:
         canonical_batch_path,
         gate_path,
     ]
+
+
+
+
+
+
+

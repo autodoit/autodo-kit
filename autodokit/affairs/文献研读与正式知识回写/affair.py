@@ -90,8 +90,6 @@ def execute(config_path: Path) -> List[Path]:
     max_items = int(raw_cfg.get("max_items") or 3)
     if max_items > 0:
         state_df = state_df.head(max_items).reset_index(drop=True)
-
-    overwrite_parse_asset = bool(raw_cfg.get("overwrite_parse_asset", False))
     allow_pdf_text_fallback_on_parse_failure = bool(raw_cfg.get("allow_pdf_text_fallback_on_parse_failure", True))
     translation_policy = dict(raw_cfg.get("translation_policy") or {})
     global_config_path = workspace_root / "config" / "config.json"
@@ -132,7 +130,7 @@ def execute(config_path: Path) -> List[Path]:
         runtime_settings=parse_runtime,
         postprocess_settings=postprocess_settings,
         global_config_path=global_config_path,
-        overwrite_existing=overwrite_parse_asset,
+        overwrite_existing=False,
         max_items=max_items,
     )
     manifest_df = manifest_result["manifest_df"]
@@ -219,7 +217,7 @@ def execute(config_path: Path) -> List[Path]:
                         uid_literature=uid_literature,
                         cite_key=cite_key,
                         source_stage="A100",
-                        overwrite_existing=True,
+                        overwrite_existing=False,
                     )
                 except Exception as fallback_error:
                     fallback_exc = fallback_error
@@ -346,4 +344,7 @@ def execute(config_path: Path) -> List[Path]:
         pass
 
     return [index_path, gate_path, manifest_result["manifest_path"], manifest_result["management_table_path"], manifest_result["batch_report_path"], manifest_result["handoff_path"]]
+
+
+
 

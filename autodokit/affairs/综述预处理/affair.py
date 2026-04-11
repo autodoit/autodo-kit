@@ -1,4 +1,4 @@
-"""综述预处理事务。
+﻿"""综述预处理事务。
 
 A060 仅负责综述结构化解析资产准备，不执行参考文献映射与笔记骨架生成。
 """
@@ -175,7 +175,6 @@ def execute(config_path: Path) -> List[Path]:
     global_config_path = workspace_root / "config" / "config.json"
     parse_runtime = resolve_parse_runtime_settings(raw_cfg, workspace_root=workspace_root, global_config_path=global_config_path)
     postprocess_settings = resolve_postprocess_settings(raw_cfg, workspace_root=workspace_root)
-    overwrite_parse_asset = bool(raw_cfg.get("structured_overwrite") or raw_cfg.get("overwrite_parse_asset"))
     manifest_result = run_parse_manifest(
         content_db=content_db,
         source_df=review_read_pool,
@@ -188,7 +187,7 @@ def execute(config_path: Path) -> List[Path]:
         runtime_settings=parse_runtime,
         postprocess_settings=postprocess_settings,
         global_config_path=global_config_path if global_config_path.exists() else None,
-        overwrite_existing=overwrite_parse_asset,
+        overwrite_existing=False,
         max_items=max_items,
     )
     manifest_df = manifest_result["manifest_df"]
@@ -348,3 +347,5 @@ def execute(config_path: Path) -> List[Path]:
         manifest_result["batch_report_path"],
         manifest_result["handoff_path"],
     ]
+
+

@@ -273,7 +273,6 @@ def execute(config_path: Path) -> List[Path]:
         state_df = load_reading_state_df(content_db, flag_filters={"pending_preprocess": 1})
 
     knowledge_index_df, knowledge_attachments_df, _ = load_knowledge_tables(db_path=content_db)
-    overwrite_parse_asset = bool(raw_cfg.get("overwrite_parse_asset", False))
     max_items = int(raw_cfg.get("max_items") or 0)
     if max_items > 0:
         state_df = state_df.head(max_items).reset_index(drop=True)
@@ -293,7 +292,7 @@ def execute(config_path: Path) -> List[Path]:
         runtime_settings=parse_runtime,
         postprocess_settings=postprocess_settings,
         global_config_path=global_config_path,
-        overwrite_existing=overwrite_parse_asset,
+        overwrite_existing=False,
         max_items=max_items,
     )
     manifest_df = manifest_result["manifest_df"]
@@ -467,4 +466,6 @@ def execute(config_path: Path) -> List[Path]:
         pass
 
     return [index_path, gate_path, manifest_result["manifest_path"], manifest_result["management_table_path"], manifest_result["batch_report_path"], manifest_result["handoff_path"]]
+
+
 

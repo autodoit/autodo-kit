@@ -1,4 +1,4 @@
-"""MonkeyOCR 清单驱动解析运行时。
+﻿"""MonkeyOCR 清单驱动解析运行时。
 
 本模块用于在不改动既有 MonkeyOCR tools 的前提下，把
 文献清单驱动的批量解析能力接入 A060、A080、A100。
@@ -426,6 +426,8 @@ def run_parse_manifest(
     overwrite_existing: bool,
     max_items: int = 0,
 ) -> Dict[str, Any]:
+    # 主链路固定复用优先，不通过程序参数触发重跑。
+    overwrite_existing = False
     workspace_root = infer_workspace_root_from_content_db(content_db)
     manifest_df = build_parse_manifest_df(
         content_db=content_db,
@@ -632,3 +634,7 @@ __all__ = [
     "run_parse_manifest",
     "write_parse_manifest_artifacts",
 ]
+
+
+
+
