@@ -384,6 +384,118 @@ def _ensure_schema(connection: sqlite3.Connection) -> List[str]:
     return created_tables
 
 
+def create_aok_log_readonly_views(
+    project_root: str | Path = ".",
+    *,
+    logs_db_root: str | Path | None = None,
+    log_db_path: str | Path | None = None,
+    enabled: bool = True,
+) -> Dict[str, Any]:
+    """创建日志数据库中文只读视图。
+
+    Args:
+        project_root: 项目根目录。
+        logs_db_root: 自定义日志数据库目录。
+        log_db_path: 自定义日志数据库文件路径。
+        enabled: 是否启用日志系统。
+
+    Returns:
+        Dict[str, Any]: 视图创建结果。
+    """
+
+    _, logdb_root, resolved_db_path = _resolve_logdb_root(
+        project_root=project_root,
+        logs_db_root=logs_db_root,
+        log_db_path=log_db_path,
+    )
+    if not enabled:
+        return {
+            "status": "SKIPPED",
+            "reason": "logging_disabled",
+            "logdb_root": str(logdb_root),
+            "db_path": str(resolved_db_path),
+            "created_views": [],
+        }
+
+    if not resolved_db_path.exists():
+        return {
+            "status": "SKIPPED",
+            "reason": "logdb_not_found",
+            "logdb_root": str(logdb_root),
+            "db_path": str(resolved_db_path),
+            "created_views": [],
+        }
+
+    statements = [
+        """
+        CREATE VIEW IF NOT EXISTS "运行事件总览" AS
+        SELECT
+            event_uid AS 事件UID,
+            event_type AS 事件类型,
+            level AS 级别,
+            handler_kind AS 处理器类型,
+            handler_name AS 处理器名称,
+            model_name AS 模型,
+            reasoning_summary AS 摘要,
+            created_at AS 发生时间
+        FROM log_events
+        ORDER BY created_at DESC, event_uid DESC
+        """,
+        """
+        CREATE VIEW IF NOT EXISTS "Gate审计总览" AS
+        SELECT
+            review_uid AS 审计UID,
+            gate_code AS Gate代号,
+            affair_code AS 事务代号,
+            reviewer_agent AS 审阅代理,
+            review_summary AS 审计摘要,
+            decision_candidates_json AS 候选动作,
+            created_at AS 审计时间
+        FROM gate_reviews
+        ORDER BY created_at DESC, review_uid DESC
+        """,
+        """
+        CREATE VIEW IF NOT EXISTS "人工决策总览" AS
+        SELECT
+            decision_uid AS 决策UID,
+            gate_code AS Gate代号,
+            affair_code AS 事务代号,
+            decision AS 人工决策,
+            rationale AS 决策理由,
+            operator_name AS 操作人,
+            created_at AS 决策时间
+        FROM human_decisions
+        ORDER BY created_at DESC, decision_uid DESC
+        """,
+        """
+        CREATE VIEW IF NOT EXISTS "异常事件总览" AS
+        SELECT
+            event_uid AS 事件UID,
+            event_type AS 事件类型,
+            level AS 级别,
+            reasoning_summary AS 摘要,
+            payload_json AS 负载,
+            created_at AS 发生时间
+        FROM log_events
+        WHERE lower(level) IN ('error', 'critical')
+           OR lower(event_type) LIKE '%fail%'
+           OR lower(event_type) LIKE '%error%'
+           OR lower(event_type) LIKE '%blocked%'
+        ORDER BY created_at DESC, event_uid DESC
+        """,
+    ]
+    with _connect_sqlite(resolved_db_path) as connection:
+        with connection:
+            for statement in statements:
+                connection.execute(statement)
+    return {
+        "status": "PASS",
+        "logdb_root": str(logdb_root),
+        "db_path": str(resolved_db_path),
+        "created_views": ["运行事件总览", "Gate审计总览", "人工决策总览", "异常事件总览"],
+    }
+
+
 def init_empty_log_events_table() -> List[Dict[str, str]]:
     """返回日志事件逻辑字段定义。"""
 
@@ -466,12 +578,20 @@ def bootstrap_aok_logdb(
             errors=[f"初始化日志数据库失败: {exc}"],
         )
 
+    view_bootstrap = create_aok_log_readonly_views(
+        project_root=project_root,
+        logs_db_root=logs_db_root,
+        log_db_path=resolved_db_path,
+        enabled=enabled,
+    )
+
     return {
         "status": "PASS",
         "logdb_root": str(logdb_root),
         "db_path": str(resolved_db_path),
         "created_files": [] if existed_before else [str(resolved_db_path)],
         "created_tables": created_tables,
+        "created_views": view_bootstrap.get("created_views", []),
     }
 
 

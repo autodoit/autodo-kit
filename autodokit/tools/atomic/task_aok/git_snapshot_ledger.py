@@ -64,6 +64,82 @@ def _ensure_gitignore_entry(workspace_root: Path, entry: str = DEFAULT_GITIGNORE
     return gitignore_path
 
 
+def create_task_ledger_readonly_views(
+    workspace_root: str | Path,
+    *,
+    ledger_db_path: str | Path | None = None,
+) -> dict[str, Any]:
+    """创建任务账本中文只读视图。
+
+    Args:
+        workspace_root: workspace 根目录。
+        ledger_db_path: 可选自定义账本路径。
+
+    Returns:
+        dict[str, Any]: 视图初始化结果。
+    """
+
+    db_path = _resolve_ledger_db_path(workspace_root, ledger_db_path)
+    statements = [
+        """
+        CREATE VIEW IF NOT EXISTS "任务运行总览" AS
+        SELECT
+            task_uid AS 任务UID,
+            workflow_uid AS 工作流UID,
+            node_code AS 节点代号,
+            gate_code AS Gate代号,
+            decision AS 建议动作,
+            status AS 运行状态,
+            workspace_root AS 工作区根路径,
+            started_at AS 开始时间,
+            ended_at AS 结束时间,
+            operator_name AS 操作人,
+            note AS 备注
+        FROM task_runs
+        ORDER BY ended_at DESC, task_uid DESC
+        """,
+        """
+        CREATE VIEW IF NOT EXISTS "任务快照总览" AS
+        SELECT
+            gs.task_uid AS 任务UID,
+            gs.snapshot_uid AS 快照UID,
+            gs.commit_hash AS 提交哈希,
+            gs.parent_commit_hash AS 父提交哈希,
+            gs.commit_message AS 提交信息,
+            gs.tag_name AS 标签名,
+            gs.changed_files_count AS 变更文件数,
+            gs.includes_attachments AS 含附件变更,
+            gs.created_at AS 创建时间
+        FROM git_snapshots gs
+        ORDER BY gs.created_at DESC, gs.snapshot_uid DESC
+        """,
+        """
+        CREATE VIEW IF NOT EXISTS "待人工处理任务清单" AS
+        SELECT
+            task_uid AS 任务UID,
+            workflow_uid AS 工作流UID,
+            node_code AS 节点代号,
+            decision AS 建议动作,
+            status AS 运行状态,
+            ended_at AS 最近结束时间,
+            note AS 异常说明
+        FROM task_runs
+        WHERE lower(status) IN ('failed', 'blocked', 'human_gate')
+           OR lower(decision) IN ('pause_current', 'stop_workflow')
+        ORDER BY ended_at DESC, task_uid DESC
+        """,
+    ]
+    with _connect(db_path) as connection:
+        with connection:
+            for statement in statements:
+                connection.execute(statement)
+    return {
+        "status": "PASS",
+        "ledger_db_path": str(db_path),
+        "created_views": ["任务运行总览", "任务快照总览", "待人工处理任务清单"],
+    }
+
+
 def ledger_init(workspace_root: str | Path, ledger_db_path: str | Path | None = None) -> dict[str, Any]:
     """初始化极简任务账本。
 
@@ -127,6 +203,7 @@ def ledger_init(workspace_root: str | Path, ledger_db_path: str | Path | None = 
             );
             """
         )
+    create_task_ledger_readonly_views(workspace_root=root, ledger_db_path=db_path)
     return {"status": "PASS", "workspace_root": str(root), "ledger_db_path": str(db_path)}
 
 
