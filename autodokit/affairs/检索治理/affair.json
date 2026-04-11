@@ -1,10 +1,26 @@
 {
   "request_uid": "",
   "query": "",
+  "keyword_list": [],
+  "year_start": 0,
+  "year_end": 0,
   "object_type": "literature",
   "source_type": "online",
   "region_type": "global",
   "access_type": "open",
   "metadata": {},
+  "seed_items": [],
+  "enable_local_retrieval": true,
+  "max_local_hits": 300,
+  "local_hit_threshold": 20,
+  "enable_online_retrieval": false,
+  "online_trigger_policy": "gap_only",
+  "online_sources": [
+    "zh_cnki",
+    "en_open_access"
+  ],
+  "online_max_pages": 1,
+  "en_per_page": 20,
+  "online_acquisition_mode": "none",
   "output_dir": ""
 }
