@@ -384,6 +384,7 @@ from autodokit.tools.storage_backend import (
 )
 from autodokit.tools.atomic.task_aok import (
     bootstrap_aok_taskdb,
+    create_task_ledger_readonly_views,
     init_empty_task_artifacts_table,
     init_empty_task_gate_decisions_table,
     init_empty_task_handoffs_table,
@@ -418,6 +419,7 @@ from autodokit.tools.atomic.log_aok import (
     DEFAULT_AOK_LOG_EVENT_COLUMNS,
     append_aok_log_event,
     bootstrap_aok_logdb,
+    create_aok_log_readonly_views,
     init_empty_log_events_table,
     list_aok_log_events,
     record_aok_gate_review,
@@ -785,10 +787,12 @@ _开发者工具 = [
     "task_get",
     "normalize_affair_receipt",
     "run_unified_postprocess",
+    "create_task_ledger_readonly_views",
     "DEFAULT_AOK_LOG_DB_FILENAME",
     "DEFAULT_AOK_LOG_EVENT_COLUMNS",
     "init_empty_log_events_table",
     "bootstrap_aok_logdb",
+    "create_aok_log_readonly_views",
     "validate_aok_logdb",
     "append_aok_log_event",
     "list_aok_log_events",

@@ -124,7 +124,7 @@ def create_task_ledger_readonly_views(
             ended_at AS 最近结束时间,
             note AS 异常说明
         FROM task_runs
-        WHERE lower(status) IN ('failed', 'blocked', 'human_gate')
+        WHERE lower(status) IN ('failed', 'blocked', 'human_gate', 'fail')
            OR lower(decision) IN ('pause_current', 'stop_workflow')
         ORDER BY ended_at DESC, task_uid DESC
         """,
@@ -203,8 +203,13 @@ def ledger_init(workspace_root: str | Path, ledger_db_path: str | Path | None = 
             );
             """
         )
-    create_task_ledger_readonly_views(workspace_root=root, ledger_db_path=db_path)
-    return {"status": "PASS", "workspace_root": str(root), "ledger_db_path": str(db_path)}
+    view_bootstrap = create_task_ledger_readonly_views(workspace_root=root, ledger_db_path=db_path)
+    return {
+        "status": "PASS",
+        "workspace_root": str(root),
+        "ledger_db_path": str(db_path),
+        "created_views": view_bootstrap.get("created_views", []),
+    }
 
 
 def ledger_record_task_run(

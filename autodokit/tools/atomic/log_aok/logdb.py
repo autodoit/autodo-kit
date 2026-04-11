@@ -477,7 +477,7 @@ def create_aok_log_readonly_views(
             payload_json AS 负载,
             created_at AS 发生时间
         FROM log_events
-        WHERE lower(level) IN ('error', 'critical')
+        WHERE lower(level) IN ('error', 'critical', 'warning')
            OR lower(event_type) LIKE '%fail%'
            OR lower(event_type) LIKE '%error%'
            OR lower(event_type) LIKE '%blocked%'
