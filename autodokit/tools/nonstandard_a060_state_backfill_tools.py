@@ -1,4 +1,4 @@
-"""非标准解析导入后的 A060 状态补齐工具。"""
+"""非标准解析导入后的解析资产登记与 A060 准入治理工具。"""
 
 from __future__ import annotations
 
@@ -12,6 +12,7 @@ from autodokit.tools.time_utils import now_compact, now_iso
 
 
 READY_PARSE_STATUS = {"ready", "success", "succeeded", "done", "completed", "ok", "pass", "skipped"}
+WORKFLOW_ADMISSION_MODES = {"register_only", "promote_to_a065"}
 
 
 def _stringify(value: Any) -> str:
@@ -50,6 +51,15 @@ def _coerce_bool(value: Any, default: bool) -> bool:
     if text in {"0", "false", "no", "n", "off", "disable", "disabled"}:
         return False
     return default
+
+
+def _normalize_workflow_admission_mode(value: Any) -> str:
+    """规范化工作流准入模式。"""
+
+    text = _stringify(value).lower() or "register_only"
+    if text not in WORKFLOW_ADMISSION_MODES:
+        return "register_only"
+    return text
 
 
 def _fetch_current_parse_rows(content_db: Path, parse_level: str) -> list[dict[str, Any]]:
@@ -139,8 +149,88 @@ def _update_literatures_structured_fields(content_db: Path, rows: list[dict[str,
         conn.close()
 
 
+def _repair_nonstandard_promoted_review_state(content_db: Path, rows: list[dict[str, Any]]) -> int:
+    """把非标准导入误推进的综述主链状态降回中性态。"""
+
+    if not rows:
+        return 0
+
+    now = now_iso()
+    repaired = 0
+    conn = sqlite3.connect(content_db)
+    try:
+        for row in rows:
+            uid_literature = _stringify(row.get("uid_literature"))
+            if not uid_literature:
+                continue
+            cursor = conn.execute(
+                """
+                UPDATE literature_review_state
+                SET source_stage = ?,
+                    recommended_reason = ?,
+                    pending_review_parse = 0,
+                    review_parse_ready = 0,
+                    pending_reference_preprocess = 0,
+                    reference_preprocessed = 0,
+                    pending_review_read = 0,
+                    in_review_read = 0,
+                    review_read_done = 0,
+                    updated_at = ?
+                WHERE uid_literature = ?
+                  AND COALESCE(source_origin, '') = 'nonstandard_parse_migration'
+                """,
+                (
+                    "ASSET_REGISTRY",
+                    "非标准解析资产已登记，未正式推进综述主链",
+                    now,
+                    uid_literature,
+                ),
+            )
+            repaired += int(cursor.rowcount or 0)
+        conn.commit()
+        return repaired
+    finally:
+        conn.close()
+
+
+def _demote_nonstandard_a065_queue_rows(content_db: Path, rows: list[dict[str, Any]]) -> int:
+    """降级非标准工具写入的 A065 current 队列。"""
+
+    if not rows:
+        return 0
+
+    now = now_iso()
+    affected = 0
+    conn = sqlite3.connect(content_db)
+    try:
+        for row in rows:
+            uid_literature = _stringify(row.get("uid_literature"))
+            cite_key = _stringify(row.get("cite_key"))
+            if not uid_literature and not cite_key:
+                continue
+            cursor = conn.execute(
+                """
+                UPDATE literature_reading_queue
+                SET is_current = 0,
+                    queue_status = 'superseded',
+                    updated_at = ?
+                WHERE stage = 'A065'
+                  AND is_current = 1
+                  AND COALESCE(scope_key, '') = 'nonstandard_a060_backfill'
+                  AND COALESCE(uid_literature, '') = ?
+                  AND COALESCE(cite_key, '') = ?
+                """,
+                (now, uid_literature, cite_key),
+            )
+            affected += int(cursor.rowcount or 0)
+        conn.commit()
+        return affected
+    finally:
+        conn.close()
+
+
 def backfill_a060_state_from_parse_assets(payload: dict[str, Any]) -> dict[str, Any]:
-    """基于解析资产补齐 A060 之后的状态。
+    """基于解析资产执行登记、修复与可选的 A060 后状态提升。
 
     Args:
         payload: 运行参数。
@@ -151,8 +241,10 @@ def backfill_a060_state_from_parse_assets(payload: dict[str, Any]) -> dict[str, 
             - require_existing_assets: 可选，默认 true。
             - require_parse_status_ready: 可选，默认 true。
             - disable_dangling_current: 可选，默认 true。
-            - sync_review_state: 可选，默认 true。
-            - sync_reading_queue: 可选，默认 true。
+            - workflow_admission_mode: 可选，`register_only` 或 `promote_to_a065`，默认 `register_only`。
+            - repair_existing_nonstandard_promotions: 可选，默认 false。仅在 `register_only` 下用于降级历史误提升状态。
+            - sync_review_state: 可选，仅 `promote_to_a065` 时有效，默认 true。
+            - sync_reading_queue: 可选，仅 `promote_to_a065` 时有效，默认 true。
             - sync_literatures_structured: 可选，默认 true。
 
     Returns:
@@ -186,8 +278,11 @@ def backfill_a060_state_from_parse_assets(payload: dict[str, Any]) -> dict[str, 
     require_existing_assets = _coerce_bool(payload.get("require_existing_assets"), True)
     require_parse_status_ready = _coerce_bool(payload.get("require_parse_status_ready"), True)
     disable_dangling_current = _coerce_bool(payload.get("disable_dangling_current"), True)
-    sync_review_state = _coerce_bool(payload.get("sync_review_state"), True)
-    sync_reading_queue = _coerce_bool(payload.get("sync_reading_queue"), True)
+    workflow_admission_mode = _normalize_workflow_admission_mode(payload.get("workflow_admission_mode"))
+    repair_existing_nonstandard_promotions = _coerce_bool(payload.get("repair_existing_nonstandard_promotions"), False)
+    promotion_enabled = workflow_admission_mode == "promote_to_a065"
+    sync_review_state = promotion_enabled and _coerce_bool(payload.get("sync_review_state"), True)
+    sync_reading_queue = promotion_enabled and _coerce_bool(payload.get("sync_reading_queue"), True)
     sync_literatures_structured = _coerce_bool(payload.get("sync_literatures_structured"), True)
 
     bibliodb_sqlite.init_db(content_db)
@@ -237,51 +332,54 @@ def backfill_a060_state_from_parse_assets(payload: dict[str, Any]) -> dict[str, 
     run_uid = f"manual-a060-backfill-{now_compact()}"
     review_rows: list[dict[str, Any]] = []
     queue_rows: list[dict[str, Any]] = []
-    for row in eligible_rows:
-        uid_literature = _stringify(row.get("uid_literature"))
-        cite_key = _stringify(row.get("cite_key"))
-        if not uid_literature and not cite_key:
-            continue
-        review_rows.append(
-            {
-                "uid_literature": uid_literature,
-                "cite_key": cite_key,
-                "source_stage": "A060",
-                "source_origin": "nonstandard_parse_migration",
-                "recommended_reason": "非标准解析资产导入后补齐 A060 状态",
-                "pending_review_parse": 0,
-                "review_parse_ready": 1,
-                "pending_reference_preprocess": 1,
-                "reference_preprocessed": 0,
-                "pending_review_read": 0,
-                "in_review_read": 0,
-                "review_read_done": 0,
-                "parse_asset_uid": _stringify(row.get("asset_uid")),
-                "structured_abs_path": _stringify(row.get("normalized_structured_path")),
-                "updated_at": now_iso(),
-            }
-        )
-        queue_rows.append(
-            {
-                "uid_literature": uid_literature,
-                "cite_key": cite_key,
-                "stage": "A065",
-                "source_affair": "A060",
-                "queue_status": "queued",
-                "priority": 68.0,
-                "bucket": "review_parse_ready",
-                "preferred_next_stage": "A080",
-                "recommended_reason": "A060 状态补齐后进入 A065",
-                "source_round": "manual_backfill",
-                "run_uid": run_uid,
-                "scope_key": "nonstandard_a060_backfill",
-                "is_current": 1,
-                "updated_at": now_iso(),
-            }
-        )
+    if promotion_enabled:
+        for row in eligible_rows:
+            uid_literature = _stringify(row.get("uid_literature"))
+            cite_key = _stringify(row.get("cite_key"))
+            if not uid_literature and not cite_key:
+                continue
+            review_rows.append(
+                {
+                    "uid_literature": uid_literature,
+                    "cite_key": cite_key,
+                    "source_stage": "A060",
+                    "source_origin": "nonstandard_parse_migration",
+                    "recommended_reason": "非标准解析资产导入后显式提升为 A060 后状态",
+                    "pending_review_parse": 0,
+                    "review_parse_ready": 1,
+                    "pending_reference_preprocess": 1,
+                    "reference_preprocessed": 0,
+                    "pending_review_read": 0,
+                    "in_review_read": 0,
+                    "review_read_done": 0,
+                    "parse_asset_uid": _stringify(row.get("asset_uid")),
+                    "structured_abs_path": _stringify(row.get("normalized_structured_path")),
+                    "updated_at": now_iso(),
+                }
+            )
+            queue_rows.append(
+                {
+                    "uid_literature": uid_literature,
+                    "cite_key": cite_key,
+                    "stage": "A065",
+                    "source_affair": "A060",
+                    "queue_status": "queued",
+                    "priority": 68.0,
+                    "bucket": "review_parse_ready",
+                    "preferred_next_stage": "A080",
+                    "recommended_reason": "A060 状态补齐后进入 A065",
+                    "source_round": "manual_backfill",
+                    "run_uid": run_uid,
+                    "scope_key": "nonstandard_a060_backfill",
+                    "is_current": 1,
+                    "updated_at": now_iso(),
+                }
+            )
 
     affected = {
         "dangling_marked_not_current": 0,
+        "review_state_repaired": 0,
+        "reading_queue_demoted": 0,
         "review_state_upserted": 0,
         "reading_queue_upserted": 0,
         "literatures_structured_updated": 0,
@@ -290,6 +388,9 @@ def backfill_a060_state_from_parse_assets(payload: dict[str, Any]) -> dict[str, 
     if not dry_run:
         if disable_dangling_current and dangling_row_ids:
             affected["dangling_marked_not_current"] = _mark_rows_not_current(content_db, sorted(set(dangling_row_ids)))
+        if workflow_admission_mode == "register_only" and repair_existing_nonstandard_promotions and eligible_rows:
+            affected["review_state_repaired"] = _repair_nonstandard_promoted_review_state(content_db, eligible_rows)
+            affected["reading_queue_demoted"] = _demote_nonstandard_a065_queue_rows(content_db, eligible_rows)
         if sync_review_state and review_rows:
             bibliodb_sqlite.upsert_review_state_rows(content_db, review_rows)
             affected["review_state_upserted"] = len(review_rows)
@@ -316,6 +417,8 @@ def backfill_a060_state_from_parse_assets(payload: dict[str, Any]) -> dict[str, 
         "require_existing_assets": require_existing_assets,
         "require_parse_status_ready": require_parse_status_ready,
         "disable_dangling_current": disable_dangling_current,
+        "workflow_admission_mode": workflow_admission_mode,
+        "repair_existing_nonstandard_promotions": repair_existing_nonstandard_promotions,
         "sync_review_state": sync_review_state,
         "sync_reading_queue": sync_reading_queue,
         "sync_literatures_structured": sync_literatures_structured,
