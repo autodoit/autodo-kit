@@ -236,6 +236,14 @@ def isolate_unmatched_attachments(payload: dict[str, Any]) -> dict[str, Any]:
     impl = getattr(module, "isolate_unmatched_attachments")
     return impl(payload)
 
+
+def migrate_parse_assets_with_full_rewrite(payload: dict[str, Any]) -> dict[str, Any]:
+    """延迟加载解析资产迁移对齐工具。"""
+
+    module = importlib.import_module("autodokit.tools.parse_asset_migration_alignment_tools")
+    impl = getattr(module, "migrate_parse_assets_with_full_rewrite")
+    return impl(payload)
+
 def scan_affairs(affairs_root: str | Path | None = None) -> list[dict[str, Any]]:
     if affairs_root is None:
         affairs_root = Path(__file__).resolve().parents[1] / "affairs"
