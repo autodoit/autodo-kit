@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import importlib.util
 import json
+import sqlite3
 import shutil
 from datetime import datetime
 from dataclasses import dataclass
@@ -25,6 +26,7 @@ import unicodedata
 import pandas as pd
 from bibtexparser import loads as bibtex_loads
 from autodokit.tools import bibliodb_sqlite
+from autodokit.tools.contentdb_sqlite import init_content_db
 from autodokit.tools import normalize_primary_fulltext_attachment_names
 from autodokit.tools import resolve_primary_attachment_normalization_settings
 from autodokit.tools.atomic.task_aok.post_affair_git_commit import affair_auto_git_commit
@@ -51,6 +53,7 @@ DEFAULT_CONFIG: Dict[str, Any] = {
     "output_dir": "output",
     "output_table_csv": "literatures.csv",
     "storage_backend": "sqlite",
+    "run_mode": "incremental",
     "sqlite_db_path": "database/references/references.db",
     "tag_list": ["graph", "risk", "bank", "systemic"],
     "tag_match_fields": ["title", "abstract", "keywords"],
@@ -98,6 +101,7 @@ class Config:
         bibtex_path: BibTeX 文件路径或相对路径字符串。
         output_dir: 输出目录路径字符串。
         output_table_csv: 主表 CSV 文件名。
+        run_mode: 运行模式，支持 incremental 或 full_reset。
         tag_list: 要匹配的标签列表。
         tag_match_fields: 用于匹配标签的字段列表（例如 title, abstract）。
         has_pdf_enable: 是否启用 PDF 匹配。
@@ -107,6 +111,7 @@ class Config:
     bibtex_path: str
     output_dir: str
     output_table_csv: str
+    run_mode: str
     tag_list: List[str]
     tag_match_fields: List[str]
     has_pdf_enable: bool
@@ -215,7 +220,80 @@ def merge_config(raw_config: Dict[str, Any]) -> Dict[str, Any]:
     """
     merged = dict(DEFAULT_CONFIG)
     merged.update(raw_config)
+    if "run_mode" not in raw_config:
+        merged["run_mode"] = "incremental" if bool(raw_config.get("incremental_only", True)) else "full_reset"
     return merged
+
+
+def _normalize_run_mode(value: Any) -> str:
+    """规范化运行模式字符串。"""
+    mode = str(value or "incremental").strip().lower()
+    if mode in {"incremental", "incremental_update", "update", "append"}:
+        return "incremental"
+    if mode in {"full_reset", "reset", "rebuild", "delete_and_rerun", "clean"}:
+        return "full_reset"
+    raise ValueError(f"不支持的 A020 run_mode: {value}")
+
+
+def _remove_path_if_exists(path: Path) -> None:
+    """删除文件或目录（若存在）。"""
+    if not path.exists():
+        return
+    if path.is_dir():
+        shutil.rmtree(path)
+        return
+    path.unlink()
+
+
+def _log_stage(message: str) -> None:
+    """输出事务阶段日志，便于长任务排障。"""
+    print(f"[A020] {message}", flush=True)
+
+
+def _reset_a020_generated_state(
+    *,
+    workspace_root: Path,
+    legacy_output_dir: Path,
+    workspace_bib_path: Path,
+    workspace_attachments_dir: Path,
+    db_path: Path | None,
+    released_artifacts: Dict[str, Any],
+) -> None:
+    """在 full_reset 模式下清理 A020 生成物。"""
+    tasks_root = workspace_root / "tasks"
+    if tasks_root.exists():
+        for task_dir in tasks_root.iterdir():
+            if task_dir.is_dir() and task_dir.name.endswith("-A020"):
+                shutil.rmtree(task_dir)
+
+    if legacy_output_dir.exists():
+        shutil.rmtree(legacy_output_dir)
+
+    _remove_path_if_exists(workspace_bib_path)
+    _remove_path_if_exists(workspace_attachments_dir)
+
+    for artifact_key in [
+        "literature_table",
+        "literature_relations",
+        "tags_to_literatures",
+        "attachments_to_literatures",
+        "gate_review",
+    ]:
+        artifact_path = Path(str(released_artifacts.get(artifact_key) or "").strip())
+        if str(artifact_path):
+            _remove_path_if_exists(artifact_path)
+
+    if db_path is not None:
+        init_content_db(db_path)
+        with sqlite3.connect(str(db_path), timeout=60) as conn:
+            conn.execute("PRAGMA foreign_keys = OFF")
+            table_rows = conn.execute(
+                "SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%'"
+            ).fetchall()
+            for (table_name,) in table_rows:
+                conn.execute(f'DELETE FROM "{table_name}"')
+            conn.commit()
+            conn.execute("PRAGMA foreign_keys = ON")
 
 
 def load_config_from_json(config_path: Path) -> Dict[str, Any]:
@@ -467,26 +545,39 @@ def load_bib_records_original(bibtex_path: Path) -> List[BibRecord]:
     return load_bib_records(bibtex_path)
 
 
-def build_pdf_index(pdf_dir: Path) -> Dict[str, str]:
-    """遍历 pdf_dir，建立从规范化文件名到 PDF 实际路径的索引字典。
+def build_pdf_index(pdf_dir: Path, *, source_path_map: Dict[str, str] | None = None) -> Dict[str, List[Dict[str, str]]]:
+    """遍历 pdf_dir，建立从规范化文件名到 PDF 元数据列表的索引字典。
 
     Args:
         pdf_dir: PDF 根目录路径。
 
     Returns:
-        字典，键为规范化 (normalize_text) 后的文件名，值为文件的绝对/相对路径字符串。
+        字典，键为规范化 (normalize_text) 后的文件名，值为附件元数据列表。
     """
-    index: Dict[str, str] = {}
+    index: Dict[str, List[Dict[str, str]]] = {}
     if not pdf_dir.exists():
         return index
     for pdf_path in pdf_dir.rglob("*.pdf"):
         normalized = normalize_text(pdf_path.stem)
         if normalized:
-            index[normalized] = str(pdf_path)
+            storage_path = str(pdf_path)
+            index.setdefault(normalized, []).append(
+                {
+                    "storage_path": storage_path,
+                    "source_path": str((source_path_map or {}).get(storage_path) or storage_path),
+                }
+            )
     return index
 
 
-def match_pdf_paths(records: List[BibRecord], pdf_index: Dict[str, str]) -> List[Tuple[bool, str]]:
+def _record_title_signature(record: BibRecord) -> str:
+    title = normalize_text(str(record.fields.get("title", "")))
+    author = normalize_text(str(record.fields.get("author", "")))
+    year = normalize_text(str(record.fields.get("year", "")))
+    return f"{title}|{author}|{year}"
+
+
+def match_pdf_paths(records: List[BibRecord], pdf_index: Dict[str, List[Dict[str, str]]]) -> List[Dict[str, Any]]:
     """根据记录的标题在 pdf_index 中查找匹配的 PDF 路径。
 
     匹配逻辑：
@@ -498,26 +589,37 @@ def match_pdf_paths(records: List[BibRecord], pdf_index: Dict[str, str]) -> List
         pdf_index: build_pdf_index 返回的索引字典。
 
     Returns:
-        与 records 等长的列表，每项为 (bool, str)，表示是否匹配到 PDF 及匹配到的路径（未命中为 ("", False) 对应空路径）。
+        与 records 等长的列表，每项为匹配结果字典。
     """
-    results: List[Tuple[bool, str]] = []
+    title_to_signatures: Dict[str, set[str]] = {}
+    for record in records:
+        title_key = normalize_text(str(record.fields.get("title", "")))
+        if not title_key:
+            continue
+        title_to_signatures.setdefault(title_key, set()).add(_record_title_signature(record))
+
+    results: List[Dict[str, Any]] = []
     for record in records:
         title = str(record.fields.get("title", ""))
         key = normalize_text(title)
         if not key:
-            results.append((False, ""))
+            results.append({"matched": False, "storage_path": "", "source_path": "", "reason": "title_empty"})
             continue
-        if key in pdf_index:
-            results.append((True, pdf_index[key]))
+
+        if len(title_to_signatures.get(key, set())) > 1:
+            results.append({"matched": False, "storage_path": "", "source_path": "", "reason": "ambiguous_title_records"})
             continue
-        hit = False
-        path = ""
-        for pdf_key, pdf_path in pdf_index.items():
-            if key in pdf_key or pdf_key in key:
-                hit = True
-                path = pdf_path
-                break
-        results.append((hit, path))
+
+        exact_matches = list(pdf_index.get(key) or [])
+        if len(exact_matches) == 1:
+            match = exact_matches[0]
+            results.append({"matched": True, "storage_path": str(match.get("storage_path") or ""), "source_path": str(match.get("source_path") or ""), "reason": "exact_title"})
+            continue
+        if len(exact_matches) > 1:
+            results.append({"matched": False, "storage_path": "", "source_path": "", "reason": "ambiguous_title_files"})
+            continue
+
+        results.append({"matched": False, "storage_path": "", "source_path": "", "reason": "no_exact_match"})
     return results
 
 
@@ -753,13 +855,13 @@ def _merge_bib_sources(origin_bib_paths: List[Path], target_bib_path: Path) -> P
     return target_bib_path
 
 
-def _sync_attachments(origin_root: Path | None, target_root: Path) -> List[Path]:
-    """把原始附件复制到标准附件目录。"""
+def _sync_attachments(origin_root: Path | None, target_root: Path) -> List[Dict[str, str]]:
+    """把原始附件复制到标准附件目录，并保留原始来源路径。"""
     if origin_root is None or not origin_root.exists():
         return []
 
     target_root.mkdir(parents=True, exist_ok=True)
-    copied: List[Path] = []
+    copied: List[Dict[str, str]] = []
     for source in origin_root.rglob("*"):
         if not source.is_file():
             continue
@@ -768,7 +870,7 @@ def _sync_attachments(origin_root: Path | None, target_root: Path) -> List[Path]
         target_path.parent.mkdir(parents=True, exist_ok=True)
         if not target_path.exists() or source.stat().st_size != target_path.stat().st_size:
             shutil.copy2(source, target_path)
-        copied.append(target_path)
+        copied.append({"storage_path": str(target_path), "source_path": str(source.resolve())})
     return copied
 
 
@@ -867,33 +969,62 @@ def _run_and_write_all_outputs(config_path: Path) -> List[Path]:
     bibtex_path = Path(config.bibtex_path)
     legacy_output_dir = Path(str(merged_cfg.get("legacy_output_dir") or config.output_dir))
     pdf_dir = Path(config.pdf_dir)
+    run_mode = _normalize_run_mode(merged_cfg.get("run_mode") or config.run_mode)
     workspace_root = Path(merged_cfg.get("workspace_root") or config_path.parents[2]).resolve()
     workspace_references_dir = workspace_root / "references"
     workspace_bib_dir = workspace_references_dir / "bib"
     workspace_bib_path = workspace_bib_dir / bibtex_path.name
     workspace_attachments_dir = workspace_references_dir / "attachments"
+    backend = str(merged_cfg.get("storage_backend") or merged_cfg.get("backend") or "csv").strip().lower()
+    db_path_str = (
+        released_artifacts.get("content_db")
+        or merged_cfg.get("sqlite_db_path")
+        or merged_cfg.get("db_path")
+    )
+    db_path = Path(db_path_str) if db_path_str else None
+
+    if run_mode == "full_reset":
+        _log_stage("full_reset: 清理既有 A020 生成物")
+        _reset_a020_generated_state(
+            workspace_root=workspace_root,
+            legacy_output_dir=legacy_output_dir,
+            workspace_bib_path=workspace_bib_path,
+            workspace_attachments_dir=workspace_attachments_dir,
+            db_path=db_path if backend == "sqlite" else None,
+            released_artifacts=released_artifacts,
+        )
+
     output_dir = _build_task_instance_dir(workspace_root, "A020")
     legacy_output_dir.mkdir(parents=True, exist_ok=True)
 
+    _log_stage("合并 origin_bib_paths 到工作区 bib")
     merged_bib_path = _merge_bib_sources(origin_bib_paths, workspace_bib_path)
     if merged_bib_path is not None:
         bibtex_path = merged_bib_path
 
-    synced_attachments: List[Path] = []
+    synced_attachments: List[Dict[str, str]] = []
+    _log_stage("同步 origin_attachments_roots 到工作区 attachments")
     for attachment_root in origin_attachment_roots:
         synced_attachments.extend(_sync_attachments(attachment_root, workspace_attachments_dir))
     if origin_attachment_roots:
         pdf_dir = workspace_attachments_dir
 
+    synced_attachment_source_map = {
+        str(item.get("storage_path") or ""): str(item.get("source_path") or "")
+        for item in synced_attachments
+        if str(item.get("storage_path") or "")
+    }
+
     if merged_bib_path is not None:
         written_files = [merged_bib_path]
     else:
         written_files = []
-    written_files.extend(synced_attachments)
+    written_files.extend([Path(item["storage_path"]) for item in synced_attachments if item.get("storage_path")])
 
     if config.pdf_match_mode != "title":
         raise ValueError("当前仅支持 title 匹配模式")
 
+    _log_stage("解析 BibTeX 记录")
     records = load_bib_records(bibtex_path)
     if not records:
         if bibtex_path.exists() and bibtex_path.is_dir():
@@ -917,21 +1048,16 @@ def _run_and_write_all_outputs(config_path: Path) -> List[Path]:
         )
 
     if config.has_pdf_enable:
-        pdf_index = build_pdf_index(pdf_dir)
+        _log_stage("构建附件标题索引并匹配主全文")
+        pdf_index = build_pdf_index(pdf_dir, source_path_map=synced_attachment_source_map)
         pdf_matches = match_pdf_paths(records, pdf_index)
     else:
-        pdf_matches = [(False, "") for _ in records]
+        pdf_matches = [{"matched": False, "storage_path": "", "source_path": "", "reason": "disabled"} for _ in records]
 
+    _log_stage("构建文献主表")
     table = build_literature_main_table(records, pdf_matches, normalize_text_fn=normalize_text)
 
     # 写主表：支持后端选择（csv 或 sqlite），默认 csv（向后兼容）
-    backend = str(merged_cfg.get("storage_backend") or merged_cfg.get("backend") or "csv").strip().lower()
-    db_path_str = (
-        released_artifacts.get("content_db")
-        or merged_cfg.get("sqlite_db_path")
-        or merged_cfg.get("db_path")
-    )
-    db_path = Path(db_path_str) if db_path_str else None
     translation_summary: Dict[str, Any] = {
         "status": "SKIP",
         "translated_count": 0,
@@ -997,11 +1123,13 @@ def _run_and_write_all_outputs(config_path: Path) -> List[Path]:
     written_files.append(attachments_main_audit_path)
 
     if backend == "csv":
+        _log_stage("写出 CSV 后端产物")
         from autodokit.tools.storage_backend import persist_literature_table
 
         persisted = persist_literature_table(table, output_dir, config.output_table_csv, backend=backend, db_path=db_path)
         written_files.extend(persisted)
     elif backend == "sqlite" and db_path is not None:
+        _log_stage("准备写入 SQLite content.db")
         incoming_literatures_df = table.reset_index()
         incoming_attachment_relations_df = bibliodb_sqlite.build_attachments_df_from_literatures(incoming_literatures_df)
         incoming_tag_relations_df = bibliodb_sqlite.build_tags_df_from_inverted_index(
@@ -1009,23 +1137,35 @@ def _run_and_write_all_outputs(config_path: Path) -> List[Path]:
             tag_inv,
             normalize_text_fn=normalize_text,
         )
-        existing_literatures_df = bibliodb_sqlite.load_literatures_df(db_path) if db_path.exists() else pd.DataFrame()
-        existing_attachment_relations_df = bibliodb_sqlite.load_attachments_df(db_path) if db_path.exists() else pd.DataFrame()
-        existing_tag_relations_df = bibliodb_sqlite.load_tags_df(db_path) if db_path.exists() else pd.DataFrame()
-        merged_literatures_df, merged_attachment_relations_df, merged_tag_relations_df, merge_summary = bibliodb_sqlite.merge_reference_records(
-            existing_literatures_df=existing_literatures_df,
-            existing_attachments_df=existing_attachment_relations_df,
-            existing_tags_df=existing_tag_relations_df,
-            incoming_literatures_df=incoming_literatures_df,
-            incoming_attachments_df=incoming_attachment_relations_df,
-            incoming_tags_df=incoming_tag_relations_df,
-        )
+        if run_mode == "full_reset":
+            merged_literatures_df = incoming_literatures_df.copy()
+            merged_attachment_relations_df = incoming_attachment_relations_df.copy()
+            merged_tag_relations_df = incoming_tag_relations_df.copy()
+            merge_summary = {
+                "incoming_count": int(len(incoming_literatures_df)),
+                "matched_existing_count": 0,
+                "inserted_count": int(len(incoming_literatures_df)),
+                "final_literature_count": int(len(incoming_literatures_df)),
+            }
+        else:
+            existing_literatures_df = bibliodb_sqlite.load_literatures_df(db_path) if db_path.exists() else pd.DataFrame()
+            existing_attachment_relations_df = bibliodb_sqlite.load_attachments_df(db_path) if db_path.exists() else pd.DataFrame()
+            existing_tag_relations_df = bibliodb_sqlite.load_tags_df(db_path) if db_path.exists() else pd.DataFrame()
+            merged_literatures_df, merged_attachment_relations_df, merged_tag_relations_df, merge_summary = bibliodb_sqlite.merge_reference_records(
+                existing_literatures_df=existing_literatures_df,
+                existing_attachments_df=existing_attachment_relations_df,
+                existing_tags_df=existing_tag_relations_df,
+                incoming_literatures_df=incoming_literatures_df,
+                incoming_attachments_df=incoming_attachment_relations_df,
+                incoming_tags_df=incoming_tag_relations_df,
+            )
         bibliodb_sqlite.replace_reference_tables_only(
             db_path,
             literatures_df=merged_literatures_df,
             attachments_df=merged_attachment_relations_df,
             tags_df=merged_tag_relations_df,
         )
+        _log_stage("SQLite 写入完成")
         published_literature_df = merged_literatures_df
         written_files.append(db_path)
 
@@ -1040,6 +1180,7 @@ def _run_and_write_all_outputs(config_path: Path) -> List[Path]:
     if backend == "sqlite" and db_path is not None:
         translation_policy = merged_cfg.get("translation_policy") or {}
         try:
+            _log_stage("执行元数据翻译")
             translation_summary = run_literature_translation(
                 content_db=db_path,
                 translation_scope="metadata",
@@ -1063,6 +1204,7 @@ def _run_and_write_all_outputs(config_path: Path) -> List[Path]:
 
         normalization_settings = resolve_primary_attachment_normalization_settings(merged_cfg, workspace_root=workspace_root)
         if normalization_settings.get("enabled"):
+            _log_stage("执行主附件命名规范化")
             attachment_normalization_summary = normalize_primary_fulltext_attachment_names(
                 {
                     "content_db": str(db_path),
@@ -1077,6 +1219,7 @@ def _run_and_write_all_outputs(config_path: Path) -> List[Path]:
 
     gate_review_path = released_artifacts.get("gate_review")
     if gate_review_path:
+        _log_stage("写出 G020 gate review")
         match_count = int(table["has_fulltext"].astype(str).isin(["1", "true", "True"]).sum()) if "has_fulltext" in table.columns else 0
         gate_payload = {
             "gate_code": "G020",
@@ -1116,6 +1259,7 @@ def _run_and_write_all_outputs(config_path: Path) -> List[Path]:
                         legacy_target.write_text(artifact_path.read_text(encoding="utf-8"), encoding="utf-8")
 
 
+    _log_stage("A020 执行完成")
     return written_files
 
 

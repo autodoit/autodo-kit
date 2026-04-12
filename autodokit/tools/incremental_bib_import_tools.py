@@ -151,38 +151,57 @@ def _load_bib_records(bib_paths: str | Path | Sequence[str | Path]) -> List[BibR
     return records
 
 
-def _build_pdf_index(pdf_dir: Path) -> Dict[str, str]:
+def _build_pdf_index(pdf_dir: Path) -> Dict[str, list[dict[str, str]]]:
     """按标题归一化结果建立 PDF 索引。"""
 
-    index: Dict[str, str] = {}
+    index: Dict[str, list[dict[str, str]]] = {}
     if not pdf_dir.exists():
         return index
     for pdf_path in pdf_dir.rglob("*.pdf"):
         key = normalize_text(pdf_path.stem)
         if key:
-            index[key] = str(pdf_path)
+            index.setdefault(key, []).append({"storage_path": str(pdf_path), "source_path": str(pdf_path)})
     return index
 
 
-def _match_pdf_paths(records: Iterable[BibRecord], pdf_index: Dict[str, str]) -> List[Tuple[bool, str]]:
+def _record_title_signature(record: BibRecord) -> str:
+    title = normalize_text(str(record.fields.get("title", "")))
+    author = normalize_text(str(record.fields.get("author", "")))
+    year = normalize_text(str(record.fields.get("year", "")))
+    return f"{title}|{author}|{year}"
+
+
+def _match_pdf_paths(records: Iterable[BibRecord], pdf_index: Dict[str, list[dict[str, str]]]) -> List[dict[str, object]]:
     """按标题匹配 PDF 路径。"""
 
-    results: List[Tuple[bool, str]] = []
-    for record in records:
+    record_list = list(records)
+    title_to_signatures: Dict[str, set[str]] = {}
+    for record in record_list:
+        key = normalize_text(str(record.fields.get("title", "")))
+        if key:
+            title_to_signatures.setdefault(key, set()).add(_record_title_signature(record))
+
+    results: List[dict[str, object]] = []
+    for record in record_list:
         key = normalize_text(str(record.fields.get("title", "")))
         if not key:
-            results.append((False, ""))
-            continue
-        if key in pdf_index:
-            results.append((True, pdf_index[key]))
+            results.append({"matched": False, "storage_path": "", "source_path": "", "reason": "title_empty"})
             continue
 
-        matched_path = ""
-        for pdf_key, pdf_path in pdf_index.items():
-            if key in pdf_key or pdf_key in key:
-                matched_path = pdf_path
-                break
-        results.append((bool(matched_path), matched_path))
+        if len(title_to_signatures.get(key, set())) > 1:
+            results.append({"matched": False, "storage_path": "", "source_path": "", "reason": "ambiguous_title_records"})
+            continue
+
+        exact_matches = list(pdf_index.get(key) or [])
+        if len(exact_matches) == 1:
+            match = exact_matches[0]
+            results.append({"matched": True, "storage_path": str(match.get("storage_path") or ""), "source_path": str(match.get("source_path") or ""), "reason": "exact_title"})
+            continue
+        if len(exact_matches) > 1:
+            results.append({"matched": False, "storage_path": "", "source_path": "", "reason": "ambiguous_title_files"})
+            continue
+
+        results.append({"matched": False, "storage_path": "", "source_path": "", "reason": "no_exact_match"})
     return results
 
 
@@ -231,7 +250,7 @@ def incremental_import_bib_into_content_db(
         pdf_index = _build_pdf_index(Path(pdf_dir).expanduser().resolve())
         pdf_matches = _match_pdf_paths(records, pdf_index)
     else:
-        pdf_matches = [(False, "") for _ in records]
+        pdf_matches = [{"matched": False, "storage_path": "", "source_path": "", "reason": "disabled"} for _ in records]
 
     incoming_literatures_df = build_literature_main_table(records, pdf_matches, normalize_text_fn=normalize_text)
     incoming_attachment_index = build_literature_attachment_inverted_index(incoming_literatures_df)
@@ -281,7 +300,7 @@ def incremental_import_bib_into_content_db(
     return {
         "db_path": str(target_db_path),
         "incoming_records": int(len(records)),
-        "incoming_attachment_candidates": int(sum(1 for hit, _ in pdf_matches if hit)),
+        "incoming_attachment_candidates": int(sum(1 for item in pdf_matches if bool(item.get("matched")))),
         "incoming_attachment_index_size": int(sum(len(v) for v in incoming_attachment_index.values())),
         **merge_summary,
     }

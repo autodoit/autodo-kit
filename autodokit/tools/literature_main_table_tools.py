@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Any, Callable, Dict, List, Tuple
+from typing import Any, Callable, Dict, List, Mapping, Tuple
 
 import pandas as pd
 
@@ -20,7 +20,7 @@ from autodokit.tools.obsidian_note_timezone_tools import get_current_time_iso
 
 def build_literature_main_table(
     records: List[Any],
-    pdf_matches: List[Tuple[bool, str]],
+    pdf_matches: List[Tuple[bool, str] | Mapping[str, Any]],
     *,
     normalize_text_fn: Callable[[str], str],
 ) -> pd.DataFrame:
@@ -38,7 +38,15 @@ def build_literature_main_table(
     used_uid: set[str] = set()
     now_iso = get_current_time_iso("Asia/Shanghai")
 
-    for record, (has_pdf, pdf_path) in zip(records, pdf_matches):
+    for record, raw_pdf_match in zip(records, pdf_matches):
+        if isinstance(raw_pdf_match, Mapping):
+            has_pdf = bool(raw_pdf_match.get("matched") or raw_pdf_match.get("has_pdf"))
+            pdf_path = str(raw_pdf_match.get("storage_path") or raw_pdf_match.get("pdf_path") or "")
+            pdf_source_path = str(raw_pdf_match.get("source_path") or "")
+        else:
+            has_pdf, pdf_path = raw_pdf_match
+            pdf_source_path = ""
+
         row: Dict[str, Any] = {}
         for key, value in getattr(record, "fields", {}).items():
             row[key] = value
@@ -70,6 +78,7 @@ def build_literature_main_table(
         row["is_placeholder"] = 0
         row["has_fulltext"] = int(bool(has_pdf))
         row["primary_attachment_name"] = Path(pdf_path).name if pdf_path else ""
+        row["primary_attachment_source_path"] = pdf_source_path
         row["standard_note_uid"] = ""
         row["created_at"] = now_iso
         row["updated_at"] = now_iso

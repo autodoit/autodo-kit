@@ -15,8 +15,8 @@ from autodokit.tools.time_utils import now_iso
 
 
 DEFAULT_PRIMARY_ATTACHMENT_NORMALIZATION_SETTINGS: dict[str, Any] = {
-    "enabled": False,
-    "rename_mode": "preview",
+    "enabled": True,
+    "rename_mode": "apply",
     "allowed_attachment_types": ["fulltext", "pdf"],
     "update_parse_assets": True,
 }
@@ -250,15 +250,23 @@ def normalize_primary_fulltext_attachment_names(payload: dict[str, Any]) -> dict
     updated_attachment_keys: set[tuple[str, str]] = set()
     updated_parse_assets = 0
     now_text = now_iso()
+    attachment_rows_by_literature: dict[str, list[dict[str, Any]]] = {}
+    literature_indices_by_uid: dict[str, list[int]] = {}
+    attachment_indices_by_key: dict[tuple[str, str], list[int]] = {}
+    for row_index, row in literatures_df.iterrows():
+        literature_indices_by_uid.setdefault(_stringify(row.get("uid_literature")), []).append(row_index)
+    for _, row in attachments_df.iterrows():
+        row_index = row.name
+        row_dict = row.to_dict()
+        uid_literature = _stringify(row_dict.get("uid_literature"))
+        uid_attachment = _stringify(row_dict.get("uid_attachment"))
+        attachment_rows_by_literature.setdefault(uid_literature, []).append(row_dict)
+        attachment_indices_by_key.setdefault((uid_literature, uid_attachment), []).append(row_index)
 
     for literature_row in _iter_scope_literatures(literatures_df, uid_scope, cite_scope):
         uid_literature = _stringify(literature_row.get("uid_literature"))
         cite_key = _stringify(literature_row.get("cite_key"))
-        attachment_rows = [
-            row.to_dict()
-            for _, row in attachments_df.iterrows()
-            if _stringify(row.get("uid_literature")) == uid_literature
-        ]
+        attachment_rows = attachment_rows_by_literature.get(uid_literature, [])
         eligible_rows = [
             row
             for row in attachment_rows
@@ -334,22 +342,24 @@ def normalize_primary_fulltext_attachment_names(payload: dict[str, Any]) -> dict
         if rename_mode == "apply" or already_normalized:
             effective_path = target_path if (rename_mode == "apply" or already_normalized) else current_path
             effective_source_path = source_path or str(current_path)
-            attachment_mask = (
-                attachments_df.get("uid_literature", pd.Series(dtype=str)).astype(str) == uid_literature
-            ) & (
-                attachments_df.get("uid_attachment", pd.Series(dtype=str)).astype(str) == current_uid_attachment
-            )
-            attachments_df.loc[attachment_mask, "uid_attachment"] = stable_uid
-            attachments_df.loc[attachment_mask, "attachment_name"] = target_name
-            attachments_df.loc[attachment_mask, "storage_path"] = str(effective_path)
-            attachments_df.loc[attachment_mask, "source_path"] = effective_source_path
-            attachments_df.loc[attachment_mask, "file_ext"] = file_ext.lstrip(".")
-            attachments_df.loc[attachment_mask, "updated_at"] = now_text
+            attachment_indices = attachment_indices_by_key.get((uid_literature, current_uid_attachment), [])
+            if attachment_indices:
+                attachments_df.loc[attachment_indices, "uid_attachment"] = stable_uid
+                attachments_df.loc[attachment_indices, "attachment_name"] = target_name
+                attachments_df.loc[attachment_indices, "storage_path"] = str(effective_path)
+                attachments_df.loc[attachment_indices, "source_path"] = effective_source_path
+                attachments_df.loc[attachment_indices, "file_ext"] = file_ext.lstrip(".")
+                attachments_df.loc[attachment_indices, "updated_at"] = now_text
+                attachment_indices_by_key[(uid_literature, stable_uid)] = attachment_indices_by_key.pop(
+                    (uid_literature, current_uid_attachment),
+                    attachment_indices,
+                )
 
-            literature_mask = literatures_df.get("uid_literature", pd.Series(dtype=str)).astype(str) == uid_literature
-            literatures_df.loc[literature_mask, "primary_attachment_name"] = target_name
-            literatures_df.loc[literature_mask, "pdf_path"] = str(effective_path)
-            literatures_df.loc[literature_mask, "updated_at"] = now_text
+            literature_indices = literature_indices_by_uid.get(uid_literature, [])
+            if literature_indices:
+                literatures_df.loc[literature_indices, "primary_attachment_name"] = target_name
+                literatures_df.loc[literature_indices, "pdf_path"] = str(effective_path)
+                literatures_df.loc[literature_indices, "updated_at"] = now_text
 
             if update_parse_assets and not parse_assets_df.empty and current_uid_attachment != stable_uid:
                 parse_mask = parse_assets_df.get("uid_attachment", pd.Series(dtype=str)).astype(str) == current_uid_attachment

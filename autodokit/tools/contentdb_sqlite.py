@@ -23,6 +23,9 @@ DEFAULT_CONTENT_DB_NAME = "content.db"
 CONTENT_DB_DIRECTORY_NAME = "content"
 ATTACHMENT_TABLE_NAME = "attachments"
 ATTACHMENT_LINK_TABLE_NAME = "literature_attachment_links"
+TAG_TABLE_NAME = "tags"
+AUTHOR_TABLE_NAME = "authors"
+AUTHOR_LINK_TABLE_NAME = "literature_authors"
 KNOWLEDGE_LINK_TABLE_NAME = "knowledge_literature_links"
 KNOWLEDGE_EVIDENCE_TABLE_NAME = "knowledge_evidence_links"
 KNOWLEDGE_NOTES_TABLE_NAME = "knowledge_notes"
@@ -196,6 +199,7 @@ LITERATURE_REQUIRED_COLUMNS: dict[str, str] = {
     "clean_title": "TEXT",
     "title_norm": "TEXT",
     "authors": "TEXT",
+    "primary_attachment_source_path": "TEXT",
     "placeholder_reason": "TEXT",
     "placeholder_status": "TEXT",
     "placeholder_run_uid": "TEXT",
@@ -247,6 +251,41 @@ TRANSLATION_ASSET_REQUIRED_COLUMNS: dict[str, str] = {
     "updated_at": "TEXT",
 }
 
+TAG_REQUIRED_COLUMNS: dict[str, str] = {
+    "uid_tag": "TEXT",
+    "tag": "TEXT",
+    "tag_norm": "TEXT",
+    "tag_display": "TEXT",
+    "tag_group": "TEXT",
+    "created_at": "TEXT",
+    "updated_at": "TEXT",
+}
+
+AUTHOR_REQUIRED_COLUMNS: dict[str, str] = {
+    "uid_author": "TEXT",
+    "display_name": "TEXT",
+    "normalized_name": "TEXT",
+    "surname": "TEXT",
+    "given_names": "TEXT",
+    "orcid": "TEXT",
+    "source_type": "TEXT",
+    "created_at": "TEXT",
+    "updated_at": "TEXT",
+}
+
+AUTHOR_LINK_REQUIRED_COLUMNS: dict[str, str] = {
+    "uid_literature_author": "TEXT",
+    "uid_literature": "TEXT",
+    "uid_author": "TEXT",
+    "author_order": "INTEGER",
+    "is_first_author": "INTEGER",
+    "is_corresponding": "INTEGER",
+    "display_name": "TEXT",
+    "source_type": "TEXT",
+    "created_at": "TEXT",
+    "updated_at": "TEXT",
+}
+
 
 def _utc_now_iso() -> str:
     return now_iso()
@@ -263,6 +302,41 @@ def _split_pipe_values(value: object) -> list[str]:
     normalized = text.replace(",", "|").replace("；", "|").replace(";", "|")
     items = [segment.strip() for segment in normalized.split("|")]
     return [segment for segment in items if segment]
+
+
+def _split_author_values(value: object) -> list[str]:
+    text = str(value or "").strip()
+    if not text:
+        return []
+    normalized = (
+        text.replace(" and ", "|")
+        .replace("；", "|")
+        .replace(";", "|")
+        .replace("，", "|")
+        .replace(",", "|")
+        .replace("、", "|")
+    )
+    parts = [segment.strip() for segment in normalized.split("|")]
+    return [segment for segment in parts if segment]
+
+
+def _normalize_person_name(value: object) -> str:
+    return " ".join(str(value or "").strip().lower().split())
+
+
+def _stable_tag_uid(tag_norm: str) -> str:
+    normalized = str(tag_norm or "").strip().lower()
+    return f"tag-{hashlib.md5(normalized.encode('utf-8')).hexdigest()}"
+
+
+def _stable_author_uid(normalized_name: str) -> str:
+    normalized = str(normalized_name or "").strip().lower()
+    return f"author-{hashlib.md5(normalized.encode('utf-8')).hexdigest()}"
+
+
+def _stable_author_link_uid(uid_literature: str, uid_author: str, author_order: int) -> str:
+    normalized = f"{uid_literature}|{uid_author}|{author_order}".lower()
+    return f"litauth-{hashlib.md5(normalized.encode('utf-8')).hexdigest()}"
 
 
 def resolve_content_db_path(db_path: str | Path) -> Path:
@@ -660,6 +734,106 @@ def _refresh_reading_state_views(conn: sqlite3.Connection) -> None:
     """
     _create_or_replace_view(conn, "工作流总览视图", workflow_overview_sql)
 
+    attachment_overview_sql = f"""
+    SELECT
+        lnk.uid_attachment_link AS 附件关联标识,
+        lnk.uid_literature AS 文献标识,
+        COALESCE(lit.cite_key, '') AS 引文键,
+        COALESCE(lit.title, '') AS 文献标题,
+        lnk.uid_attachment AS 附件标识,
+        COALESCE(att.attachment_name, '') AS 附件名称,
+        COALESCE(att.storage_path, '') AS 当前存储路径,
+        COALESCE(att.source_path, '') AS 原始来源路径,
+        COALESCE(att.status, '') AS 附件状态,
+        COALESCE(lnk.link_role, '') AS 关联角色,
+        COALESCE(lnk.is_primary, 0) AS 是否主附件,
+        COALESCE(lnk.updated_at, att.updated_at, '') AS 更新时间
+    FROM {ATTACHMENT_LINK_TABLE_NAME} AS lnk
+    LEFT JOIN {ATTACHMENT_TABLE_NAME} AS att
+        ON att.uid_attachment = lnk.uid_attachment
+    LEFT JOIN literatures AS lit
+        ON lit.uid_literature = lnk.uid_literature
+    ORDER BY 更新时间 DESC, 引文键, 附件名称
+    """
+    _create_or_replace_view(conn, "文献附件总视图", attachment_overview_sql)
+
+    primary_attachment_view_sql = """
+    SELECT *
+    FROM "文献附件总视图"
+    WHERE IFNULL(是否主附件, 0) = 1
+    ORDER BY 更新时间 DESC, 引文键
+    """
+    _create_or_replace_view(conn, "文献主附件视图", primary_attachment_view_sql)
+
+    tag_overview_sql = f"""
+    SELECT
+        t.uid_tag AS 标签标识,
+        COALESCE(t.tag_display, t.tag, '') AS 标签显示名,
+        COALESCE(t.tag_norm, '') AS 标签规范名,
+        COALESCE(t.tag_group, '') AS 标签分组,
+        COUNT(DISTINCT lnk.uid_literature) AS 关联文献数,
+        COALESCE(MAX(lnk.updated_at), MAX(t.updated_at), '') AS 更新时间
+    FROM {TAG_TABLE_NAME} AS t
+    LEFT JOIN literature_tags AS lnk
+        ON lnk.tag_norm = t.tag_norm
+    GROUP BY t.uid_tag, t.tag_display, t.tag, t.tag_norm, t.tag_group
+    ORDER BY 关联文献数 DESC, 标签显示名
+    """
+    _create_or_replace_view(conn, "标签总表", tag_overview_sql)
+
+    literature_tag_overview_sql = f"""
+    SELECT
+        lnk.uid_literature AS 文献标识,
+        COALESCE(lit.cite_key, '') AS 引文键,
+        COALESCE(lit.title, '') AS 文献标题,
+        t.uid_tag AS 标签标识,
+        COALESCE(t.tag_display, t.tag, lnk.tag) AS 标签显示名,
+        COALESCE(t.tag_group, '') AS 标签分组,
+        COALESCE(lnk.source_type, '') AS 来源类型,
+        COALESCE(lnk.updated_at, '') AS 更新时间
+    FROM literature_tags AS lnk
+    LEFT JOIN {TAG_TABLE_NAME} AS t
+        ON t.tag_norm = lnk.tag_norm
+    LEFT JOIN literatures AS lit
+        ON lit.uid_literature = lnk.uid_literature
+    ORDER BY 更新时间 DESC, 引文键, 标签显示名
+    """
+    _create_or_replace_view(conn, "文献标签关联总视图", literature_tag_overview_sql)
+
+    author_overview_sql = f"""
+    SELECT
+        a.uid_author AS 作者标识,
+        COALESCE(a.display_name, '') AS 作者姓名,
+        COALESCE(a.normalized_name, '') AS 作者规范名,
+        COUNT(DISTINCT la.uid_literature) AS 关联文献数,
+        COALESCE(MAX(la.updated_at), MAX(a.updated_at), '') AS 更新时间
+    FROM {AUTHOR_TABLE_NAME} AS a
+    LEFT JOIN {AUTHOR_LINK_TABLE_NAME} AS la
+        ON la.uid_author = a.uid_author
+    GROUP BY a.uid_author, a.display_name, a.normalized_name
+    ORDER BY 关联文献数 DESC, 作者姓名
+    """
+    _create_or_replace_view(conn, "作者总表", author_overview_sql)
+
+    literature_author_overview_sql = f"""
+    SELECT
+        la.uid_literature AS 文献标识,
+        COALESCE(lit.cite_key, '') AS 引文键,
+        COALESCE(lit.title, '') AS 文献标题,
+        la.uid_author AS 作者标识,
+        COALESCE(la.display_name, a.display_name, '') AS 作者姓名,
+        COALESCE(la.author_order, 0) AS 作者顺序,
+        COALESCE(la.is_first_author, 0) AS 是否第一作者,
+        COALESCE(la.updated_at, '') AS 更新时间
+    FROM {AUTHOR_LINK_TABLE_NAME} AS la
+    LEFT JOIN {AUTHOR_TABLE_NAME} AS a
+        ON a.uid_author = la.uid_author
+    LEFT JOIN literatures AS lit
+        ON lit.uid_literature = la.uid_literature
+    ORDER BY 更新时间 DESC, 引文键, 作者顺序
+    """
+    _create_or_replace_view(conn, "文献作者关联总视图", literature_author_overview_sql)
+
 
 def _attachment_entity_uid(
     *,
@@ -793,7 +967,7 @@ def _build_legacy_attachment_projection(conn: sqlite3.Connection) -> pd.DataFram
     )
 
 
-def _sync_attachment_normalized_tables(conn: sqlite3.Connection) -> None:
+def _migrate_and_drop_legacy_attachment_table(conn: sqlite3.Connection) -> None:
     if _sqlite_object_type(conn, "literature_attachments") != "table":
         return
 
@@ -802,23 +976,100 @@ def _sync_attachment_normalized_tables(conn: sqlite3.Connection) -> None:
     attachment_total = int((attachment_count or [0])[0] or 0)
     link_total = int((link_count or [0])[0] or 0)
 
-    # 规范化两层表优先作为真相源，旧表仅保留兼容投影。
-    if attachment_total > 0 or link_total > 0:
-        if link_total > 0:
-            legacy_projection_df = _build_legacy_attachment_projection(conn)
-            _replace_table_rows(conn, "literature_attachments", legacy_projection_df)
+    if attachment_total == 0 and link_total == 0:
+        legacy_df = pd.read_sql_query("SELECT * FROM literature_attachments", conn)
+        if not legacy_df.empty:
+            attachments_df, links_df = _build_attachment_normalized_frames(legacy_df)
+            _replace_table_rows(conn, ATTACHMENT_TABLE_NAME, attachments_df)
+            _replace_table_rows(conn, ATTACHMENT_LINK_TABLE_NAME, links_df)
+
+    conn.execute('DROP TABLE IF EXISTS "literature_attachments"')
+
+
+def _sync_tag_entities(conn: sqlite3.Connection) -> None:
+    if _sqlite_object_type(conn, "literature_tags") != "table":
         return
 
-    legacy_df = pd.read_sql_query("SELECT * FROM literature_attachments", conn)
-    if legacy_df.empty:
-        _replace_table_rows(conn, ATTACHMENT_LINK_TABLE_NAME, pd.DataFrame())
-        _replace_table_rows(conn, ATTACHMENT_TABLE_NAME, pd.DataFrame())
+    tag_links_df = pd.read_sql_query("SELECT * FROM literature_tags", conn)
+    if tag_links_df.empty:
+        _replace_table_rows(conn, TAG_TABLE_NAME, pd.DataFrame(columns=list(TAG_REQUIRED_COLUMNS.keys())))
         return
 
-    attachments_df, links_df = _build_attachment_normalized_frames(legacy_df)
-    _replace_table_rows(conn, ATTACHMENT_LINK_TABLE_NAME, pd.DataFrame())
-    _replace_table_rows(conn, ATTACHMENT_TABLE_NAME, attachments_df)
-    _replace_table_rows(conn, ATTACHMENT_LINK_TABLE_NAME, links_df)
+    now = _utc_now_iso()
+    rows_by_uid: dict[str, dict[str, object]] = {}
+    for _, row in tag_links_df.fillna("").iterrows():
+        tag = str(row.get("tag") or "").strip()
+        tag_norm = str(row.get("tag_norm") or tag).strip().lower()
+        if not tag_norm:
+            continue
+        uid_tag = _stable_tag_uid(tag_norm)
+        rows_by_uid[uid_tag] = {
+            "uid_tag": uid_tag,
+            "tag": tag or tag_norm,
+            "tag_norm": tag_norm,
+            "tag_display": tag or tag_norm,
+            "tag_group": tag.split("/", 1)[0] if "/" in tag else "",
+            "created_at": str(row.get("created_at") or now).strip() or now,
+            "updated_at": str(row.get("updated_at") or now).strip() or now,
+        }
+
+    tags_df = pd.DataFrame(list(rows_by_uid.values()), columns=list(TAG_REQUIRED_COLUMNS.keys()))
+    _replace_table_rows(conn, TAG_TABLE_NAME, tags_df)
+
+
+def _sync_author_entities(conn: sqlite3.Connection) -> None:
+    if _sqlite_object_type(conn, "literatures") != "table":
+        return
+
+    literatures_df = pd.read_sql_query("SELECT uid_literature, authors, created_at, updated_at FROM literatures", conn)
+    if literatures_df.empty:
+        _replace_table_rows(conn, AUTHOR_TABLE_NAME, pd.DataFrame(columns=list(AUTHOR_REQUIRED_COLUMNS.keys())))
+        _replace_table_rows(conn, AUTHOR_LINK_TABLE_NAME, pd.DataFrame(columns=list(AUTHOR_LINK_REQUIRED_COLUMNS.keys())))
+        return
+
+    now = _utc_now_iso()
+    author_rows_by_uid: dict[str, dict[str, object]] = {}
+    author_link_rows: list[dict[str, object]] = []
+    for _, row in literatures_df.fillna("").iterrows():
+        uid_literature = str(row.get("uid_literature") or "").strip()
+        if not uid_literature:
+            continue
+        for index, author_name in enumerate(_split_author_values(row.get("authors")), start=1):
+            normalized_name = _normalize_person_name(author_name)
+            if not normalized_name:
+                continue
+            uid_author = _stable_author_uid(normalized_name)
+            author_rows_by_uid[uid_author] = {
+                "uid_author": uid_author,
+                "display_name": author_name,
+                "normalized_name": normalized_name,
+                "surname": author_name.split()[0] if author_name.split() else author_name,
+                "given_names": " ".join(author_name.split()[1:]) if len(author_name.split()) > 1 else "",
+                "orcid": "",
+                "source_type": "literatures.authors",
+                "created_at": str(row.get("created_at") or now).strip() or now,
+                "updated_at": str(row.get("updated_at") or now).strip() or now,
+            }
+            author_link_rows.append(
+                {
+                    "uid_literature_author": _stable_author_link_uid(uid_literature, uid_author, index),
+                    "uid_literature": uid_literature,
+                    "uid_author": uid_author,
+                    "author_order": index,
+                    "is_first_author": 1 if index == 1 else 0,
+                    "is_corresponding": 0,
+                    "display_name": author_name,
+                    "source_type": "literatures.authors",
+                    "created_at": str(row.get("created_at") or now).strip() or now,
+                    "updated_at": str(row.get("updated_at") or now).strip() or now,
+                }
+            )
+
+    authors_df = pd.DataFrame(list(author_rows_by_uid.values()), columns=list(AUTHOR_REQUIRED_COLUMNS.keys()))
+    links_df = pd.DataFrame(author_link_rows, columns=list(AUTHOR_LINK_REQUIRED_COLUMNS.keys()))
+    _replace_table_rows(conn, AUTHOR_LINK_TABLE_NAME, pd.DataFrame(columns=list(AUTHOR_LINK_REQUIRED_COLUMNS.keys())))
+    _replace_table_rows(conn, AUTHOR_TABLE_NAME, authors_df)
+    _replace_table_rows(conn, AUTHOR_LINK_TABLE_NAME, links_df)
 
 
 def init_content_db(db_path: str | Path) -> Path:
@@ -849,6 +1100,7 @@ def init_content_db(db_path: str | Path) -> Path:
                 placeholder_run_uid TEXT,
                 has_fulltext INTEGER,
                 primary_attachment_name TEXT,
+                primary_attachment_source_path TEXT,
                 standard_note_uid TEXT,
                 source_type TEXT,
                 origin_path TEXT,
@@ -882,28 +1134,6 @@ def init_content_db(db_path: str | Path) -> Path:
         _create_index_if_table(conn, "literatures", "CREATE INDEX IF NOT EXISTS idx_lit_cite ON literatures(cite_key)")
         _create_index_if_table(conn, "literatures", "CREATE INDEX IF NOT EXISTS idx_lit_author_year ON literatures(first_author, year)")
         _create_index_if_table(conn, "literatures", "CREATE INDEX IF NOT EXISTS idx_lit_a05_rank ON literatures(a05_scope_key, a05_current_rank)")
-
-        cur.execute(
-            """
-            CREATE TABLE IF NOT EXISTS literature_attachments (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                uid_attachment TEXT UNIQUE,
-                uid_literature TEXT,
-                attachment_name TEXT,
-                attachment_type TEXT,
-                file_ext TEXT,
-                storage_path TEXT,
-                source_path TEXT,
-                checksum TEXT,
-                is_primary INTEGER,
-                status TEXT,
-                created_at TEXT,
-                updated_at TEXT,
-                FOREIGN KEY(uid_literature) REFERENCES literatures(uid_literature)
-            )
-            """
-        )
-        _create_index_if_table(conn, "literature_attachments", "CREATE INDEX IF NOT EXISTS idx_att_lit ON literature_attachments(uid_literature)")
 
         cur.execute(
             f"""
@@ -948,6 +1178,24 @@ def init_content_db(db_path: str | Path) -> Path:
         _create_index_if_table(conn, ATTACHMENT_LINK_TABLE_NAME, f"CREATE INDEX IF NOT EXISTS idx_attachment_link_attachment ON {ATTACHMENT_LINK_TABLE_NAME}(uid_attachment)")
 
         cur.execute(
+            f"""
+            CREATE TABLE IF NOT EXISTS {TAG_TABLE_NAME} (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                uid_tag TEXT UNIQUE,
+                tag TEXT,
+                tag_norm TEXT,
+                tag_display TEXT,
+                tag_group TEXT,
+                created_at TEXT,
+                updated_at TEXT
+            )
+            """
+        )
+        _ensure_table_columns(conn, TAG_TABLE_NAME, TAG_REQUIRED_COLUMNS)
+        _create_index_if_table(conn, TAG_TABLE_NAME, f"CREATE UNIQUE INDEX IF NOT EXISTS idx_tag_uid ON {TAG_TABLE_NAME}(uid_tag)")
+        _create_index_if_table(conn, TAG_TABLE_NAME, f"CREATE UNIQUE INDEX IF NOT EXISTS idx_tag_norm_unique ON {TAG_TABLE_NAME}(tag_norm)")
+
+        cur.execute(
             """
             CREATE TABLE IF NOT EXISTS literature_tags (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -965,6 +1213,50 @@ def init_content_db(db_path: str | Path) -> Path:
         )
         _create_index_if_table(conn, "literature_tags", "CREATE INDEX IF NOT EXISTS idx_tag_lit ON literature_tags(uid_literature)")
         _create_index_if_table(conn, "literature_tags", "CREATE INDEX IF NOT EXISTS idx_tag_name ON literature_tags(tag)")
+
+        cur.execute(
+            f"""
+            CREATE TABLE IF NOT EXISTS {AUTHOR_TABLE_NAME} (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                uid_author TEXT UNIQUE,
+                display_name TEXT,
+                normalized_name TEXT,
+                surname TEXT,
+                given_names TEXT,
+                orcid TEXT,
+                source_type TEXT,
+                created_at TEXT,
+                updated_at TEXT
+            )
+            """
+        )
+        _ensure_table_columns(conn, AUTHOR_TABLE_NAME, AUTHOR_REQUIRED_COLUMNS)
+        _create_index_if_table(conn, AUTHOR_TABLE_NAME, f"CREATE UNIQUE INDEX IF NOT EXISTS idx_author_uid ON {AUTHOR_TABLE_NAME}(uid_author)")
+        _create_index_if_table(conn, AUTHOR_TABLE_NAME, f"CREATE INDEX IF NOT EXISTS idx_author_name ON {AUTHOR_TABLE_NAME}(normalized_name)")
+
+        cur.execute(
+            f"""
+            CREATE TABLE IF NOT EXISTS {AUTHOR_LINK_TABLE_NAME} (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                uid_literature_author TEXT UNIQUE,
+                uid_literature TEXT,
+                uid_author TEXT,
+                author_order INTEGER,
+                is_first_author INTEGER,
+                is_corresponding INTEGER,
+                display_name TEXT,
+                source_type TEXT,
+                created_at TEXT,
+                updated_at TEXT,
+                UNIQUE(uid_literature, uid_author, author_order),
+                FOREIGN KEY(uid_literature) REFERENCES literatures(uid_literature),
+                FOREIGN KEY(uid_author) REFERENCES {AUTHOR_TABLE_NAME}(uid_author)
+            )
+            """
+        )
+        _ensure_table_columns(conn, AUTHOR_LINK_TABLE_NAME, AUTHOR_LINK_REQUIRED_COLUMNS)
+        _create_index_if_table(conn, AUTHOR_LINK_TABLE_NAME, f"CREATE INDEX IF NOT EXISTS idx_author_link_lit ON {AUTHOR_LINK_TABLE_NAME}(uid_literature)")
+        _create_index_if_table(conn, AUTHOR_LINK_TABLE_NAME, f"CREATE INDEX IF NOT EXISTS idx_author_link_author ON {AUTHOR_LINK_TABLE_NAME}(uid_author)")
 
         cur.execute(
             """
@@ -1332,7 +1624,9 @@ def init_content_db(db_path: str | Path) -> Path:
             f"CREATE INDEX IF NOT EXISTS idx_ke_uid_type ON {KNOWLEDGE_EVIDENCE_TABLE_NAME}(uid_knowledge, evidence_type)",
         )
 
-        _sync_attachment_normalized_tables(conn)
+        _migrate_and_drop_legacy_attachment_table(conn)
+        _sync_tag_entities(conn)
+        _sync_author_entities(conn)
         _refresh_reading_state_views(conn)
 
         conn.commit()
