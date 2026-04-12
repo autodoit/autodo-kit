@@ -220,6 +220,22 @@ def resolve_primary_attachment_normalization_settings(*args: Any, **kwargs: Any)
     impl = getattr(module, "resolve_primary_attachment_normalization_settings")
     return impl(*args, **kwargs)
 
+
+def refresh_author_entities(payload: dict[str, Any]) -> dict[str, Any]:
+    """延迟加载作者清洗与回填原子工具。"""
+
+    module = importlib.import_module("autodokit.tools.literature_author_cleanup_tools")
+    impl = getattr(module, "refresh_author_entities")
+    return impl(payload)
+
+
+def isolate_unmatched_attachments(payload: dict[str, Any]) -> dict[str, Any]:
+    """延迟加载孤儿附件隔离原子工具。"""
+
+    module = importlib.import_module("autodokit.tools.unmatched_attachment_isolation_tools")
+    impl = getattr(module, "isolate_unmatched_attachments")
+    return impl(payload)
+
 def scan_affairs(affairs_root: str | Path | None = None) -> list[dict[str, Any]]:
     if affairs_root is None:
         affairs_root = Path(__file__).resolve().parents[1] / "affairs"
@@ -670,6 +686,8 @@ _用户公开工具 = [
     "run_literature_translation",
     "normalize_primary_fulltext_attachment_names",
     "resolve_primary_attachment_normalization_settings",
+    "refresh_author_entities",
+    "isolate_unmatched_attachments",
 ]
 
 _开发者工具 = [
@@ -761,6 +779,8 @@ _开发者工具 = [
     "incremental_import_bib_into_content_db",
     "normalize_primary_fulltext_attachment_names",
     "resolve_primary_attachment_normalization_settings",
+    "refresh_author_entities",
+    "isolate_unmatched_attachments",
     "build_reference_quality_summary",
     "build_online_lookup_placeholder_fields",
     "generate_knowledge_uid",
