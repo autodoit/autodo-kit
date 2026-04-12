@@ -840,6 +840,9 @@ def load_attachments_df(db_path: Path) -> pd.DataFrame:
                 att.file_ext,
                 att.storage_path,
                 att.source_path,
+                COALESCE(lnk.source_type, '') AS source_type,
+                COALESCE(att.附件来源类型, '') AS 附件来源类型,
+                COALESCE(att.来源事务, '') AS 来源事务,
                 att.checksum,
                 COALESCE(lnk.is_primary, 0) AS is_primary,
                 att.status,
@@ -1237,6 +1240,9 @@ _LITERATURE_ATTACHMENT_COLUMNS: List[str] = [
     "file_ext",
     "storage_path",
     "source_path",
+    "source_type",
+    "附件来源类型",
+    "来源事务",
     "checksum",
     "is_primary",
     "status",
@@ -1316,6 +1322,8 @@ def _build_normalized_attachment_frames(flat_attachments_df: pd.DataFrame) -> tu
         "file_ext",
         "storage_path",
         "source_path",
+        "附件来源类型",
+        "来源事务",
         "checksum",
         "status",
         "created_at",
@@ -1359,6 +1367,8 @@ def _build_normalized_attachment_frames(flat_attachments_df: pd.DataFrame) -> tu
             "file_ext": _stringify(row.get("file_ext")) or _stringify(existing_attachment.get("file_ext")),
             "storage_path": storage_path or _stringify(existing_attachment.get("storage_path")),
             "source_path": source_path or _stringify(existing_attachment.get("source_path")),
+            "附件来源类型": _stringify(row.get("附件来源类型")) or _stringify(existing_attachment.get("附件来源类型")),
+            "来源事务": _stringify(row.get("来源事务")) or _stringify(existing_attachment.get("来源事务")),
             "checksum": checksum or _stringify(existing_attachment.get("checksum")),
             "status": _stringify(row.get("status")) or _stringify(existing_attachment.get("status")) or "available",
             "created_at": _stringify(existing_attachment.get("created_at")) or _stringify(row.get("created_at")) or now,
@@ -1371,7 +1381,7 @@ def _build_normalized_attachment_frames(flat_attachments_df: pd.DataFrame) -> tu
                 "uid_attachment": uid_attachment,
                 "link_role": _stringify(row.get("attachment_type")) or "attached",
                 "is_primary": int(pd.to_numeric(row.get("is_primary"), errors="coerce") or 0),
-                "source_type": "bibliodb_flat_attachments",
+                "source_type": _stringify(row.get("source_type")) or "bibliodb_flat_attachments",
                 "legacy_uid_attachment": legacy_uid_attachment,
                 "created_at": _stringify(row.get("created_at")) or now,
                 "updated_at": _stringify(row.get("updated_at")) or now,
@@ -1871,6 +1881,21 @@ def build_attachments_df_from_literatures(literatures_df: pd.DataFrame) -> pd.Da
             continue
         attachment_name = str(row.get("primary_attachment_name", "") or Path(storage_path).name)
         source_path = str(row.get("primary_attachment_source_path", "") or storage_path).strip()
+        literature_source_type = _stringify(row.get("source_type"))
+        attachment_source_type = _stringify(row.get("附件来源类型"))
+        source_affair = _stringify(row.get("来源事务"))
+        if not attachment_source_type:
+            if literature_source_type == "imported_bibtex":
+                attachment_source_type = "本地导入附件"
+            elif literature_source_type.startswith("online_retrieval"):
+                attachment_source_type = "在线下载附件"
+            else:
+                attachment_source_type = "文献关联附件"
+        if not source_affair:
+            if literature_source_type == "imported_bibtex":
+                source_affair = "A020"
+            elif literature_source_type.startswith("online_retrieval"):
+                source_affair = "A040"
         suffix = Path(storage_path).suffix.lower()
         rows.append(
             {
@@ -1886,6 +1911,9 @@ def build_attachments_df_from_literatures(literatures_df: pd.DataFrame) -> pd.Da
                 "file_ext": suffix.lstrip("."),
                 "storage_path": storage_path,
                 "source_path": source_path,
+                "source_type": _stringify(row.get("attachment_link_source_type")) or literature_source_type or "literature_attachment",
+                "附件来源类型": attachment_source_type,
+                "来源事务": source_affair,
                 "checksum": "",
                 "is_primary": int(bool(storage_path)),
                 "status": "available",

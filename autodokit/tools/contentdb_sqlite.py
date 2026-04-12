@@ -11,6 +11,7 @@ from __future__ import annotations
 import hashlib
 import os
 from pathlib import Path
+import re
 import sqlite3
 from typing import Mapping, Sequence
 
@@ -267,6 +268,9 @@ AUTHOR_REQUIRED_COLUMNS: dict[str, str] = {
     "normalized_name": "TEXT",
     "surname": "TEXT",
     "given_names": "TEXT",
+    "标准作者名": "TEXT",
+    "作者类型": "TEXT",
+    "作者质量标记": "TEXT",
     "orcid": "TEXT",
     "source_type": "TEXT",
     "created_at": "TEXT",
@@ -312,16 +316,123 @@ def _split_author_values(value: object) -> list[str]:
         text.replace(" and ", "|")
         .replace("；", "|")
         .replace(";", "|")
-        .replace("，", "|")
-        .replace(",", "|")
         .replace("、", "|")
     )
-    parts = [segment.strip() for segment in normalized.split("|")]
-    return [segment for segment in parts if segment]
+    if "|" in normalized:
+        parts = [segment.strip() for segment in normalized.split("|")]
+        return [segment for segment in parts if segment]
+
+    comma_segments = [segment.strip() for segment in text.replace("，", ",").split(",") if segment.strip()]
+    if len(comma_segments) == 2:
+        return [text]
+    if len(comma_segments) > 2 and len(comma_segments) % 2 == 0:
+        paired = [", ".join(comma_segments[index:index + 2]).strip() for index in range(0, len(comma_segments), 2)]
+        if all(paired):
+            return paired
+    return comma_segments or [text]
 
 
 def _normalize_person_name(value: object) -> str:
-    return " ".join(str(value or "").strip().lower().split())
+    cleaned_text, _ = _clean_author_display_name(value)
+    return " ".join(cleaned_text.lower().split())
+
+
+def _strip_outer_braces(text: str) -> str:
+    current = str(text or "").strip()
+    while len(current) >= 2 and current.startswith("{") and current.endswith("}"):
+        inner = current[1:-1].strip()
+        if not inner:
+            break
+        current = inner
+    return current
+
+
+def _clean_author_display_name(author_name: object) -> tuple[str, list[str]]:
+    text = " ".join(str(author_name or "").replace("\u3000", " ").strip().split())
+    if not text:
+        return "", []
+
+    flags: list[str] = []
+    stripped = _strip_outer_braces(text)
+    if stripped != text:
+        flags.append("含BibTeX保护花括号")
+        text = stripped
+
+    text = re.sub(r"\s*·\s*", "·", text)
+    text = re.sub(r"\s+", " ", text).strip()
+    return text, flags
+
+
+def _looks_like_latin_initial_name(text: str) -> bool:
+    return re.fullmatch(r"[A-Za-z](?:\.)?", text.strip()) is not None
+
+
+def _looks_like_transliterated_name(text: str) -> bool:
+    return "·" in text and re.search(r"[\u4e00-\u9fff]", text) is not None
+
+
+def _looks_like_institution_author(text: str) -> bool:
+    return any(
+        keyword in text
+        for keyword in (
+            "编委会",
+            "课题组",
+            "项目组",
+            "研究院",
+            "研究所",
+            "实验室",
+            "中心",
+            "办公室",
+            "委员会",
+            "学院",
+            "大学",
+            "银行",
+            "支行",
+            "公司",
+            "政府",
+            "出版社",
+            "电视台",
+            "报社",
+        )
+    )
+
+
+def _classify_author_display_name(author_name: object) -> dict[str, str]:
+    text, flags = _clean_author_display_name(author_name)
+    if not text:
+        return {
+            "标准作者名": "",
+            "作者类型": "缺失作者",
+            "作者质量标记": "原始作者缺失",
+        }
+
+    normalized_person_name = text
+    author_type = "个人作者"
+
+    if text.startswith("本报记者"):
+        author_type = "记者复合署名"
+        flags.append("含角色前缀")
+        normalized_person_name = re.sub(r"^本报记者\s*", "", text).strip()
+        if normalized_person_name and " " in normalized_person_name:
+            flags.append("疑似多人署名")
+    elif text.endswith("编辑部") or text in {"本刊编辑部", "编辑部"}:
+        author_type = "编辑部署名"
+        flags.append("机构型署名")
+        normalized_person_name = ""
+    elif _looks_like_institution_author(text):
+        author_type = "机构署名"
+        flags.append("疑似机构署名")
+        normalized_person_name = ""
+    elif _looks_like_latin_initial_name(text):
+        flags.append("疑似缩写名")
+    elif _looks_like_transliterated_name(text):
+        flags.append("疑似译名")
+
+    return {
+        "标准作者名": normalized_person_name,
+        "作者类型": author_type,
+        "作者质量标记": ";".join(flags),
+    }
 
 
 def _stable_tag_uid(tag_norm: str) -> str:
@@ -1035,16 +1146,23 @@ def _sync_author_entities(conn: sqlite3.Connection) -> None:
         if not uid_literature:
             continue
         for index, author_name in enumerate(_split_author_values(row.get("authors")), start=1):
-            normalized_name = _normalize_person_name(author_name)
+            cleaned_author_name, _ = _clean_author_display_name(author_name)
+            normalized_name = _normalize_person_name(cleaned_author_name)
             if not normalized_name:
                 continue
+            author_meta = _classify_author_display_name(cleaned_author_name or author_name)
+            canonical_name = str(author_meta.get("标准作者名") or cleaned_author_name or author_name).strip()
+            display_name = cleaned_author_name or str(author_name or "").strip()
             uid_author = _stable_author_uid(normalized_name)
             author_rows_by_uid[uid_author] = {
                 "uid_author": uid_author,
-                "display_name": author_name,
+                "display_name": display_name,
                 "normalized_name": normalized_name,
-                "surname": author_name.split()[0] if author_name.split() else author_name,
-                "given_names": " ".join(author_name.split()[1:]) if len(author_name.split()) > 1 else "",
+                "surname": canonical_name.split()[0] if canonical_name.split() else canonical_name,
+                "given_names": " ".join(canonical_name.split()[1:]) if len(canonical_name.split()) > 1 else "",
+                "标准作者名": str(author_meta.get("标准作者名") or ""),
+                "作者类型": str(author_meta.get("作者类型") or "个人作者"),
+                "作者质量标记": str(author_meta.get("作者质量标记") or ""),
                 "orcid": "",
                 "source_type": "literatures.authors",
                 "created_at": str(row.get("created_at") or now).strip() or now,
@@ -1058,7 +1176,7 @@ def _sync_author_entities(conn: sqlite3.Connection) -> None:
                     "author_order": index,
                     "is_first_author": 1 if index == 1 else 0,
                     "is_corresponding": 0,
-                    "display_name": author_name,
+                    "display_name": display_name,
                     "source_type": "literatures.authors",
                     "created_at": str(row.get("created_at") or now).strip() or now,
                     "updated_at": str(row.get("updated_at") or now).strip() or now,
@@ -1145,6 +1263,8 @@ def init_content_db(db_path: str | Path) -> Path:
                 file_ext TEXT,
                 storage_path TEXT,
                 source_path TEXT,
+                附件来源类型 TEXT,
+                来源事务 TEXT,
                 checksum TEXT,
                 status TEXT,
                 created_at TEXT,

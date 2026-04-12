@@ -19,6 +19,8 @@ DEFAULT_PRIMARY_ATTACHMENT_NORMALIZATION_SETTINGS: dict[str, Any] = {
     "rename_mode": "apply",
     "allowed_attachment_types": ["fulltext", "pdf"],
     "update_parse_assets": True,
+    "filename_style": "readable_uid",
+    "readable_name_max_length": 64,
 }
 
 
@@ -55,6 +57,15 @@ def _coerce_list(value: Any) -> list[Any]:
     return [value]
 
 
+def _coerce_int(value: Any, default: int) -> int:
+    if value is None:
+        return default
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return default
+
+
 def _sanitize_filename_component(text: str) -> str:
     value = _stringify(text)
     if not value:
@@ -64,6 +75,57 @@ def _sanitize_filename_component(text: str) -> str:
     value = value.replace(" ", "_")
     value = re.sub(r"_+", "_", value)
     return value or "untitled"
+
+
+def _truncate_filename_component(text: str, max_length: int) -> str:
+    if max_length <= 0:
+        return text
+    truncated = text[:max_length].rstrip("._-")
+    return truncated or text[:max_length] or "untitled"
+
+
+def _looks_like_generated_attachment_stem(text: str) -> bool:
+    normalized = _stringify(text).strip().lower()
+    if not normalized:
+        return False
+    return re.fullmatch(r"(?:att-)?[a-f0-9]{16,}", normalized) is not None
+
+
+def _select_readable_attachment_stem(attachment_row: dict[str, Any], current_path: Path) -> str:
+    candidates = [
+        Path(_stringify(attachment_row.get("source_path"))).stem,
+        Path(_stringify(attachment_row.get("attachment_name"))).stem,
+        current_path.stem,
+    ]
+    fallback = ""
+    for candidate in candidates:
+        sanitized = _sanitize_filename_component(candidate)
+        if sanitized and not fallback:
+            fallback = sanitized
+        if sanitized and not _looks_like_generated_attachment_stem(sanitized):
+            return sanitized
+    return fallback or "untitled"
+
+
+def _build_target_attachment_name(
+    attachment_row: dict[str, Any],
+    current_path: Path,
+    *,
+    stable_uid: str,
+    file_ext: str,
+    filename_style: str,
+    readable_name_max_length: int,
+) -> str:
+    normalized_uid = _stringify(stable_uid)
+    uid_suffix = normalized_uid[4:] if normalized_uid.lower().startswith("att-") else normalized_uid
+    uid_suffix = _sanitize_filename_component(uid_suffix) or "attachment"
+    if filename_style == "uid_only":
+        return f"{uid_suffix}{file_ext}"
+
+    readable_stem = _select_readable_attachment_stem(attachment_row, current_path)
+    readable_stem = _truncate_filename_component(readable_stem, readable_name_max_length)
+    short_uid = uid_suffix[:12] if len(uid_suffix) > 12 else uid_suffix
+    return f"att-{readable_stem}-{short_uid}{file_ext}"
 
 
 def _same_file(left: Path, right: Path) -> bool:
@@ -147,12 +209,18 @@ def resolve_primary_attachment_normalization_settings(
         for item in _coerce_list(settings.get("allowed_attachment_types"))
         if _stringify(item)
     ] or ["fulltext", "pdf"]
+    filename_style = _stringify(settings.get("filename_style") or "readable_uid").lower()
+    if filename_style not in {"readable_uid", "uid_only"}:
+        filename_style = "readable_uid"
+    readable_name_max_length = max(_coerce_int(settings.get("readable_name_max_length"), 64), 16)
 
     resolved = {
         "enabled": enabled,
         "rename_mode": rename_mode,
         "allowed_attachment_types": allowed_attachment_types,
         "update_parse_assets": _coerce_bool(settings.get("update_parse_assets"), True),
+        "filename_style": filename_style,
+        "readable_name_max_length": readable_name_max_length,
     }
     attachments_root = _resolve_attachments_root(settings, workspace_root)
     if attachments_root is not None:
@@ -235,6 +303,10 @@ def normalize_primary_fulltext_attachment_names(payload: dict[str, Any]) -> dict
         _stringify(item).lower() for item in _coerce_list(payload.get("allowed_attachment_types")) if _stringify(item)
     } or {"fulltext", "pdf"}
     update_parse_assets = _coerce_bool(payload.get("update_parse_assets"), True)
+    filename_style = _stringify(payload.get("filename_style") or "readable_uid").lower()
+    if filename_style not in {"readable_uid", "uid_only"}:
+        filename_style = "readable_uid"
+    readable_name_max_length = max(_coerce_int(payload.get("readable_name_max_length"), 64), 16)
     attachments_root = _resolve_attachments_root(payload, workspace_root)
     uid_scope, cite_scope = _parse_scope(payload)
 
@@ -302,16 +374,25 @@ def normalize_primary_fulltext_attachment_names(payload: dict[str, Any]) -> dict
         current_path = Path(_stringify(attachment_row.get("storage_path"))).expanduser().resolve()
         source_path = _stringify(attachment_row.get("source_path")) or str(current_path)
         file_ext = current_path.suffix or (f".{_stringify(attachment_row.get('file_ext')).lstrip('.')}" if _stringify(attachment_row.get("file_ext")) else "")
-        stable_uid = bibliodb_sqlite.build_stable_attachment_uid(
-            uid_literature,
-            checksum=attachment_row.get("checksum"),
-            source_path=source_path,
-            attachment_name=attachment_row.get("attachment_name"),
-            storage_path=attachment_row.get("storage_path"),
-            fallback_uid=current_uid_attachment,
-        ) or current_uid_attachment
-        safe_cite_key = _sanitize_filename_component(cite_key)
-        target_name = f"{safe_cite_key}-{stable_uid}{file_ext}"
+        stable_uid = current_uid_attachment or (
+            f"att-{bibliodb_sqlite.build_stable_attachment_uid(
+                uid_literature,
+                checksum=attachment_row.get('checksum'),
+                source_path=source_path,
+                attachment_name=attachment_row.get('attachment_name'),
+                storage_path=attachment_row.get('storage_path'),
+                fallback_uid=current_uid_attachment,
+            )}"
+        )
+        stable_uid = _sanitize_filename_component(stable_uid or Path(current_path).stem)
+        target_name = _build_target_attachment_name(
+            attachment_row,
+            current_path,
+            stable_uid=stable_uid,
+            file_ext=file_ext,
+            filename_style=filename_style,
+            readable_name_max_length=readable_name_max_length,
+        )
         destination_root = attachments_root or current_path.parent
         destination_root.mkdir(parents=True, exist_ok=True)
         target_path = (destination_root / target_name).resolve()
@@ -326,6 +407,7 @@ def normalize_primary_fulltext_attachment_names(payload: dict[str, Any]) -> dict
             "target_path": str(target_path),
             "target_name": target_name,
             "rename_mode": rename_mode,
+            "filename_style": filename_style,
         }
 
         if target_path.exists() and not _same_file(current_path, target_path):
@@ -394,6 +476,7 @@ def normalize_primary_fulltext_attachment_names(payload: dict[str, Any]) -> dict
     summary = {
         "status": "PASS",
         "rename_mode": rename_mode,
+        "filename_style": filename_style,
         "candidate_count": sum(1 for row in preview_rows if row.get("status") in {"preview", "renamed", "already_normalized"}),
         "renamed_count": renamed_count,
         "skipped_count": sum(1 for row in preview_rows if row.get("status") == "skipped"),
