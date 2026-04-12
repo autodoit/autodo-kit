@@ -45,6 +45,12 @@ PATH_KEY_HINTS = (
     "asset",
 )
 
+REQUIRED_PARSE_FILES = (
+    "normalized.structured.json",
+    "parse_record.json",
+    "quality_report.json",
+)
+
 
 @dataclass
 class CandidateMatch:
@@ -293,6 +299,44 @@ def _match_external_dir(
     return CandidateMatch(matched_dir=first_path, hit_key=first_key), ""
 
 
+def _is_parse_asset_complete(source_dir: Path) -> tuple[bool, str]:
+    """判断源解析目录是否已完成。
+
+    完成标准采用保守规则：必须至少包含核心结构化文件，且 parse_record
+    中若存在状态字段，则应为成功/就绪态。
+
+    Args:
+        source_dir: 源解析目录。
+
+    Returns:
+        tuple[bool, str]: (是否完成, 原因)。
+    """
+
+    for filename in REQUIRED_PARSE_FILES:
+        path = source_dir / filename
+        if not path.exists() or not path.is_file():
+            return False, f"incomplete_parse_missing_{filename}"
+
+    record_path = source_dir / "parse_record.json"
+    try:
+        payload = _read_json(record_path)
+    except Exception:
+        return False, "incomplete_parse_invalid_parse_record"
+
+    status_keys = ("parse_status", "status", "final_status")
+    status_value = ""
+    for key in status_keys:
+        value = _stringify(payload.get(key))
+        if value:
+            status_value = value.lower()
+            break
+
+    if status_value and status_value not in {"ready", "success", "succeeded", "done", "completed", "ok", "pass"}:
+        return False, f"incomplete_parse_status_{status_value}"
+
+    return True, ""
+
+
 def _copy_tree(src: Path, dst: Path, *, dry_run: bool) -> tuple[int, int]:
     """复制目录树。
 
@@ -458,6 +502,8 @@ def _rewrite_target_directory(
     """
 
     rename_count = 0
+    dedup_removed_count = 0
+    rename_conflict_count = 0
     text_rewrite_count = 0
     json_rewrite_count = 0
 
@@ -475,14 +521,38 @@ def _rewrite_target_directory(
             continue
         new_name = path.name
         old_dir_name = old_dir.name
-        if old_dir_name and old_dir_name in new_name:
+        # 仅在目录名确实变化时按目录名替换，避免重复 apply 叠加前缀。
+        if old_dir_name and old_dir_name != target_stem and old_dir_name in new_name and target_stem not in new_name:
             new_name = new_name.replace(old_dir_name, target_stem)
-        if old_pdf_name and new_pdf_name and old_pdf_name in new_name:
+        # 仅在 PDF 文件名实际变化且尚未替换时执行，保证幂等。
+        if (
+            old_pdf_name
+            and new_pdf_name
+            and old_pdf_name != new_pdf_name
+            and old_pdf_name in new_name
+            and new_pdf_name not in new_name
+        ):
             new_name = new_name.replace(old_pdf_name, new_pdf_name)
         if new_name != path.name:
             rename_count += 1
             if not dry_run:
-                path.rename(path.with_name(new_name))
+                rename_target = path.with_name(new_name)
+                if rename_target.exists():
+                    try:
+                        # 冲突文件若内容一致，删除旧名冗余文件；否则保留两者并跳过重命名。
+                        if path.read_bytes() == rename_target.read_bytes():
+                            path.unlink(missing_ok=True)
+                            dedup_removed_count += 1
+                        else:
+                            rename_conflict_count += 1
+                    except Exception:
+                        rename_conflict_count += 1
+                else:
+                    try:
+                        path.rename(rename_target)
+                    except OSError:
+                        # 路径过长或平台文件系统限制时，保留原文件并继续处理。
+                        rename_conflict_count += 1
 
     for path in target_dir.rglob("*"):
         if not path.is_file() or not _is_text_file(path):
@@ -520,6 +590,8 @@ def _rewrite_target_directory(
 
     return {
         "renamed_files": rename_count,
+        "dedup_removed_files": dedup_removed_count,
+        "rename_conflicts": rename_conflict_count,
         "rewritten_text_files": text_rewrite_count,
         "rewritten_json_files": json_rewrite_count,
     }
@@ -593,6 +665,8 @@ def migrate_parse_assets_with_full_rewrite(payload: dict[str, Any]) -> dict[str,
             - scope.uid_literatures / scope.cite_keys: 可选范围。
             - update_db: 是否回写 parse asset，默认 true。
             - parse_level: 可选，默认 monkeyocr_full。
+            - target_dir_name_mode: 可选，`attachment_stem`(默认) / `cite_key` / `uid_literature`。
+            - require_complete_parse: 可选，默认 true；true 时仅迁移已完成解析的目录。
 
     Returns:
         dict[str, Any]: 执行摘要与逐文献明细。
@@ -640,6 +714,10 @@ def migrate_parse_assets_with_full_rewrite(payload: dict[str, Any]) -> dict[str,
     strict_single_match = _coerce_bool(payload.get("strict_single_match"), True)
     update_db = _coerce_bool(payload.get("update_db"), True)
     parse_level = _stringify(payload.get("parse_level")) or UNIFIED_PARSE_LEVEL
+    target_dir_name_mode = _stringify(payload.get("target_dir_name_mode") or "attachment_stem").lower()
+    if target_dir_name_mode not in {"attachment_stem", "cite_key", "uid_literature"}:
+        target_dir_name_mode = "attachment_stem"
+    require_complete_parse = _coerce_bool(payload.get("require_complete_parse"), True)
 
     scope = payload.get("scope") if isinstance(payload.get("scope"), dict) else {}
     uid_scope = set(_coerce_list(scope.get("uid_literatures") or payload.get("uid_literatures")))
@@ -690,7 +768,12 @@ def migrate_parse_assets_with_full_rewrite(payload: dict[str, Any]) -> dict[str,
                 continue
 
             current_pdf_path = _pick_current_pdf_path(attachment)
-            target_stem = _safe_stem(cite_key or uid_literature or current_pdf_path.stem)
+            if target_dir_name_mode == "cite_key":
+                target_stem = _safe_stem(cite_key or uid_literature or current_pdf_path.stem)
+            elif target_dir_name_mode == "uid_literature":
+                target_stem = _safe_stem(uid_literature or cite_key or current_pdf_path.stem)
+            else:
+                target_stem = _safe_stem(current_pdf_path.stem or cite_key or uid_literature)
             target_dir = (target_parse_root / target_stem).resolve()
 
             candidate_keys = _collect_candidate_keys(row, attachment)
@@ -705,6 +788,20 @@ def migrate_parse_assets_with_full_rewrite(payload: dict[str, Any]) -> dict[str,
                 continue
 
             source_dir = matched.matched_dir
+            if require_complete_parse:
+                is_complete, incomplete_reason = _is_parse_asset_complete(source_dir)
+                if not is_complete:
+                    skipped += 1
+                    detail_rows.append(
+                        {
+                            **base_detail,
+                            "status": "SKIPPED",
+                            "reason": incomplete_reason,
+                            "source_dir": str(source_dir),
+                        }
+                    )
+                    continue
+
             copied_files, created_dirs = _copy_tree(source_dir, target_dir, dry_run=dry_run)
 
             # 优先从已复制目录读取旧 JSON 元信息，构建更精确替换上下文。
@@ -815,6 +912,8 @@ def migrate_parse_assets_with_full_rewrite(payload: dict[str, Any]) -> dict[str,
         "external_parse_root": str(external_root),
         "target_parse_root": str(target_parse_root),
         "parse_level": parse_level,
+        "target_dir_name_mode": target_dir_name_mode,
+        "require_complete_parse": require_complete_parse,
         "update_db": update_db,
         "scanned": scanned,
         "migrated": migrated,

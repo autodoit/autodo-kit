@@ -244,6 +244,14 @@ def migrate_parse_assets_with_full_rewrite(payload: dict[str, Any]) -> dict[str,
     impl = getattr(module, "migrate_parse_assets_with_full_rewrite")
     return impl(payload)
 
+
+def backfill_a060_state_from_parse_assets(payload: dict[str, Any]) -> dict[str, Any]:
+    """延迟加载非标准解析导入后的 A060 状态补齐工具。"""
+
+    module = importlib.import_module("autodokit.tools.nonstandard_a060_state_backfill_tools")
+    impl = getattr(module, "backfill_a060_state_from_parse_assets")
+    return impl(payload)
+
 def scan_affairs(affairs_root: str | Path | None = None) -> list[dict[str, Any]]:
     if affairs_root is None:
         affairs_root = Path(__file__).resolve().parents[1] / "affairs"

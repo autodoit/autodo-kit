@@ -6,6 +6,8 @@ A060 仅负责综述结构化解析资产准备，不执行参考文献映射与
 from __future__ import annotations
 
 import json
+import sqlite3
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List
 
@@ -115,6 +117,55 @@ def _build_a065_queue_rows(
             }
         )
     return rows
+
+
+def _consume_current_stage_queue_rows(content_db: Path, *, stage: str, queue_rows: pd.DataFrame) -> int:
+    """消费已成功推进的当前队列，避免兼容回退重复命中。
+
+    Args:
+        content_db: content.db 路径。
+        stage: 需要消费的阶段名。
+        queue_rows: 本次成功推进的条目集合。
+
+    Returns:
+        实际被降级的 current 队列行数。
+    """
+
+    if queue_rows is None or queue_rows.empty:
+        return 0
+
+    identities: list[tuple[str, str]] = []
+    for _, row in queue_rows.fillna("").iterrows():
+        uid_literature = str(row.get("uid_literature") or "").strip()
+        cite_key = str(row.get("cite_key") or "").strip()
+        if not uid_literature and not cite_key:
+            continue
+        identities.append((uid_literature, cite_key))
+
+    if not identities:
+        return 0
+
+    now_iso = datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+    affected = 0
+    with sqlite3.connect(content_db) as conn:
+        for uid_literature, cite_key in identities:
+            cursor = conn.execute(
+                """
+                UPDATE literature_reading_queue
+                   SET is_current = 0,
+                       queue_status = 'completed',
+                       updated_at = ?
+                 WHERE stage = ?
+                   AND is_current = 1
+                   AND COALESCE(uid_literature, '') = ?
+                   AND COALESCE(cite_key, '') = ?
+                """,
+                (now_iso, stage, uid_literature, cite_key),
+            )
+            if cursor.rowcount and cursor.rowcount > 0:
+                affected += int(cursor.rowcount)
+        conn.commit()
+    return affected
 
 
 @affair_auto_git_commit("A060")
@@ -229,6 +280,7 @@ def execute(config_path: Path) -> List[Path]:
     a065_queue_rows = _build_a065_queue_rows(ready_df, run_uid=run_uid, topic=topic)
     if a065_queue_rows:
         upsert_reading_queue_rows(content_db, a065_queue_rows)
+    consumed_a060_queue_count = _consume_current_stage_queue_rows(content_db, stage="A060", queue_rows=ready_df)
     review_state_rows: List[Dict[str, Any]] = []
     for _, row in ready_df.fillna("").iterrows():
         uid_literature = str(row.get("uid_literature") or "").strip()
@@ -254,7 +306,8 @@ def execute(config_path: Path) -> List[Path]:
         node_name="综述预处理",
         summary=(
             f"完成综述结构化资产准备：阅读池 {len(review_read_pool)} 条，"
-            f"structured 就绪 {ready_count} 条，后处理成功 {postprocess_success_count} 条，进入 A065 队列 {len(a065_queue_rows)} 条。"
+            f"structured 就绪 {ready_count} 条，后处理成功 {postprocess_success_count} 条，"
+            f"进入 A065 队列 {len(a065_queue_rows)} 条，消费 A060 队列 {consumed_a060_queue_count} 条。"
         ),
         checks=[
             {"name": "review_read_pool_count", "value": len(review_read_pool)},
@@ -263,6 +316,7 @@ def execute(config_path: Path) -> List[Path]:
             {"name": "postprocess_success_count", "value": postprocess_success_count},
             {"name": "structured_failed_count", "value": sum(1 for item in parse_status_rows if item["status"] == "failed")},
             {"name": "a065_queue_count", "value": len(a065_queue_rows)},
+            {"name": "consumed_a060_queue_count", "value": consumed_a060_queue_count},
         ],
         artifacts=[
             str(review_read_pool_path),
@@ -283,6 +337,7 @@ def execute(config_path: Path) -> List[Path]:
             "source_review_read_pool_path": str(review_read_pool_path),
             "source_review_reading_batches_path": str(review_reading_batches_path),
             "a065_queue_count": len(a065_queue_rows),
+            "consumed_a060_queue_count": consumed_a060_queue_count,
             "structured_ready_count": ready_count,
             "postprocess_success_count": postprocess_success_count,
             "manifest_path": str(manifest_result["manifest_path"]),
@@ -334,6 +389,7 @@ def execute(config_path: Path) -> List[Path]:
             "enable_llm_structure_resolution": bool(postprocess_settings.get("enable_llm_structure_resolution", True)),
             "enable_llm_contamination_filter": bool(postprocess_settings.get("enable_llm_contamination_filter", True)),
             "a065_queue_count": len(a065_queue_rows),
+            "consumed_a060_queue_count": consumed_a060_queue_count,
             "run_uid": run_uid,
         },
     )
