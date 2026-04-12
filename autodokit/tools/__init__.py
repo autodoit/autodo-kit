@@ -204,6 +204,22 @@ def incremental_import_bib_into_content_db(*args: Any, **kwargs: Any) -> dict[st
     impl = getattr(module, "incremental_import_bib_into_content_db")
     return impl(*args, **kwargs)
 
+
+def normalize_primary_fulltext_attachment_names(payload: dict[str, Any]) -> dict[str, Any]:
+    """延迟加载主附件规范化命名工具。"""
+
+    module = importlib.import_module("autodokit.tools.literature_attachment_name_normalization_tools")
+    impl = getattr(module, "normalize_primary_fulltext_attachment_names")
+    return impl(payload)
+
+
+def resolve_primary_attachment_normalization_settings(*args: Any, **kwargs: Any) -> dict[str, Any]:
+    """延迟加载主附件规范化命名配置解析工具。"""
+
+    module = importlib.import_module("autodokit.tools.literature_attachment_name_normalization_tools")
+    impl = getattr(module, "resolve_primary_attachment_normalization_settings")
+    return impl(*args, **kwargs)
+
 def scan_affairs(affairs_root: str | Path | None = None) -> list[dict[str, Any]]:
     if affairs_root is None:
         affairs_root = Path(__file__).resolve().parents[1] / "affairs"
@@ -339,6 +355,7 @@ from autodokit.tools.affair_entry_registry_tools import (
     write_mainline_affair_entry_registry,
 )
 from autodokit.tools.bibliodb_sqlite import (
+    build_stable_attachment_uid,
     init_db as init_references_db,
     load_literatures_df,
     load_attachments_df as load_literature_attachments_df,
@@ -635,6 +652,7 @@ _用户公开工具 = [
     "build_literature_tag_inverted_index",
     "build_entity_to_literatures_csv",
     "build_literature_main_audit_csv",
+    "build_stable_attachment_uid",
     "init_references_db",
     "init_knowledge_db",
     "init_content_db",
@@ -650,6 +668,8 @@ _用户公开工具 = [
     "translate_standard_note",
     "translate_parse_asset_text",
     "run_literature_translation",
+    "normalize_primary_fulltext_attachment_names",
+    "resolve_primary_attachment_normalization_settings",
 ]
 
 _开发者工具 = [
@@ -680,6 +700,7 @@ _开发者工具 = [
     "build_literature_tag_inverted_index",
     "build_entity_to_literatures_csv",
     "build_literature_main_audit_csv",
+    "build_stable_attachment_uid",
     "init_references_db",
     "init_knowledge_db",
     "init_content_db",
@@ -738,6 +759,8 @@ _开发者工具 = [
     "process_reference_citation",
     "local_reference_lookup_and_materialize",
     "incremental_import_bib_into_content_db",
+    "normalize_primary_fulltext_attachment_names",
+    "resolve_primary_attachment_normalization_settings",
     "build_reference_quality_summary",
     "build_online_lookup_placeholder_fields",
     "generate_knowledge_uid",

@@ -1189,9 +1189,47 @@ def save_dataframe_table(
         conn.commit()
 
 
-def _stable_attachment_uid(uid_literature: str, storage_path: str) -> str:
-    raw = f"{uid_literature}|{storage_path}".encode("utf-8")
+def _build_attachment_identity_token(
+    *,
+    checksum: Any = "",
+    source_path: Any = "",
+    attachment_name: Any = "",
+    storage_path: Any = "",
+    fallback_uid: Any = "",
+) -> str:
+    return (
+        _stringify(checksum)
+        or _stringify(source_path)
+        or _stringify(attachment_name)
+        or _stringify(storage_path)
+        or _stringify(fallback_uid)
+    )
+
+
+def build_stable_attachment_uid(
+    uid_literature: str,
+    *,
+    checksum: Any = "",
+    source_path: Any = "",
+    attachment_name: Any = "",
+    storage_path: Any = "",
+    fallback_uid: Any = "",
+) -> str:
+    token = _build_attachment_identity_token(
+        checksum=checksum,
+        source_path=source_path,
+        attachment_name=attachment_name,
+        storage_path=storage_path,
+        fallback_uid=fallback_uid,
+    )
+    if not token:
+        return ""
+    raw = f"{_stringify(uid_literature)}|{token}".encode("utf-8")
     return hashlib.md5(raw).hexdigest()
+
+
+def _stable_attachment_uid(uid_literature: str, storage_path: str) -> str:
+    return build_stable_attachment_uid(uid_literature, storage_path=storage_path)
 
 
 _LITERATURE_ATTACHMENT_COLUMNS: List[str] = [
@@ -1257,7 +1295,12 @@ def _normalize_attachments_df(frame: pd.DataFrame | None) -> pd.DataFrame:
 
 
 def _stable_attachment_entity_uid(checksum: str, storage_path: str, source_path: str, attachment_name: str) -> str:
-    token = _stringify(checksum) or _stringify(storage_path) or _stringify(source_path) or _stringify(attachment_name)
+    token = _build_attachment_identity_token(
+        checksum=checksum,
+        source_path=source_path,
+        attachment_name=attachment_name,
+        storage_path=storage_path,
+    )
     normalized = token.lower()
     return f"att-{hashlib.md5(normalized.encode('utf-8')).hexdigest()}"
 
@@ -1494,11 +1537,14 @@ def _merge_literature_row(existing_row: Dict[str, Any], incoming_row: Dict[str, 
 
 
 def _attachment_identity(row: pd.Series | Dict[str, Any]) -> str:
-    attachment_name = _stringify(row.get("attachment_name"))
-    if attachment_name:
-        return attachment_name.lower()
-    storage_name = Path(_stringify(row.get("storage_path")) or _stringify(row.get("source_path"))).name
-    return storage_name.lower()
+    token = _build_attachment_identity_token(
+        checksum=row.get("checksum"),
+        source_path=row.get("source_path"),
+        attachment_name=row.get("attachment_name"),
+        storage_path=row.get("storage_path"),
+        fallback_uid=row.get("uid_attachment"),
+    )
+    return token.lower()
 
 
 def _attachment_timestamp(row: pd.Series | Dict[str, Any]) -> float:
@@ -1532,8 +1578,14 @@ def _attachment_sort_key(row: pd.Series | Dict[str, Any]) -> tuple[int, int, flo
 
 
 def _build_attachment_uid_from_row(uid_literature: str, row: Dict[str, Any]) -> str:
-    token = _stringify(row.get("storage_path")) or _stringify(row.get("source_path")) or _stringify(row.get("attachment_name"))
-    return _stable_attachment_uid(uid_literature, token)
+    return build_stable_attachment_uid(
+        uid_literature,
+        checksum=row.get("checksum"),
+        source_path=row.get("source_path"),
+        attachment_name=row.get("attachment_name"),
+        storage_path=row.get("storage_path"),
+        fallback_uid=row.get("uid_attachment"),
+    )
 
 
 def _merge_attachment_rows(rows: List[Dict[str, Any]], uid_literature: str) -> List[Dict[str, Any]]:
@@ -1805,7 +1857,12 @@ def build_attachments_df_from_literatures(literatures_df: pd.DataFrame) -> pd.Da
         suffix = Path(storage_path).suffix.lower()
         rows.append(
             {
-                "uid_attachment": _stable_attachment_uid(uid_literature, storage_path),
+                "uid_attachment": build_stable_attachment_uid(
+                    uid_literature,
+                    source_path=storage_path,
+                    attachment_name=attachment_name,
+                    storage_path=storage_path,
+                ),
                 "uid_literature": uid_literature,
                 "attachment_name": attachment_name,
                 "attachment_type": "fulltext",

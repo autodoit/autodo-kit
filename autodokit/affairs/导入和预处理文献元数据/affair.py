@@ -25,6 +25,8 @@ import unicodedata
 import pandas as pd
 from bibtexparser import loads as bibtex_loads
 from autodokit.tools import bibliodb_sqlite
+from autodokit.tools import normalize_primary_fulltext_attachment_names
+from autodokit.tools import resolve_primary_attachment_normalization_settings
 from autodokit.tools.atomic.task_aok.post_affair_git_commit import affair_auto_git_commit
 from autodokit.tools.literature_translation_tools import run_literature_translation
 
@@ -915,6 +917,11 @@ def _run_and_write_all_outputs(config_path: Path) -> List[Path]:
         "failed_count": 0,
         "audit_path": "",
     }
+    attachment_normalization_summary: Dict[str, Any] = {
+        "status": "SKIPPED",
+        "reason": "disabled",
+        "audit_path": "",
+    }
     merge_summary: Dict[str, Any] = {
         "incoming_count": int(len(table)),
         "matched_existing_count": 0,
@@ -1033,6 +1040,20 @@ def _run_and_write_all_outputs(config_path: Path) -> List[Path]:
                 "error": str(translation_exc),
             }
 
+        normalization_settings = resolve_primary_attachment_normalization_settings(merged_cfg, workspace_root=workspace_root)
+        if normalization_settings.get("enabled"):
+            attachment_normalization_summary = normalize_primary_fulltext_attachment_names(
+                {
+                    "content_db": str(db_path),
+                    "workspace_root": str(workspace_root),
+                    "output_dir": str(output_dir),
+                    **normalization_settings,
+                }
+            )
+            normalization_audit_path = Path(str(attachment_normalization_summary.get("audit_path") or "").strip())
+            if normalization_audit_path.exists() and normalization_audit_path.is_file():
+                written_files.append(normalization_audit_path)
+
     gate_review_path = released_artifacts.get("gate_review")
     if gate_review_path:
         match_count = int(table["has_fulltext"].astype(str).isin(["1", "true", "True"]).sum()) if "has_fulltext" in table.columns else 0
@@ -1049,6 +1070,9 @@ def _run_and_write_all_outputs(config_path: Path) -> List[Path]:
                 "metadata_translation_status": str(translation_summary.get("status") or "SKIP"),
                 "metadata_translation_count": int(translation_summary.get("translated_count") or 0),
                 "metadata_translation_failed_count": int(translation_summary.get("failed_count") or 0),
+                "attachment_normalization_status": str(attachment_normalization_summary.get("status") or "SKIPPED"),
+                "attachment_normalization_renamed_count": int(attachment_normalization_summary.get("renamed_count") or 0),
+                "attachment_normalization_conflict_count": int(attachment_normalization_summary.get("conflict_count") or 0),
             },
             "decision_suggestion": "pass_next" if len(table) > 0 else "revise_current_iteration",
         }

@@ -13,6 +13,8 @@ from uuid import uuid4
 from autodokit.tools import run_online_retrieval_router
 from autodokit.tools import load_json_or_py
 from autodokit.tools import bibliodb_sqlite
+from autodokit.tools import normalize_primary_fulltext_attachment_names
+from autodokit.tools import resolve_primary_attachment_normalization_settings
 from autodokit.tools.atomic.task_aok.task_instance_dir import create_task_instance_dir, mirror_artifacts_to_legacy, resolve_legacy_output_dir
 from autodokit.tools.atomic.task_aok.post_affair_git_commit import affair_auto_git_commit
 from autodokit.tools.literature_translation_tools import run_literature_translation
@@ -779,6 +781,21 @@ def execute(config_path: Path) -> list[Path]:
     online_records = _extract_online_metadata_records(online_retrieval_result)
     online_records = _apply_download_paths(online_records, online_acquisition_result)
     upsert_summary = _upsert_literatures(content_db_path, online_records)
+    normalization_settings = resolve_primary_attachment_normalization_settings(raw_cfg, workspace_root=workspace_root)
+    attachment_normalization_summary = {
+        "status": "SKIPPED",
+        "reason": "disabled",
+        "audit_path": "",
+    }
+    if normalization_settings.get("enabled"):
+        attachment_normalization_summary = normalize_primary_fulltext_attachment_names(
+            {
+                "content_db": str(content_db_path),
+                "workspace_root": str(workspace_root),
+                "output_dir": str(output_dir),
+                **normalization_settings,
+            }
+        )
 
     merged_result = {
         "status": "PASS",
@@ -789,6 +806,7 @@ def execute(config_path: Path) -> list[Path]:
         "online_record_count": len(online_records),
         "total_record_count": local_hit_count + len(online_records),
         "upsert_summary": upsert_summary,
+        "attachment_normalization": attachment_normalization_summary,
     }
 
     gate_review = _build_gate_review(
@@ -838,6 +856,8 @@ def execute(config_path: Path) -> list[Path]:
         f"- online_acquisition_mode: {online_acquisition_mode}",
         f"- upsert_inserted: {upsert_summary.get('inserted', 0)}",
         f"- upsert_updated: {upsert_summary.get('updated', 0)}",
+        f"- attachment_normalization_status: {attachment_normalization_summary.get('status', 'SKIPPED')}",
+        f"- attachment_normalization_renamed_count: {attachment_normalization_summary.get('renamed_count', 0)}",
         f"- gate_action: {gate_review.get('gate_action', 'pass_next')}",
     ]
     readable_path.write_text("\n".join(readable_lines) + "\n", encoding="utf-8")
@@ -852,6 +872,9 @@ def execute(config_path: Path) -> list[Path]:
         gate_path,
         readable_path,
     ]
+    normalization_audit_path = Path(str(attachment_normalization_summary.get("audit_path") or "").strip())
+    if normalization_audit_path.exists() and normalization_audit_path.is_file():
+        written_files.append(normalization_audit_path)
 
     translation_policy = dict(raw_cfg.get("translation_policy") or {})
     if str(content_db_path) and translation_policy:
