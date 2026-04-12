@@ -16,6 +16,15 @@
     "abstract",
     "keywords"
   ],
+  "primary_attachment_normalization": {
+    "enabled": false,
+    "rename_mode": "preview",
+    "allowed_attachment_types": [
+      "fulltext",
+      "pdf"
+    ],
+    "update_parse_assets": true
+  },
   "outputs": {
     "literature_relations_csv": "literature_relations.csv",
     "tags_to_literatures_csv": "tags_to_literatures.csv",

@@ -92,18 +92,26 @@ def _resolve_script_path(local_cfg: dict[str, Any], global_cfg: dict[str, Any]) 
     raise FileNotFoundError("未找到 A010 初始化脚本 generate_config.py")
 
 
-def _load_a020_seed(global_cfg: dict[str, Any]) -> tuple[list[str], str]:
+def _load_a020_seed(global_cfg: dict[str, Any]) -> tuple[list[str], list[str], str]:
     node_inputs = global_cfg.get("node_inputs") or {}
     a020_config_path = _to_text(node_inputs.get("A020"))
     if not a020_config_path:
-        return [], ""
+        return [], [], ""
     payload = _read_json(Path(a020_config_path).expanduser().resolve())
     raw_paths = payload.get("origin_bib_paths") or []
     origin_bib_paths = [str(Path(str(item)).expanduser().resolve()).replace("\\", "/") for item in raw_paths if str(item).strip()]
+    raw_roots = payload.get("origin_attachments_roots") or []
+    if isinstance(raw_roots, str):
+        raw_roots = [raw_roots]
+    origin_attachments_roots = [
+        str(Path(str(item)).expanduser().resolve()).replace("\\", "/")
+        for item in raw_roots
+        if str(item).strip()
+    ]
     origin_attachments_root = _to_text(payload.get("origin_attachments_root"))
     if origin_attachments_root:
         origin_attachments_root = str(Path(origin_attachments_root).expanduser().resolve()).replace("\\", "/")
-    return origin_bib_paths, origin_attachments_root
+    return origin_bib_paths, origin_attachments_roots, origin_attachments_root
 
 
 def _build_command(config_path: Path, local_cfg: dict[str, Any], global_cfg: dict[str, Any]) -> list[str]:
@@ -117,7 +125,7 @@ def _build_command(config_path: Path, local_cfg: dict[str, Any], global_cfg: dic
     llm_api_key_file = _to_text(llm_cfg.get("aliyun_api_key_file"))
     venv_path = _to_text(global_cfg.get("venv_path"))
     template_root = _to_text(local_cfg.get("template_root")) or _to_text((global_cfg.get("bootstrap") or {}).get("template_root"))
-    origin_bib_paths, origin_attachments_root = _load_a020_seed(global_cfg)
+    origin_bib_paths, origin_attachments_roots, origin_attachments_root = _load_a020_seed(global_cfg)
 
     local_auto = _extract_commit_value(local_cfg, "is_auto_git_commit")
     global_auto = _extract_commit_value(global_cfg, "is_auto_git_commit")
@@ -140,6 +148,8 @@ def _build_command(config_path: Path, local_cfg: dict[str, Any], global_cfg: dic
         command.extend(["--llm-api-key-file", llm_api_key_file])
     for bib_path in origin_bib_paths:
         command.extend(["--origin-bib-path", bib_path])
+    for attachments_root in origin_attachments_roots:
+        command.extend(["--origin-attachments-roots", attachments_root])
     if origin_attachments_root:
         command.extend(["--origin-attachments-root", origin_attachments_root])
     if _parse_tristate(local_cfg.get("dry_run")) == "true":

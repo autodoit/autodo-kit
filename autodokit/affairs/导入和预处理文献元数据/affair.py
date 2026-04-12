@@ -686,6 +686,23 @@ def _resolve_source_paths(raw_value: Any) -> List[Path]:
     return [Path(item) for item in list(raw_value)]
 
 
+def _resolve_attachment_roots(raw_roots: Any, raw_root: Any) -> List[Path]:
+    """把附件根目录统一解析为路径列表，兼容新旧字段。"""
+    roots = _resolve_source_paths(raw_roots)
+    if not roots and raw_root:
+        roots = [Path(raw_root)]
+
+    normalized: List[Path] = []
+    seen: set[Path] = set()
+    for root in roots:
+        candidate = root.expanduser().resolve()
+        if candidate in seen:
+            continue
+        seen.add(candidate)
+        normalized.append(candidate)
+    return normalized
+
+
 def _merge_bib_sources(origin_bib_paths: List[Path], target_bib_path: Path) -> Path | None:
     """把原始 bib 文件合并去重后写入标准 bib 位置。"""
     if not origin_bib_paths:
@@ -841,8 +858,10 @@ def _run_and_write_all_outputs(config_path: Path) -> List[Path]:
     config = Config(**filtered_cfg)
 
     origin_bib_paths = _resolve_source_paths(merged_cfg.get("origin_bib_paths"))
-    origin_attachments_root_raw = merged_cfg.get("origin_attachments_root")
-    origin_attachments_root = Path(origin_attachments_root_raw) if origin_attachments_root_raw else None
+    origin_attachment_roots = _resolve_attachment_roots(
+        merged_cfg.get("origin_attachments_roots"),
+        merged_cfg.get("origin_attachments_root"),
+    )
     released_artifacts = merged_cfg.get("released_artifacts") or {}
 
     bibtex_path = Path(config.bibtex_path)
@@ -860,8 +879,10 @@ def _run_and_write_all_outputs(config_path: Path) -> List[Path]:
     if merged_bib_path is not None:
         bibtex_path = merged_bib_path
 
-    synced_attachments = _sync_attachments(origin_attachments_root, workspace_attachments_dir)
-    if origin_attachments_root is not None:
+    synced_attachments: List[Path] = []
+    for attachment_root in origin_attachment_roots:
+        synced_attachments.extend(_sync_attachments(attachment_root, workspace_attachments_dir))
+    if origin_attachment_roots:
         pdf_dir = workspace_attachments_dir
 
     if merged_bib_path is not None:
