@@ -11,6 +11,8 @@
 
 from __future__ import annotations
 
+import filecmp
+import hashlib
 import importlib.util
 import json
 import sqlite3
@@ -61,6 +63,7 @@ DEFAULT_CONFIG: Dict[str, Any] = {
     "pdf_dir": "pdfs",
     "pdf_match_mode": "title",
 }
+UNMATCHED_ATTACHMENTS_DIR_NAME = "unmatched_attachments"
 
 
 def _build_task_instance_dir(workspace_root: Path, node_code: str) -> Path:
@@ -245,6 +248,41 @@ def _remove_path_if_exists(path: Path) -> None:
     path.unlink()
 
 
+def _files_have_same_content(left: Path, right: Path) -> bool:
+    try:
+        if left.stat().st_size != right.stat().st_size:
+            return False
+        return filecmp.cmp(str(left), str(right), shallow=False)
+    except OSError:
+        return False
+
+
+def _resolve_conflict_safe_target_path(source: Path, target_path: Path) -> Path:
+    if not target_path.exists():
+        return target_path
+    if _files_have_same_content(source, target_path):
+        return target_path
+
+    digest = hashlib.md5(str(source.resolve()).encode("utf-8")).hexdigest()[:12]
+    candidate = target_path.with_name(f"{target_path.stem}__{digest}{target_path.suffix}")
+    counter = 2
+    while candidate.exists() and not _files_have_same_content(source, candidate):
+        candidate = target_path.with_name(f"{target_path.stem}__{digest}_{counter}{target_path.suffix}")
+        counter += 1
+    return candidate
+
+
+def _prune_empty_dirs(root: Path) -> None:
+    if not root.exists():
+        return
+    for child in sorted(root.rglob("*"), reverse=True):
+        if child.is_dir():
+            try:
+                child.rmdir()
+            except OSError:
+                continue
+
+
 def _log_stage(message: str) -> None:
     """输出事务阶段日志，便于长任务排障。"""
     print(f"[A020] {message}", flush=True)
@@ -256,6 +294,7 @@ def _reset_a020_generated_state(
     legacy_output_dir: Path,
     workspace_bib_path: Path,
     workspace_attachments_dir: Path,
+    workspace_unmatched_attachments_dir: Path,
     db_path: Path | None,
     released_artifacts: Dict[str, Any],
 ) -> None:
@@ -271,6 +310,7 @@ def _reset_a020_generated_state(
 
     _remove_path_if_exists(workspace_bib_path)
     _remove_path_if_exists(workspace_attachments_dir)
+    _remove_path_if_exists(workspace_unmatched_attachments_dir)
 
     for artifact_key in [
         "literature_table",
@@ -866,12 +906,62 @@ def _sync_attachments(origin_root: Path | None, target_root: Path) -> List[Dict[
         if not source.is_file():
             continue
         relative_path = source.relative_to(origin_root)
-        target_path = target_root / relative_path
+        target_path = _resolve_conflict_safe_target_path(source, target_root / relative_path)
         target_path.parent.mkdir(parents=True, exist_ok=True)
-        if not target_path.exists() or source.stat().st_size != target_path.stat().st_size:
+        if not target_path.exists():
             shutil.copy2(source, target_path)
         copied.append({"storage_path": str(target_path), "source_path": str(source.resolve())})
     return copied
+
+
+def _isolate_unmatched_attachments(
+    workspace_attachments_dir: Path,
+    unmatched_attachments_dir: Path,
+    matched_storage_paths: Iterable[str],
+) -> Dict[str, Any]:
+    matched_paths = {
+        str(Path(path).expanduser().resolve())
+        for path in matched_storage_paths
+        if str(path).strip()
+    }
+    if not workspace_attachments_dir.exists():
+        return {
+            "status": "SKIPPED",
+            "unmatched_count": 0,
+            "unmatched_dir": str(unmatched_attachments_dir),
+            "rows": [],
+        }
+
+    unmatched_attachments_dir.mkdir(parents=True, exist_ok=True)
+    moved_rows: List[Dict[str, str]] = []
+    for source in sorted(workspace_attachments_dir.rglob("*")):
+        if not source.is_file():
+            continue
+        resolved_source = str(source.resolve())
+        if resolved_source in matched_paths:
+            continue
+        relative_path = source.relative_to(workspace_attachments_dir)
+        target_path = _resolve_conflict_safe_target_path(source, unmatched_attachments_dir / relative_path)
+        target_path.parent.mkdir(parents=True, exist_ok=True)
+        if target_path.exists() and _files_have_same_content(source, target_path):
+            source.unlink()
+        else:
+            shutil.move(str(source), str(target_path))
+        moved_rows.append(
+            {
+                "source_path": resolved_source,
+                "isolated_path": str(target_path.resolve()),
+                "relative_path": str(relative_path).replace("\\", "/"),
+            }
+        )
+
+    _prune_empty_dirs(workspace_attachments_dir)
+    return {
+        "status": "PASS",
+        "unmatched_count": len(moved_rows),
+        "unmatched_dir": str(unmatched_attachments_dir),
+        "rows": moved_rows,
+    }
 
 
 def _write_csv_if_requested(df: pd.DataFrame, raw_path: Any) -> Path | None:
@@ -975,6 +1065,7 @@ def _run_and_write_all_outputs(config_path: Path) -> List[Path]:
     workspace_bib_dir = workspace_references_dir / "bib"
     workspace_bib_path = workspace_bib_dir / bibtex_path.name
     workspace_attachments_dir = workspace_references_dir / "attachments"
+    workspace_unmatched_attachments_dir = workspace_references_dir / UNMATCHED_ATTACHMENTS_DIR_NAME
     backend = str(merged_cfg.get("storage_backend") or merged_cfg.get("backend") or "csv").strip().lower()
     db_path_str = (
         released_artifacts.get("content_db")
@@ -990,6 +1081,7 @@ def _run_and_write_all_outputs(config_path: Path) -> List[Path]:
             legacy_output_dir=legacy_output_dir,
             workspace_bib_path=workspace_bib_path,
             workspace_attachments_dir=workspace_attachments_dir,
+            workspace_unmatched_attachments_dir=workspace_unmatched_attachments_dir,
             db_path=db_path if backend == "sqlite" else None,
             released_artifacts=released_artifacts,
         )
@@ -1056,6 +1148,22 @@ def _run_and_write_all_outputs(config_path: Path) -> List[Path]:
 
     _log_stage("构建文献主表")
     table = build_literature_main_table(records, pdf_matches, normalize_text_fn=normalize_text)
+    matched_attachment_paths = [
+        str(item.get("storage_path") or "")
+        for item in pdf_matches
+        if isinstance(item, dict) and bool(item.get("matched") or item.get("has_pdf"))
+    ]
+    unmatched_attachment_summary = _isolate_unmatched_attachments(
+        workspace_attachments_dir=workspace_attachments_dir,
+        unmatched_attachments_dir=workspace_unmatched_attachments_dir,
+        matched_storage_paths=matched_attachment_paths,
+    )
+    unmatched_attachment_audit_path = output_dir / "unmatched_attachments.json"
+    unmatched_attachment_audit_path.write_text(
+        json.dumps(unmatched_attachment_summary, ensure_ascii=False, indent=2),
+        encoding="utf-8",
+    )
+    written_files.append(unmatched_attachment_audit_path)
 
     # 写主表：支持后端选择（csv 或 sqlite），默认 csv（向后兼容）
     translation_summary: Dict[str, Any] = {
@@ -1231,6 +1339,8 @@ def _run_and_write_all_outputs(config_path: Path) -> List[Path]:
                 "final_literature_count": int(merge_summary.get("final_literature_count") or len(table)),
                 "attachment_file_count": int(len(synced_attachments)) if synced_attachments else int(len(attachment_inv)),
                 "matched_fulltext_count": match_count,
+                "unmatched_attachment_count": int(unmatched_attachment_summary.get("unmatched_count") or 0),
+                "unmatched_attachment_dir": str(unmatched_attachment_summary.get("unmatched_dir") or ""),
                 "metadata_translation_status": str(translation_summary.get("status") or "SKIP"),
                 "metadata_translation_count": int(translation_summary.get("translated_count") or 0),
                 "metadata_translation_failed_count": int(translation_summary.get("failed_count") or 0),

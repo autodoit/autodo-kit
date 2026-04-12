@@ -3,12 +3,15 @@
 from __future__ import annotations
 
 import json
+import re
 import sqlite3
 from datetime import datetime
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any, Literal
 from uuid import uuid4
+
+import pandas as pd
 
 from autodokit.tools import run_online_retrieval_router
 from autodokit.tools import load_json_or_py
@@ -18,6 +21,7 @@ from autodokit.tools import resolve_primary_attachment_normalization_settings
 from autodokit.tools.atomic.task_aok.task_instance_dir import create_task_instance_dir, mirror_artifacts_to_legacy, resolve_legacy_output_dir
 from autodokit.tools.atomic.task_aok.post_affair_git_commit import affair_auto_git_commit
 from autodokit.tools.literature_translation_tools import run_literature_translation
+from autodokit.tools.old.bibliodb_csv_compat import build_cite_key, clean_title_text, extract_first_author, generate_uid, parse_year_int
 
 ObjectType = Literal["literature", "dataset"]
 SourceType = Literal["offline", "online"]
@@ -234,20 +238,49 @@ def _local_retrieval(
         params.append(year_end)
 
     where_sql = " AND ".join(where_parts) if where_parts else "1=1"
-    query_sql = (
-        "SELECT uid_literature, cite_key, title, authors, year, journal, abstract, keywords, "
-        "COALESCE(source_type, '') AS source_type, COALESCE(detail_url, '') AS detail_url, "
-        "COALESCE(pdf_path, '') AS pdf_path, COALESCE(has_fulltext, 0) AS has_fulltext "
-        "FROM literatures "
-        f"WHERE {where_sql} "
-        "ORDER BY CAST(COALESCE(year, 0) AS INTEGER) DESC, rowid DESC "
-        "LIMIT ?"
-    )
-    params.append(max(1, max_local_hits))
-
-    records: list[dict[str, Any]] = []
     with sqlite3.connect(str(content_db_path)) as conn:
         conn.row_factory = sqlite3.Row
+        column_rows = conn.execute("PRAGMA table_info(literatures)").fetchall()
+        available_columns = {str(row[1]) for row in column_rows}
+
+        base_columns = [
+            "uid_literature",
+            "cite_key",
+            "title",
+            "authors",
+            "year",
+            "journal",
+            "abstract",
+            "keywords",
+        ]
+        select_parts: list[str] = []
+        for column_name in base_columns:
+            if column_name in available_columns:
+                select_parts.append(column_name)
+            else:
+                select_parts.append(f"'' AS {column_name}")
+
+        for optional_name, fallback in (
+            ("source_type", "''"),
+            ("detail_url", "''"),
+            ("pdf_path", "''"),
+            ("has_fulltext", "0"),
+        ):
+            if optional_name in available_columns:
+                select_parts.append(f"COALESCE({optional_name}, {fallback}) AS {optional_name}")
+            else:
+                select_parts.append(f"{fallback} AS {optional_name}")
+
+        query_sql = (
+            f"SELECT {', '.join(select_parts)} "
+            "FROM literatures "
+            f"WHERE {where_sql} "
+            "ORDER BY CAST(COALESCE(year, 0) AS INTEGER) DESC, rowid DESC "
+            "LIMIT ?"
+        )
+        params.append(max(1, max_local_hits))
+
+        records: list[dict[str, Any]] = []
         rows = conn.execute(query_sql, params).fetchall()
         for row in rows:
             records.append(dict(row))
@@ -534,96 +567,198 @@ def _apply_download_paths(metadata_records: list[dict[str, Any]], acquisition_re
     return records
 
 
+def _dedupe_online_records(records: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """按 detail_url / cite_key / (title, year) 折叠重复在线题录。"""
+
+    if not records:
+        return []
+
+    deduped: list[dict[str, Any]] = []
+    key_to_index: dict[str, int] = {}
+
+    def _pick_better_text(current: Any, candidate: Any) -> str:
+        current_text = _normalize_text(current)
+        candidate_text = _normalize_text(candidate)
+        if not current_text:
+            return candidate_text
+        if not candidate_text:
+            return current_text
+        return candidate_text if len(candidate_text) > len(current_text) else current_text
+
+    for raw_item in records:
+        item = dict(raw_item)
+        detail_url = _normalize_text(item.get("detail_url")).lower()
+        cite_key = _normalize_text(item.get("cite_key")).lower()
+        title = _normalize_text(item.get("title")).lower()
+        year = _normalize_text(item.get("year"))
+
+        if detail_url:
+            dedup_key = f"detail:{detail_url}"
+        elif cite_key:
+            dedup_key = f"cite:{cite_key}"
+        else:
+            dedup_key = f"title_year:{title}|{year}"
+
+        existing_index = key_to_index.get(dedup_key)
+        if existing_index is None:
+            key_to_index[dedup_key] = len(deduped)
+            deduped.append(item)
+            continue
+
+        existing = deduped[existing_index]
+        for field_name in ("title", "authors", "journal", "abstract", "keywords", "source", "detail_url", "year"):
+            existing[field_name] = _pick_better_text(existing.get(field_name), item.get(field_name))
+
+        existing_pdf = _normalize_text(existing.get("pdf_path"))
+        candidate_pdf = _normalize_text(item.get("pdf_path"))
+        if (not existing_pdf) and candidate_pdf:
+            existing["pdf_path"] = candidate_pdf
+
+    return deduped
+
+
+def _normalize_source_slug(value: Any) -> str:
+    text = _normalize_text(value).lower()
+    if not text:
+        return ""
+    text = re.sub(r"[^0-9a-z]+", "_", text)
+    return text.strip("_")
+
+
+def _infer_online_literature_source_type(item: dict[str, Any]) -> str:
+    source_slug = _normalize_source_slug(item.get("source") or item.get("source_type"))
+    detail_url = _normalize_text(item.get("detail_url") or item.get("landing_url")).lower()
+    if source_slug in {"zh_cnki", "cnki"} or "cnki" in detail_url:
+        return "online_retrieval.zh_cnki"
+    if source_slug:
+        return f"online_retrieval.en_open_access.{source_slug}"
+    return "online_retrieval"
+
+
+def _infer_attachment_source_label(literature_source_type: str) -> str:
+    if literature_source_type == "online_retrieval.zh_cnki":
+        return "在线中文下载附件"
+    if literature_source_type.startswith("online_retrieval.en_open_access"):
+        return "在线英文开放获取下载附件"
+    return "在线下载附件"
+
+
+def _build_online_literatures_df(records: list[dict[str, Any]]) -> pd.DataFrame:
+    now_text = _now_iso()
+    rows: list[dict[str, Any]] = []
+    for item in records:
+        title = _normalize_text(item.get("title"))
+        if not title:
+            continue
+        authors = _normalize_text(item.get("authors"))
+        year_raw = _normalize_text(item.get("year"))
+        year_int = parse_year_int(year_raw)
+        year_text = str(year_int) if year_int is not None else year_raw
+        first_author = extract_first_author(authors)
+        clean_title = clean_title_text(title)
+        detail_url = _normalize_text(item.get("detail_url") or item.get("landing_url"))
+        pdf_path = _normalize_text(item.get("pdf_path"))
+        literature_source_type = _infer_online_literature_source_type(item)
+        cite_key = _normalize_text(item.get("cite_key")) or build_cite_key(first_author, year_text, clean_title)
+        rows.append(
+            {
+                "uid_literature": generate_uid(first_author, year_int, clean_title),
+                "cite_key": cite_key,
+                "title": title,
+                "clean_title": clean_title,
+                "title_norm": clean_title,
+                "authors": authors,
+                "first_author": first_author,
+                "year": year_text,
+                "entry_type": _normalize_text(item.get("entry_type")) or "article",
+                "abstract": _normalize_text(item.get("abstract")),
+                "keywords": _normalize_text(item.get("keywords")),
+                "journal": _normalize_text(item.get("journal")),
+                "detail_url": detail_url,
+                "landing_url": _normalize_text(item.get("landing_url")),
+                "pdf_path": pdf_path,
+                "has_fulltext": 1 if pdf_path else 0,
+                "primary_attachment_name": Path(pdf_path).name if pdf_path else "",
+                "primary_attachment_source_path": detail_url or pdf_path,
+                "source_type": literature_source_type,
+                "is_placeholder": 0,
+                "created_at": now_text,
+                "updated_at": now_text,
+                "imported_at": now_text,
+            }
+        )
+    return pd.DataFrame(rows)
+
+
+def _build_online_attachments_df(literatures_df: pd.DataFrame) -> pd.DataFrame:
+    rows: list[dict[str, Any]] = []
+    for _, row in literatures_df.iterrows():
+        pdf_path = _normalize_text(row.get("pdf_path"))
+        uid_literature = _normalize_text(row.get("uid_literature"))
+        if not pdf_path or not uid_literature:
+            continue
+        literature_source_type = _normalize_text(row.get("source_type")) or "online_retrieval"
+        source_ref = _normalize_text(row.get("detail_url") or row.get("landing_url") or row.get("primary_attachment_source_path") or pdf_path)
+        rows.append(
+            {
+                "uid_attachment": bibliodb_sqlite.build_stable_attachment_uid(
+                    uid_literature,
+                    source_path=source_ref,
+                    attachment_name=_normalize_text(row.get("primary_attachment_name")) or Path(pdf_path).name,
+                    storage_path=pdf_path,
+                ),
+                "uid_literature": uid_literature,
+                "attachment_name": _normalize_text(row.get("primary_attachment_name")) or Path(pdf_path).name,
+                "attachment_type": "fulltext",
+                "file_ext": Path(pdf_path).suffix.lower().lstrip("."),
+                "storage_path": pdf_path,
+                "source_path": source_ref,
+                "source_type": f"{literature_source_type}.attachment",
+                "附件来源类型": _infer_attachment_source_label(literature_source_type),
+                "来源事务": "A040",
+                "checksum": "",
+                "is_primary": 1,
+                "status": "available",
+                "created_at": _normalize_text(row.get("created_at")) or _now_iso(),
+                "updated_at": _normalize_text(row.get("updated_at")) or _now_iso(),
+            }
+        )
+    return pd.DataFrame(rows)
+
+
 def _upsert_literatures(content_db_path: Path, records: list[dict[str, Any]]) -> dict[str, Any]:
+    records = _dedupe_online_records(records)
     if not records:
         return {"status": "SKIPPED", "inserted": 0, "updated": 0, "records": 0}
     if not content_db_path.exists():
         return {"status": "BLOCKED", "reason": "content_db_missing", "inserted": 0, "updated": 0, "records": len(records)}
 
-    inserted = 0
-    updated = 0
-    with sqlite3.connect(str(content_db_path)) as conn:
-        conn.row_factory = sqlite3.Row
-        columns = {str(row[1]) for row in conn.execute("PRAGMA table_info(literatures)").fetchall()}
-        if not columns:
-            return {"status": "BLOCKED", "reason": "literatures_table_missing", "inserted": 0, "updated": 0, "records": len(records)}
-
-        for item in records:
-            title = _normalize_text(item.get("title"))
-            if not title:
-                continue
-            detail_url = _normalize_text(item.get("detail_url"))
-            year = _normalize_text(item.get("year"))
-            now_text = _now_iso()
-            has_fulltext = 1 if _normalize_text(item.get("pdf_path")) else 0
-
-            existing: sqlite3.Row | None = None
-            if detail_url and "detail_url" in columns:
-                existing = conn.execute(
-                    "SELECT uid_literature, cite_key FROM literatures WHERE detail_url = ? LIMIT 1",
-                    (detail_url,),
-                ).fetchone()
-            if existing is None:
-                existing = conn.execute(
-                    "SELECT uid_literature, cite_key FROM literatures WHERE title = ? AND CAST(COALESCE(year, 0) AS TEXT) = ? LIMIT 1",
-                    (title, year or "0"),
-                ).fetchone()
-
-            payload = {
-                "title": title,
-                "authors": _normalize_text(item.get("authors")),
-                "year": year,
-                "journal": _normalize_text(item.get("journal")),
-                "abstract": _normalize_text(item.get("abstract")),
-                "keywords": _normalize_text(item.get("keywords")),
-                "source_type": _normalize_text(item.get("source")) or "online_retrieval",
-                "detail_url": detail_url,
-                "pdf_path": _normalize_text(item.get("pdf_path")),
-                "has_fulltext": has_fulltext,
-                "updated_at": now_text,
-            }
-            payload = {key: value for key, value in payload.items() if key in columns}
-
-            if existing is not None:
-                uid_literature = _normalize_text(existing["uid_literature"])
-                if not uid_literature:
-                    continue
-                if payload:
-                    set_sql = ", ".join([f"{key} = ?" for key in payload.keys()])
-                    conn.execute(
-                        f"UPDATE literatures SET {set_sql} WHERE uid_literature = ?",
-                        [*payload.values(), uid_literature],
-                    )
-                    updated += 1
-                continue
-
-            uid_literature = f"uid_{uuid4().hex}"
-            cite_key = f"a040_{uuid4().hex[:12]}"
-            insert_payload = {
-                "uid_literature": uid_literature,
-                "cite_key": cite_key,
-                "is_placeholder": 0,
-                "created_at": now_text,
-                **payload,
-            }
-            insert_payload = {key: value for key, value in insert_payload.items() if key in columns}
-            if not insert_payload:
-                continue
-            cols = ", ".join(insert_payload.keys())
-            placeholders = ", ".join(["?"] * len(insert_payload))
-            conn.execute(
-                f"INSERT INTO literatures ({cols}) VALUES ({placeholders})",
-                list(insert_payload.values()),
-            )
-            inserted += 1
-
-        conn.commit()
+    incoming_literatures_df = _build_online_literatures_df(records)
+    incoming_attachments_df = _build_online_attachments_df(incoming_literatures_df)
+    existing_literatures_df = bibliodb_sqlite.load_literatures_df(content_db_path)
+    existing_attachments_df = bibliodb_sqlite.load_attachments_df(content_db_path)
+    existing_tags_df = bibliodb_sqlite.load_tags_df(content_db_path)
+    merged_literatures_df, merged_attachments_df, merged_tags_df, merge_summary = bibliodb_sqlite.merge_reference_records(
+        existing_literatures_df=existing_literatures_df,
+        existing_attachments_df=existing_attachments_df,
+        existing_tags_df=existing_tags_df,
+        incoming_literatures_df=incoming_literatures_df,
+        incoming_attachments_df=incoming_attachments_df,
+        incoming_tags_df=pd.DataFrame(),
+    )
+    bibliodb_sqlite.replace_reference_tables_only(
+        content_db_path,
+        literatures_df=merged_literatures_df,
+        attachments_df=merged_attachments_df,
+        tags_df=merged_tags_df,
+    )
 
     return {
         "status": "PASS",
-        "inserted": inserted,
-        "updated": updated,
+        "inserted": int(merge_summary.get("inserted_count") or 0),
+        "updated": int(merge_summary.get("matched_existing_count") or 0),
         "records": len(records),
+        "attachment_records": int(len(incoming_attachments_df)),
     }
 
 
