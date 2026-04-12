@@ -242,8 +242,17 @@ def _apply_structured_state_to_table(
     working.loc[mask, "structured_task_type"] = structured_task_type
     working.loc[mask, "structured_updated_at"] = structured_updated_at
     working.loc[mask, "structured_schema_version"] = structured_schema_version
-    working.loc[mask, "structured_text_length"] = int(structured_text_length or 0)
-    working.loc[mask, "structured_reference_count"] = int(structured_reference_count or 0)
+    text_length_value = int(structured_text_length or 0)
+    reference_count_value = int(structured_reference_count or 0)
+    # 部分运行链路会把数值列读成 pandas string dtype，这里按列类型安全写回，避免 strict 模式中断。
+    if "structured_text_length" in working.columns and pd.api.types.is_string_dtype(working["structured_text_length"].dtype):
+        working.loc[mask, "structured_text_length"] = str(text_length_value)
+    else:
+        working.loc[mask, "structured_text_length"] = text_length_value
+    if "structured_reference_count" in working.columns and pd.api.types.is_string_dtype(working["structured_reference_count"].dtype):
+        working.loc[mask, "structured_reference_count"] = str(reference_count_value)
+    else:
+        working.loc[mask, "structured_reference_count"] = reference_count_value
     variant_column = get_pdf_structured_variant_column(structured_backend, structured_task_type)
     if variant_column and variant_column in working.columns:
         working.loc[mask, variant_column] = structured_abs_path
