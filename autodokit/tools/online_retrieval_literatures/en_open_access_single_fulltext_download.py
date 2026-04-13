@@ -135,6 +135,11 @@ def download_single(config: dict[str, Any], record: RetrievalRecord) -> dict[str
         enable_barrier_analysis=bool(config.get("enable_barrier_analysis", False)),
         min_request_delay_seconds=float(config.get("min_request_delay_seconds") or 0.35),
         max_request_delay_seconds=float(config.get("max_request_delay_seconds") or 1.6),
+        allow_manual_intervention=bool(config.get("allow_manual_intervention", False)),
+        keep_browser_open=bool(config.get("keep_browser_open", False)),
+        browser_profile_dir=str(config.get("browser_profile_dir") or "sandbox/runtime/web_browser_profiles/en_open_access_auth"),
+        browser_cdp_port=int(config.get("browser_cdp_port") or 9332),
+        manual_wait_timeout_seconds=int(config.get("manual_wait_timeout_seconds") or 900),
     )
 
     payload = {
@@ -173,6 +178,11 @@ def _build_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument("--min-request-delay-seconds", type=float, default=0.35, help="单条内部请求最小随机等待秒数")
     parser.add_argument("--max-request-delay-seconds", type=float, default=1.6, help="单条内部请求最大随机等待秒数")
     parser.add_argument("--enable-barrier-analysis", action="store_true", help="启用阻断页分析")
+    parser.add_argument("--allow-manual-intervention", action="store_true", help="遇到登录或验证时打开浏览器等待人工处理")
+    parser.add_argument("--keep-browser-open", action="store_true", help="人工处理结束后保留浏览器")
+    parser.add_argument("--browser-profile-dir", default="", help="人工处理浏览器 profile 目录")
+    parser.add_argument("--browser-cdp-port", type=int, default=9332, help="人工处理浏览器 CDP 端口")
+    parser.add_argument("--manual-wait-timeout-seconds", type=int, default=900, help="人工处理最长等待秒数")
     return parser
 
 
@@ -187,6 +197,11 @@ def main() -> None:
         "min_request_delay_seconds": args.min_request_delay_seconds,
         "max_request_delay_seconds": args.max_request_delay_seconds,
         "enable_barrier_analysis": args.enable_barrier_analysis,
+        "allow_manual_intervention": args.allow_manual_intervention,
+        "keep_browser_open": args.keep_browser_open,
+        "browser_profile_dir": args.browser_profile_dir,
+        "browser_cdp_port": args.browser_cdp_port,
+        "manual_wait_timeout_seconds": args.manual_wait_timeout_seconds,
     }
     result = download_single(config, record)
     print(json.dumps(result, ensure_ascii=False, indent=2))

@@ -15,6 +15,8 @@ import hashlib
 import json
 import random
 import re
+import shutil
+import subprocess
 import time
 import urllib.error
 import urllib.parse
@@ -27,7 +29,11 @@ from typing import Any
 
 from autodokit.tools.llm_clients import ModelRoutingIntent, invoke_aliyun_llm
 
-USER_AGENT = "AcademicResearchAutoWorkflow-EnglishDebug/0.1"
+USER_AGENT = (
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+    "AppleWebKit/537.36 (KHTML, like Gecko) "
+    "Chrome/123.0.0.0 Safari/537.36"
+)
 REQUEST_TIMEOUT = 45
 DOWNLOAD_REQUEST_TIMEOUT = 12
 DOWNLOAD_HTML_EXPANSION_LIMIT = 6
@@ -110,6 +116,7 @@ def _request(
     accept: str = "application/json",
     sleep_seconds: float = 0.0,
     timeout: int = REQUEST_TIMEOUT,
+    extra_headers: dict[str, str] | None = None,
 ) -> tuple[bytes, dict[str, str], str]:
     """执行 HTTP 请求。
 
@@ -130,6 +137,7 @@ def _request(
         headers={
             "User-Agent": USER_AGENT,
             "Accept": accept,
+            **dict(extra_headers or {}),
         },
         method="GET",
     )
@@ -269,6 +277,60 @@ def _prioritize_pdf_candidates(urls: list[str], doi: str) -> list[str]:
 
     candidates = _collect_pdf_candidates(urls, doi)
     return sorted(candidates, key=_pdf_candidate_priority)
+
+
+def _collect_doi_resolver_candidates(doi: str) -> list[str]:
+    """通过 DOI 解析器补充可下载候选。"""
+
+    normalized_doi = _normalize_text(doi)
+    if not normalized_doi:
+        return []
+    normalized_doi = normalized_doi.replace("https://doi.org/", "").replace("http://doi.org/", "")
+    encoded = urllib.parse.quote(normalized_doi, safe="")
+    resolved_urls: list[str] = []
+
+    # Crossref: 优先利用 link/URL 字段补充下载候选。
+    try:
+        crossref_payload = _request_json(f"https://api.crossref.org/works/{encoded}")
+        message = dict(crossref_payload.get("message") or {})
+        for link in list(message.get("link") or []):
+            link_dict = dict(link or {})
+            candidate = _normalize_text(link_dict.get("URL"))
+            if not candidate:
+                continue
+            content_type = _normalize_text(link_dict.get("content-type")).lower()
+            if "pdf" in content_type or candidate.lower().endswith(".pdf") or "pdf" in candidate.lower():
+                resolved_urls.append(candidate)
+            else:
+                resolved_urls.append(candidate)
+        landing = _normalize_text(message.get("URL"))
+        if landing:
+            resolved_urls.append(landing)
+    except Exception:
+        pass
+
+    # OpenAlex: 读取 OA URL、best/location 的 pdf_url 与 landing_page_url。
+    try:
+        openalex_payload = _request_json(f"https://api.openalex.org/works/https://doi.org/{encoded}")
+        open_access = dict(openalex_payload.get("open_access") or {})
+        oa_url = _normalize_text(open_access.get("oa_url"))
+        if oa_url:
+            resolved_urls.append(oa_url)
+        best = dict(openalex_payload.get("best_oa_location") or {})
+        for key in ("pdf_url", "landing_page_url"):
+            candidate = _normalize_text(best.get(key))
+            if candidate:
+                resolved_urls.append(candidate)
+        for location in list(openalex_payload.get("locations") or []):
+            location_dict = dict(location or {})
+            for key in ("pdf_url", "landing_page_url"):
+                candidate = _normalize_text(location_dict.get(key))
+                if candidate:
+                    resolved_urls.append(candidate)
+    except Exception:
+        pass
+
+    return _collect_pdf_candidates(resolved_urls, normalized_doi)
 
 
 def _openalex_record(item: dict[str, Any]) -> RetrievalRecord:
@@ -646,6 +708,342 @@ def _detect_access_barrier(text: str) -> tuple[str, str] | None:
     return None
 
 
+def _find_edge_executable() -> str:
+    """定位 Edge 可执行文件。"""
+
+    candidates = [
+        shutil.which("msedge"),
+        r"C:\Program Files\Microsoft\Edge\Application\msedge.exe",
+        r"C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe",
+    ]
+    for candidate in candidates:
+        if candidate and Path(candidate).exists():
+            return str(candidate)
+    raise RuntimeError("未找到 Microsoft Edge，可先安装 Edge 或补充浏览器路径。")
+
+
+def _launch_edge_with_cdp(profile_dir: Path, port: int, start_url: str) -> subprocess.Popen[str]:
+    """以远程调试模式启动 Edge。"""
+
+    profile_dir.mkdir(parents=True, exist_ok=True)
+    command = [
+        _find_edge_executable(),
+        f"--remote-debugging-port={port}",
+        f"--user-data-dir={str(profile_dir.resolve())}",
+        start_url,
+    ]
+    return subprocess.Popen(command, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, text=True)
+
+
+def _connect_context(cdp_url: str) -> tuple[Any, Any]:
+    """连接 CDP 浏览器上下文。"""
+
+    from playwright.sync_api import sync_playwright
+
+    playwright = sync_playwright().start()
+    browser = playwright.chromium.connect_over_cdp(cdp_url)
+    if browser.contexts:
+        return playwright, browser.contexts[0]
+    return playwright, browser.new_context()
+
+
+def _select_existing_page(context: Any, preferred_url: str = "") -> Any:
+    """从现有上下文中选择页面。"""
+
+    pages = list(context.pages)
+    if preferred_url:
+        for page in pages:
+            try:
+                if preferred_url in page.url:
+                    return page
+            except Exception:
+                continue
+    if pages:
+        return pages[0]
+    page = context.new_page()
+    return page
+
+
+def _page_inner_text(page: Any) -> str:
+    """读取页面主体文本。"""
+
+    return _normalize_text(page.locator("body").first.inner_text(timeout=2500))
+
+
+def _read_page_state(page: Any) -> tuple[str, str, str]:
+    """稳定读取页面状态。"""
+
+    current_url = ""
+    for _ in range(3):
+        try:
+            current_url = page.url
+            current_title = page.title()
+            page_text = _page_inner_text(page)
+            return current_url, current_title, page_text
+        except Exception:
+            try:
+                page.wait_for_load_state("domcontentloaded", timeout=3000)
+            except Exception:
+                page.wait_for_timeout(1000)
+    return current_url, "", ""
+
+
+def _detect_browser_blocking_state(page: Any) -> dict[str, Any] | None:
+    """识别英文门户页面的登录或验证阻断。"""
+
+    current_url, current_title, page_text = _read_page_state(page)
+    lowered_url = current_url.lower()
+    lowered_title = current_title.lower()
+    lowered_text = page_text.lower()
+    if any(token in lowered_url for token in ["captcha", "verify", "challenge"]):
+        return {"reason": "captcha_required", "url": current_url, "title": current_title}
+    if any(token in lowered_text for token in ["captcha", "verify you are human", "security check", "robot check"]):
+        return {"reason": "captcha_required", "url": current_url, "title": current_title}
+    if any(token in lowered_url for token in ["login", "signin", "shibboleth", "auth.elsevier.com", "institutionlogin", "idp/"]):
+        return {"reason": "login_required", "url": current_url, "title": current_title}
+    if any(token in lowered_title for token in ["sign in", "login", "institutional login"]):
+        return {"reason": "login_required", "url": current_url, "title": current_title}
+    if any(token in lowered_text for token in ["sign in", "log in", "institutional login", "access through your institution", "shibboleth"]):
+        return {"reason": "login_required", "url": current_url, "title": current_title}
+    return None
+
+
+def _wait_for_human_if_needed(page: Any, allow_manual_intervention: bool, timeout_seconds: int) -> list[dict[str, Any]]:
+    """若遇到登录或验证码则等待人工处理。"""
+
+    manual_events: list[dict[str, Any]] = []
+    wait_started_at = time.time()
+    while True:
+        blocked_state = _detect_browser_blocking_state(page)
+        if not blocked_state:
+            return manual_events
+        event = dict(blocked_state)
+        manual_events.append(event)
+        if not allow_manual_intervention:
+            return manual_events
+        elapsed = int(time.time() - wait_started_at)
+        if elapsed >= timeout_seconds:
+            event["timeout_seconds"] = elapsed
+            event["status"] = "manual_timeout"
+            return manual_events
+        remaining = timeout_seconds - elapsed
+        print(
+            "[人工接管][英文下载] 当前页面需要登录或完成验证，请在已打开的 Edge 窗口中完成认证。"
+            f" 已等待 {elapsed} 秒，剩余约 {remaining} 秒。"
+        )
+        page.wait_for_timeout(5000)
+
+
+def _get_cookie_header(context: Any, url: str) -> str:
+    """提取浏览器上下文 Cookie 头。"""
+
+    cookies = context.cookies([url])
+    return "; ".join(f"{item['name']}={item['value']}" for item in cookies)
+
+
+def _download_with_browser_session(
+    record: RetrievalRecord,
+    download_dir: Path,
+    *,
+    context: Any,
+    page: Any,
+    ref_url: str,
+    request_timeout: int,
+    max_attempts: int,
+    min_request_delay_seconds: float,
+    max_request_delay_seconds: float,
+) -> dict[str, Any]:
+    """在人工登录后复用浏览器 Cookie 继续下载。"""
+
+    page_html = page.content()
+    page_candidates = _extract_pdf_links_from_html(page_html, ref_url)
+    queue = _prioritize_pdf_candidates(
+        [*page_candidates, page.url, record.pdf_url, *list(record.raw.get("download_candidates") or []), record.landing_url],
+        record.doi,
+    )
+    visited: set[str] = set()
+    attempts: list[dict[str, Any]] = []
+    while queue and len(attempts) < max_attempts:
+        candidate = queue.pop(0)
+        if candidate in visited:
+            continue
+        visited.add(candidate)
+
+        # 优先走浏览器原生会话，请求链路更接近真实用户，命中率高于 urllib+cookie。
+        try:
+            response = page.goto(candidate, wait_until="domcontentloaded", timeout=max(8000, request_timeout * 1000))
+            response_headers = {str(k).lower(): str(v) for k, v in dict((response.headers if response else {}) or {}).items()}
+            response_ct = _normalize_text(response_headers.get("content-type")).lower()
+            if response and ("application/pdf" in response_ct):
+                body = response.body()
+                if body and body[:4] == b"%PDF":
+                    filename = _safe_filename(record.bibtex_key or record.title, ".pdf")
+                    output_path = download_dir / filename
+                    output_path.write_bytes(body)
+                    attempts.append(
+                        {
+                            "url": candidate,
+                            "status": "PASS",
+                            "message": "已通过浏览器会话直接下载 PDF",
+                            "final_url": page.url,
+                            "request_delay_seconds": 0.0,
+                        }
+                    )
+                    return {
+                        "status": "PASS",
+                        "title": record.title,
+                        "source": record.source,
+                        "saved_path": str(output_path),
+                        "sha256": _sha256_bytes(body),
+                        "final_url": page.url,
+                        "attempts": attempts,
+                    }
+        except Exception as exc:
+            attempts.append(
+                {
+                    "url": candidate,
+                    "status": "BROWSER_ERROR",
+                    "message": str(exc),
+                    "request_delay_seconds": 0.0,
+                }
+            )
+
+        request_delay_seconds = round(_sample_delay(min_request_delay_seconds, max_request_delay_seconds), 3)
+        try:
+            cookie_header = _get_cookie_header(context, candidate or ref_url)
+            body, headers, final_url = _request(
+                candidate,
+                accept="application/pdf,text/html,application/xhtml+xml",
+                sleep_seconds=request_delay_seconds,
+                timeout=request_timeout,
+                extra_headers={
+                    "Cookie": cookie_header,
+                    "Referer": ref_url,
+                },
+            )
+        except Exception as exc:
+            attempts.append({
+                "url": candidate,
+                "status": "ERROR",
+                "message": str(exc),
+                "request_delay_seconds": request_delay_seconds,
+            })
+            continue
+
+        content_type = headers.get("content-type", "")
+        if "application/pdf" in content_type.lower() or body[:4] == b"%PDF":
+            filename = _safe_filename(record.bibtex_key or record.title, ".pdf")
+            output_path = download_dir / filename
+            output_path.write_bytes(body)
+            attempts.append({
+                "url": candidate,
+                "status": "PASS",
+                "message": "已通过登录后浏览器会话下载 PDF",
+                "final_url": final_url,
+                "request_delay_seconds": request_delay_seconds,
+            })
+            return {
+                "status": "PASS",
+                "title": record.title,
+                "source": record.source,
+                "saved_path": str(output_path),
+                "sha256": _sha256_bytes(body),
+                "final_url": final_url,
+                "attempts": attempts,
+            }
+
+        if "html" in content_type.lower() or body.startswith(b"<!DOCTYPE html") or body.startswith(b"<html"):
+            html_text = body.decode("utf-8", errors="ignore")
+            for next_candidate in _extract_pdf_links_from_html(html_text, final_url):
+                if next_candidate not in visited:
+                    queue.append(next_candidate)
+            queue = _prioritize_pdf_candidates(queue, record.doi)
+            attempts.append({
+                "url": candidate,
+                "status": "HTML",
+                "message": "登录后会话已解析 HTML 并继续寻找 PDF",
+                "final_url": final_url,
+                "request_delay_seconds": request_delay_seconds,
+            })
+            continue
+
+        attempts.append({
+            "url": candidate,
+            "status": "SKIPPED",
+            "message": f"未识别的内容类型: {content_type}",
+            "final_url": final_url,
+            "request_delay_seconds": request_delay_seconds,
+        })
+
+    return {
+        "status": "NO_OPEN_PDF",
+        "title": record.title,
+        "source": record.source,
+        "attempt_count": len(attempts),
+        "attempts": attempts,
+    }
+
+
+def _manual_login_retry(
+    record: RetrievalRecord,
+    download_dir: Path,
+    *,
+    start_url: str,
+    request_timeout: int,
+    max_attempts: int,
+    min_request_delay_seconds: float,
+    max_request_delay_seconds: float,
+    allow_manual_intervention: bool,
+    keep_browser_open: bool,
+    browser_profile_dir: str,
+    browser_cdp_port: int,
+    manual_wait_timeout_seconds: int,
+) -> dict[str, Any]:
+    """打开浏览器等待人工登录后重试下载。"""
+
+    profile_dir = Path(browser_profile_dir).expanduser().resolve()
+    cdp_url = f"http://127.0.0.1:{browser_cdp_port}"
+    browser_proc = _launch_edge_with_cdp(profile_dir, browser_cdp_port, start_url)
+    playwright = None
+    context = None
+    try:
+        time.sleep(2)
+        playwright, context = _connect_context(cdp_url)
+        page = _select_existing_page(context, preferred_url=start_url)
+        page.goto(start_url, wait_until="domcontentloaded", timeout=45000)
+        manual_events = _wait_for_human_if_needed(page, allow_manual_intervention, manual_wait_timeout_seconds)
+        retry_result = _download_with_browser_session(
+            record,
+            download_dir,
+            context=context,
+            page=page,
+            ref_url=page.url or start_url,
+            request_timeout=request_timeout,
+            max_attempts=max_attempts,
+            min_request_delay_seconds=min_request_delay_seconds,
+            max_request_delay_seconds=max_request_delay_seconds,
+        )
+        retry_result["manual_events"] = manual_events
+        retry_result["browser"] = {
+            "cdp_url": cdp_url,
+            "profile_dir": str(profile_dir),
+            "kept_open": keep_browser_open,
+        }
+        return retry_result
+    finally:
+        if playwright is not None:
+            try:
+                playwright.stop()
+            except Exception:
+                pass
+        if browser_proc is not None and not keep_browser_open:
+            try:
+                if browser_proc.poll() is None:
+                    browser_proc.terminate()
+            except Exception:
+                pass
+
+
 def analyze_barrier_with_bailian(barrier_text: str, api_key_file: str) -> dict[str, Any]:
     """用百炼辅助判断访问障碍文本。
 
@@ -696,6 +1094,11 @@ def download_record(
     enable_barrier_analysis: bool = True,
     min_request_delay_seconds: float = 0.35,
     max_request_delay_seconds: float = 1.6,
+    allow_manual_intervention: bool = False,
+    keep_browser_open: bool = False,
+    browser_profile_dir: str = "sandbox/runtime/web_browser_profiles/en_open_access_auth",
+    browser_cdp_port: int = 9332,
+    manual_wait_timeout_seconds: int = 900,
 ) -> dict[str, Any]:
     """尝试下载单条记录的公开 PDF。
 
@@ -711,12 +1114,14 @@ def download_record(
         下载结果。
     """
 
+    doi_resolved_candidates = _collect_doi_resolver_candidates(record.doi)
     queue = _prioritize_pdf_candidates(
-        [record.pdf_url, *list(record.raw.get("download_candidates") or []), record.landing_url],
+        [record.pdf_url, *list(record.raw.get("download_candidates") or []), record.landing_url, *doi_resolved_candidates],
         record.doi,
     )
     visited: set[str] = set()
     attempts: list[dict[str, Any]] = []
+    blocked_http_detected = False
     while queue and len(attempts) < max_attempts:
         candidate = queue.pop(0)
         if candidate in visited:
@@ -731,6 +1136,8 @@ def download_record(
                 timeout=request_timeout,
             )
         except Exception as exc:  # noqa: BLE001
+            if isinstance(exc, urllib.error.HTTPError) and int(getattr(exc, "code", 0) or 0) in {401, 403, 429}:
+                blocked_http_detected = True
             attempts.append(
                 {
                     "url": candidate,
@@ -784,6 +1191,23 @@ def download_record(
                         barrier_payload["bailian_analysis"] = analyze_barrier_with_bailian(html_text, bailian_api_key_file)
                     except Exception as exc:  # noqa: BLE001
                         barrier_payload["bailian_analysis_error"] = str(exc)
+                if barrier[0] in {"login_required", "captcha_required"} and allow_manual_intervention:
+                    manual_result = _manual_login_retry(
+                        record,
+                        download_dir,
+                        start_url=final_url or candidate or record.landing_url or record.pdf_url,
+                        request_timeout=request_timeout,
+                        max_attempts=max_attempts,
+                        min_request_delay_seconds=min_request_delay_seconds,
+                        max_request_delay_seconds=max_request_delay_seconds,
+                        allow_manual_intervention=allow_manual_intervention,
+                        keep_browser_open=keep_browser_open,
+                        browser_profile_dir=browser_profile_dir,
+                        browser_cdp_port=browser_cdp_port,
+                        manual_wait_timeout_seconds=manual_wait_timeout_seconds,
+                    )
+                    manual_result["pre_manual_barrier"] = barrier_payload
+                    return manual_result
                 return barrier_payload
 
             for next_candidate in _extract_pdf_links_from_html(html_text, final_url):
@@ -810,6 +1234,24 @@ def download_record(
                 "request_delay_seconds": request_delay_seconds,
             }
         )
+
+    if allow_manual_intervention and blocked_http_detected:
+        manual_result = _manual_login_retry(
+            record,
+            download_dir,
+            start_url=record.landing_url or (f"https://doi.org/{record.doi}" if record.doi else ""),
+            request_timeout=request_timeout,
+            max_attempts=max_attempts,
+            min_request_delay_seconds=min_request_delay_seconds,
+            max_request_delay_seconds=max_request_delay_seconds,
+            allow_manual_intervention=allow_manual_intervention,
+            keep_browser_open=keep_browser_open,
+            browser_profile_dir=browser_profile_dir,
+            browser_cdp_port=browser_cdp_port,
+            manual_wait_timeout_seconds=manual_wait_timeout_seconds,
+        )
+        manual_result["pre_manual_http_blocked"] = True
+        return manual_result
 
     return {
         "status": "NO_OPEN_PDF",

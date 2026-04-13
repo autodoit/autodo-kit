@@ -2,9 +2,13 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
+import random
 import re
+import shutil
 import sqlite3
+import time
 from datetime import datetime
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
@@ -139,6 +143,13 @@ def _coerce_int(value: Any, default: int) -> int:
         return int(default)
 
 
+def _coerce_float(value: Any, default: float) -> float:
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return float(default)
+
+
 def _coerce_list(value: Any) -> list[Any]:
     if isinstance(value, list):
         return value
@@ -149,6 +160,481 @@ def _coerce_list(value: Any) -> list[Any]:
     if isinstance(value, str):
         return [item.strip() for item in value.split(",") if item.strip()]
     return [value]
+
+
+_A040_SC_ZH_RE = re.compile(r"[\u4e00-\u9fff]")
+
+
+@dataclass(slots=True)
+class _A040SpecialItem:
+    uid_literature: str
+    cite_key: str
+    title: str
+    year: str
+    doi: str
+    landing_url: str
+
+
+def _a040_sc_safe_name(name: str) -> str:
+    cleaned = re.sub(r"[\\/:*?\"<>|]+", "_", str(name or "").strip())
+    cleaned = re.sub(r"\s+", " ", cleaned).strip(" .")
+    return cleaned or "unknown_cite_key"
+
+
+def _a040_sc_is_english_literature(row: sqlite3.Row) -> bool:
+    title = str(row["title"] or "")
+    language = str(row["language"] or "").lower()
+    source_lang = str(row["source_lang"] or "").lower()
+    if "en" in language or "english" in language:
+        return True
+    if source_lang.startswith("en"):
+        return True
+    if title and not _A040_SC_ZH_RE.search(title):
+        return True
+    return False
+
+
+def _a040_sc_coerce_str_list(value: Any) -> list[str]:
+    if value is None:
+        return []
+    if isinstance(value, list):
+        return [str(v).strip() for v in value if str(v).strip()]
+    if isinstance(value, str):
+        return [part.strip() for part in value.split(",") if part.strip()]
+    return [str(value).strip()] if str(value).strip() else []
+
+
+def _a040_sc_parse_cite_keys(payload: dict[str, Any]) -> list[str]:
+    keys: list[str] = []
+    keys.extend(_a040_sc_coerce_str_list(payload.get("cite_keys")))
+    file_text = _normalize_text(payload.get("cite_keys_file"))
+    if file_text:
+        p = Path(file_text).expanduser().resolve()
+        if p.exists() and p.is_file():
+            for line in p.read_text(encoding="utf-8-sig").splitlines():
+                text = line.strip()
+                if text:
+                    keys.append(text)
+    deduped: list[str] = []
+    seen: set[str] = set()
+    for key in keys:
+        lowered = key.lower()
+        if lowered in seen:
+            continue
+        seen.add(lowered)
+        deduped.append(key)
+    return deduped
+
+
+def _a040_sc_load_english_items(db_path: Path) -> list[_A040SpecialItem]:
+    with sqlite3.connect(str(db_path)) as conn:
+        conn.row_factory = sqlite3.Row
+        rows = conn.execute(
+            """
+            SELECT
+                lit.uid_literature,
+                lit.cite_key,
+                lit.title,
+                lit.year,
+                lit.doi,
+                lit.url,
+                lit.language,
+                lit.source_lang
+            FROM literatures AS lit
+            WHERE trim(coalesce(lit.cite_key, '')) <> ''
+            ORDER BY id ASC
+            """
+        ).fetchall()
+
+    items: list[_A040SpecialItem] = []
+    for row in rows:
+        if not _a040_sc_is_english_literature(row):
+            continue
+        items.append(
+            _A040SpecialItem(
+                uid_literature=_normalize_text(row["uid_literature"]),
+                cite_key=_normalize_text(row["cite_key"]),
+                title=_normalize_text(row["title"]),
+                year=_normalize_text(row["year"]),
+                doi=_normalize_text(row["doi"]),
+                landing_url=_normalize_text(row["url"]),
+            )
+        )
+    return items
+
+
+def _a040_sc_load_items_by_cite_keys(db_path: Path, cite_keys: list[str]) -> list[_A040SpecialItem]:
+    if not cite_keys:
+        return []
+    with sqlite3.connect(str(db_path)) as conn:
+        conn.row_factory = sqlite3.Row
+        rows = conn.execute(
+            """
+            SELECT uid_literature, cite_key, title, year, doi, url
+            FROM literatures
+            WHERE trim(coalesce(cite_key, '')) <> ''
+            """
+        ).fetchall()
+    row_map = {_normalize_text(row["cite_key"]).lower(): row for row in rows}
+    items: list[_A040SpecialItem] = []
+    for cite_key in cite_keys:
+        row = row_map.get(cite_key.lower())
+        if row is None:
+            continue
+        items.append(
+            _A040SpecialItem(
+                uid_literature=_normalize_text(row["uid_literature"]),
+                cite_key=_normalize_text(row["cite_key"]),
+                title=_normalize_text(row["title"]),
+                year=_normalize_text(row["year"]),
+                doi=_normalize_text(row["doi"]),
+                landing_url=_normalize_text(row["url"]),
+            )
+        )
+    return items
+
+
+def _a040_sc_build_attachment_uid(item: _A040SpecialItem) -> str:
+    return f"att-{bibliodb_sqlite.build_stable_attachment_uid(item.uid_literature, attachment_name=f'{item.cite_key}.pdf', fallback_uid=item.cite_key)}"
+
+
+def _a040_sc_build_attachment_filename(item: _A040SpecialItem, uid_attachment: str, file_ext: str = ".pdf") -> str:
+    normalized_ext = file_ext if file_ext.startswith(".") else f".{file_ext}"
+    return f"att-{_a040_sc_safe_name(item.cite_key)}-{uid_attachment}{normalized_ext}"
+
+
+def _a040_sc_pick_saved_path(result: dict[str, Any]) -> str:
+    if _normalize_text(result.get("status")) == "PASS":
+        direct = _normalize_text(result.get("saved_path"))
+        if direct:
+            return direct
+    inner = result.get("result")
+    if isinstance(inner, dict) and _normalize_text(inner.get("status")) == "PASS":
+        return _normalize_text(inner.get("saved_path"))
+    return ""
+
+
+def _a040_sc_upsert_download_to_db(
+    db_path: Path,
+    item: _A040SpecialItem,
+    final_pdf_path: Path,
+    source_type: str,
+    affair_name: str,
+    *,
+    download_source_path: str,
+    uid_attachment: str,
+) -> None:
+    now = _now_iso()
+    literatures_df = bibliodb_sqlite.load_literatures_df(db_path).fillna("")
+    attachments_df = bibliodb_sqlite.load_attachments_df(db_path).fillna("")
+    tags_df = bibliodb_sqlite.load_tags_df(db_path).fillna("")
+
+    if literatures_df.empty or "uid_literature" not in literatures_df.columns:
+        raise ValueError(f"content.db 中缺少目标文献: {item.uid_literature}")
+    literature_mask = literatures_df["uid_literature"].astype(str) == item.uid_literature
+    if not literature_mask.any():
+        raise ValueError(f"content.db 中未找到 uid_literature={item.uid_literature}")
+
+    literatures_df.loc[literature_mask, "has_fulltext"] = 1
+    literatures_df.loc[literature_mask, "pdf_path"] = str(final_pdf_path)
+    literatures_df.loc[literature_mask, "primary_attachment_name"] = final_pdf_path.name
+    literatures_df.loc[literature_mask, "primary_attachment_source_path"] = str(download_source_path or final_pdf_path)
+    literatures_df.loc[literature_mask, "updated_at"] = now
+
+    if attachments_df.empty:
+        attachments_df = pd.DataFrame(columns=[
+            "uid_attachment", "uid_literature", "attachment_name", "attachment_type", "file_ext",
+            "storage_path", "source_path", "source_type", "附件来源类型", "来源事务", "checksum",
+            "is_primary", "status", "created_at", "updated_at",
+        ])
+
+    attachment_type_series = attachments_df.get("attachment_type", pd.Series(dtype=str)).astype(str).str.lower()
+    primary_series = pd.to_numeric(attachments_df.get("is_primary", pd.Series(dtype=int)), errors="coerce").fillna(0).astype(int)
+    literature_series = attachments_df.get("uid_literature", pd.Series(dtype=str)).astype(str)
+    attachments_df = attachments_df.loc[
+        ~(
+            (literature_series == item.uid_literature)
+            & (primary_series == 1)
+            & (attachment_type_series.isin(["fulltext", "full_text", "pdf"]))
+        )
+    ].copy()
+
+    attachments_df = pd.concat(
+        [
+            attachments_df,
+            pd.DataFrame(
+                [
+                    {
+                        "uid_attachment": uid_attachment,
+                        "uid_literature": item.uid_literature,
+                        "attachment_name": final_pdf_path.name,
+                        "attachment_type": "fulltext",
+                        "file_ext": final_pdf_path.suffix.lstrip(".").lower() or "pdf",
+                        "storage_path": str(final_pdf_path),
+                        "source_path": str(download_source_path or final_pdf_path),
+                        "source_type": source_type,
+                        "附件来源类型": "在线下载附件",
+                        "来源事务": affair_name,
+                        "checksum": "",
+                        "is_primary": 1,
+                        "status": "available",
+                        "created_at": now,
+                        "updated_at": now,
+                    }
+                ]
+            ),
+        ],
+        ignore_index=True,
+    )
+    attachments_df = attachments_df.drop_duplicates(subset=["uid_literature", "uid_attachment"], keep="last").reset_index(drop=True)
+
+    bibliodb_sqlite.replace_reference_tables_only(
+        db_path,
+        literatures_df=literatures_df,
+        attachments_df=attachments_df,
+        tags_df=tags_df,
+    )
+
+
+def _run_a040_special_channel(payload: dict[str, Any]) -> dict[str, Any]:
+    workspace_root = Path(_normalize_text(payload.get("workspace_root"))).expanduser().resolve()
+    if not workspace_root.exists():
+        raise FileNotFoundError(f"workspace_root 不存在: {workspace_root}")
+
+    content_db = Path(_normalize_text(payload.get("content_db") or (workspace_root / "database" / "content" / "content.db"))).expanduser().resolve()
+    if not content_db.exists():
+        raise FileNotFoundError(f"content_db 不存在: {content_db}")
+
+    task_uid = _normalize_text(payload.get("task_uid") or (datetime.now().strftime("%Y%m%d%H%M%S") + "-A040-special-en-download"))
+    task_dir = Path(_normalize_text(payload.get("task_dir") or (workspace_root / "tasks" / task_uid))).expanduser().resolve()
+    raw_dir = task_dir / "downloads_raw"
+    renamed_dir = task_dir / "downloads_renamed"
+    report_dir = task_dir / "reports"
+    attachments_target_dir = Path(_normalize_text(payload.get("attachments_target_dir") or (workspace_root / "references" / "attachments"))).expanduser().resolve()
+    raw_dir.mkdir(parents=True, exist_ok=True)
+    renamed_dir.mkdir(parents=True, exist_ok=True)
+    report_dir.mkdir(parents=True, exist_ok=True)
+    attachments_target_dir.mkdir(parents=True, exist_ok=True)
+
+    selected_cite_keys = _a040_sc_parse_cite_keys(payload)
+    all_items_raw = _a040_sc_load_items_by_cite_keys(content_db, selected_cite_keys) if selected_cite_keys else _a040_sc_load_english_items(content_db)
+
+    skip_existing = _coerce_bool(payload.get("skip_existing"), True)
+    skipped_existing = 0
+    all_items: list[_A040SpecialItem] = []
+    if skip_existing:
+        with sqlite3.connect(str(content_db)) as conn:
+            conn.row_factory = sqlite3.Row
+            existing_rows = {
+                str(row["uid_literature"]): row
+                for row in conn.execute(
+                    """
+                    SELECT lit.uid_literature, lit.has_fulltext, lit.pdf_path, lit.primary_attachment_source_path,
+                           EXISTS(
+                               SELECT 1 FROM literature_attachment_links AS lnk
+                               WHERE lnk.uid_literature = lit.uid_literature
+                                 AND CAST(coalesce(lnk.is_primary, 0) AS INTEGER) = 1
+                           ) AS has_primary_link
+                    FROM literatures AS lit
+                    """
+                ).fetchall()
+            }
+        for item in all_items_raw:
+            info = existing_rows.get(item.uid_literature)
+            if info is None:
+                all_items.append(item)
+                continue
+            if int(info["has_fulltext"] or 0) == 1:
+                skipped_existing += 1
+                continue
+            if bool(_normalize_text(info["pdf_path"])):
+                skipped_existing += 1
+                continue
+            if bool(_normalize_text(info["primary_attachment_source_path"])):
+                skipped_existing += 1
+                continue
+            if int(info["has_primary_link"] or 0) == 1:
+                skipped_existing += 1
+                continue
+            all_items.append(item)
+    else:
+        all_items = all_items_raw
+
+    offset = max(_coerce_int(payload.get("offset"), 0), 0)
+    if offset > 0:
+        all_items = all_items[offset:]
+    max_items = _coerce_int(payload.get("max_items"), 0)
+    items = all_items[:max_items] if max_items > 0 else all_items
+
+    summary: dict[str, Any] = {
+        "task_uid": task_uid,
+        "started_at": _now_iso(),
+        "workspace_root": str(workspace_root),
+        "content_db": str(content_db),
+        "total_candidates": len(items),
+        "selected_cite_keys": selected_cite_keys,
+        "skip_existing_enabled": bool(skip_existing),
+        "skipped_existing": skipped_existing,
+        "success": 0,
+        "failed": 0,
+        "records": [],
+    }
+
+    school_portal_url = _normalize_text(payload.get("school_portal_url"))
+    summary_path = report_dir / "summary.json"
+
+    for idx, item in enumerate(items, start=1):
+        short_token = hashlib.md5(item.cite_key.encode("utf-8")).hexdigest()[:10]
+        per_item_raw_dir = raw_dir / f"i{idx:05d}_{short_token}"
+        per_item_raw_dir.mkdir(parents=True, exist_ok=True)
+
+        record = {
+            "source": "en_special",
+            "source_id": item.cite_key,
+            "title": item.title,
+            "year": item.year,
+            "doi": item.doi,
+            "landing_url": item.landing_url,
+            "pdf_url": "",
+            "bibtex_key": item.cite_key,
+            "raw": {},
+        }
+        single_payload = {
+            "source": "en_open_access",
+            "mode": "single",
+            "action": "download",
+            "request_profile": "en",
+            "record": record,
+            "output_dir": str(per_item_raw_dir),
+            "download_request_timeout": _coerce_int(payload.get("download_timeout"), 12),
+            "per_record_max_attempts": _coerce_int(payload.get("max_attempts"), 6),
+            "min_request_delay_seconds": _coerce_float(payload.get("min_request_delay"), 0.35),
+            "max_request_delay_seconds": _coerce_float(payload.get("max_request_delay"), 1.6),
+            "enable_barrier_analysis": _coerce_bool(payload.get("enable_barrier_analysis"), False),
+            "allow_manual_intervention": _coerce_bool(payload.get("allow_manual_intervention"), False),
+            "keep_browser_open": _coerce_bool(payload.get("keep_browser_open"), False),
+            "browser_profile_dir": _normalize_text(payload.get("browser_profile_dir")),
+            "browser_cdp_port": _coerce_int(payload.get("browser_cdp_port"), 9222),
+            "manual_wait_timeout_seconds": _coerce_int(payload.get("manual_wait_timeout_seconds"), 900),
+        }
+        try:
+            single_result = run_online_retrieval_router(single_payload)
+        except Exception as exc:  # noqa: BLE001
+            single_result = {"status": "BLOCKED", "error_type": exc.__class__.__name__, "error": str(exc)}
+
+        retry_result: dict[str, Any] | None = None
+        saved_path = _a040_sc_pick_saved_path(single_result)
+        if not saved_path and school_portal_url:
+            retry_payload = {
+                "source": "en_open_access",
+                "mode": "retry",
+                "action": "chaoxing_portal",
+                "request_profile": "en",
+                "failed_records": [record],
+                "library_nav_url": school_portal_url,
+                "subject_categories": ["经济学", "管理学", "综合"],
+                "max_databases_per_record": _coerce_int(payload.get("max_databases_per_record"), 2),
+                "output_dir": str(per_item_raw_dir / "portal_retry"),
+                "allow_manual_intervention": _coerce_bool(payload.get("allow_manual_intervention"), False),
+                "keep_browser_open": _coerce_bool(payload.get("keep_browser_open"), False),
+                "browser_profile_dir": _normalize_text(payload.get("browser_profile_dir")),
+                "browser_cdp_port": _coerce_int(payload.get("browser_cdp_port"), 9222),
+                "manual_wait_timeout_seconds": _coerce_int(payload.get("manual_wait_timeout_seconds"), 900),
+            }
+            try:
+                retry_result = run_online_retrieval_router(retry_payload)
+            except Exception as exc:  # noqa: BLE001
+                retry_result = {"status": "BLOCKED", "error_type": exc.__class__.__name__, "error": str(exc), "results": []}
+
+            retry_results = list(retry_result.get("results") or [])
+            for row in retry_results:
+                candidate = dict((dict(row or {})).get("final_result") or {})
+                candidate_saved = _a040_sc_pick_saved_path(candidate)
+                if candidate_saved:
+                    saved_path = candidate_saved
+                    break
+
+        item_result: dict[str, Any] = {
+            "cite_key": item.cite_key,
+            "title": item.title,
+            "single_status": single_result.get("status"),
+            "saved_path": saved_path,
+        }
+        if single_result.get("error"):
+            item_result["single_error"] = str(single_result.get("error"))
+        if retry_result is not None:
+            item_result["retry_status"] = "PASS" if saved_path else "NO_PDF"
+            if retry_result.get("error"):
+                item_result["retry_error"] = str(retry_result.get("error"))
+
+        if saved_path and Path(saved_path).exists():
+            uid_attachment = _a040_sc_build_attachment_uid(item)
+            target_pdf = attachments_target_dir / _a040_sc_build_attachment_filename(item, uid_attachment)
+            shutil.copy2(saved_path, target_pdf)
+
+            mirror_pdf = renamed_dir / target_pdf.name
+            if not mirror_pdf.exists():
+                shutil.copy2(target_pdf, mirror_pdf)
+
+            _a040_sc_upsert_download_to_db(
+                db_path=content_db,
+                item=item,
+                final_pdf_path=target_pdf,
+                source_type="online_retrieval_en_special",
+                affair_name="A040_special",
+                download_source_path=saved_path,
+                uid_attachment=uid_attachment,
+            )
+            summary["success"] += 1
+            item_result["final_pdf"] = str(target_pdf)
+            item_result["uid_attachment"] = uid_attachment
+        else:
+            summary["failed"] += 1
+
+        summary["records"].append(item_result)
+        summary["last_processed_index"] = idx
+        summary_path.write_text(json.dumps(summary, ensure_ascii=False, indent=2), encoding="utf-8")
+
+        if idx < len(items):
+            time.sleep(random.uniform(_coerce_float(payload.get("min_inter_item_delay"), 2.8), _coerce_float(payload.get("max_inter_item_delay"), 7.4)))
+
+    summary["ended_at"] = _now_iso()
+    summary_path.write_text(json.dumps(summary, ensure_ascii=False, indent=2), encoding="utf-8")
+
+    reading_list_arg = _normalize_text(payload.get("reading_list_path"))
+    reading_list_path = (report_dir / "待研读文献清单.json") if not reading_list_arg else Path(reading_list_arg)
+    if not reading_list_path.is_absolute():
+        reading_list_path = (workspace_root / reading_list_path).resolve()
+    reading_list_path.parent.mkdir(parents=True, exist_ok=True)
+    reading_list_payload = {
+        "topic": _normalize_text(payload.get("topic") or "房地产价格波动对银行系统性风险的影响"),
+        "generated_at": _now_iso(),
+        "task_uid": task_uid,
+        "items": [
+            {
+                "cite_key": row.get("cite_key"),
+                "title": row.get("title"),
+                "final_pdf": row.get("final_pdf", ""),
+                "single_status": row.get("single_status", ""),
+                "retry_status": row.get("retry_status", ""),
+            }
+            for row in summary.get("records", [])
+        ],
+    }
+    reading_list_path.write_text(json.dumps(reading_list_payload, ensure_ascii=False, indent=2), encoding="utf-8")
+
+    manifest_path = report_dir / "success_manifest.jsonl"
+    with manifest_path.open("w", encoding="utf-8") as f:
+        for row in summary["records"]:
+            if row.get("final_pdf"):
+                f.write(json.dumps(row, ensure_ascii=False) + "\n")
+
+    summary["task_dir"] = str(task_dir)
+    summary["summary_path"] = str(summary_path)
+    summary["success_manifest_path"] = str(manifest_path)
+    summary["reading_list_path"] = str(reading_list_path)
+    summary["attachments_target_dir"] = str(attachments_target_dir)
+    return summary
 
 
 def _build_query_terms(raw_cfg: dict[str, Any]) -> list[str]:
@@ -909,6 +1395,67 @@ def execute(config_path: Path) -> list[Path]:
 
     legacy_output_dir = resolve_legacy_output_dir(raw_cfg, config_path)
     output_dir = create_task_instance_dir(workspace_root, "A040")
+
+    # A040 特殊渠道分支：开放源批量 -> 学校门户重试 -> 人工清单。
+    special_mode = _normalize_text(raw_cfg.get("special_channel_mode") or "none").lower()
+    special_enabled = _coerce_bool(raw_cfg.get("enable_special_channel"), False)
+    if special_enabled and special_mode in {"en_special_download", "en_open_access_special"}:
+        special_payload = {
+            **dict(raw_cfg.get("special_channel") or {}),
+            "workspace_root": str(workspace_root),
+            "content_db": str(content_db_path),
+            "task_uid": output_dir.name,
+            "task_dir": str(output_dir),
+            "attachments_target_dir": _normalize_text(raw_cfg.get("attachments_target_dir")) or str((workspace_root / "references" / "attachments").resolve()),
+            "school_portal_url": _normalize_text(raw_cfg.get("school_library_nav_url") or raw_cfg.get("library_nav_url") or raw_cfg.get("portal_url")),
+            "topic": _normalize_text(raw_cfg.get("query") or "房地产价格波动对银行系统性风险的影响"),
+            "skip_existing": _coerce_bool((raw_cfg.get("special_channel") or {}).get("skip_existing"), True),
+        }
+        special_result = _run_a040_special_channel(special_payload)
+        gate_review = {
+            "node_code": "A040",
+            "node_name": "文献检索与入库",
+            "gate_code": "G040",
+            "gate_action": "pass_next" if int(special_result.get("success") or 0) > 0 else "fallback_current",
+            "summary": "A040 特殊渠道执行完成",
+            "checks": {
+                "special_channel_mode": special_mode,
+                "success": int(special_result.get("success") or 0),
+                "failed": int(special_result.get("failed") or 0),
+                "total_candidates": int(special_result.get("total_candidates") or 0),
+            },
+        }
+        result = {
+            "status": "PASS",
+            "governance": governance_result,
+            "mode": "special_channel",
+            "special_channel": special_result,
+            "gate_review": gate_review,
+        }
+        out_path = output_dir / "retrieval_governance_result.json"
+        gate_path = output_dir / "gate_review.json"
+        readable_path = output_dir / "retrieval_readable.md"
+        out_path.write_text(json.dumps(result, ensure_ascii=False, indent=2), encoding="utf-8")
+        gate_path.write_text(json.dumps(gate_review, ensure_ascii=False, indent=2), encoding="utf-8")
+        readable_path.write_text(
+            "\n".join(
+                [
+                    "# A040 检索执行摘要",
+                    "",
+                    "- mode: special_channel",
+                    f"- success: {special_result.get('success', 0)}",
+                    f"- failed: {special_result.get('failed', 0)}",
+                    f"- total_candidates: {special_result.get('total_candidates', 0)}",
+                    f"- task_dir: {special_result.get('task_dir', '')}",
+                    f"- gate_action: {gate_review.get('gate_action', 'fallback_current')}",
+                ]
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+        written_files: list[Path] = [out_path, gate_path, readable_path]
+        mirror_artifacts_to_legacy(written_files, legacy_output_dir, output_dir)
+        return written_files
 
     query_terms = _build_query_terms(raw_cfg)
     query_text = _normalize_text(raw_cfg.get("query") or (query_terms[0] if query_terms else ""))
