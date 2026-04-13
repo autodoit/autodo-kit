@@ -1851,7 +1851,8 @@ def 渲染_yaml键值(name: str, value: Any) -> list[str]:
             item_text = str(item).replace('"', '\\"')
             lines.append(f'  - "{item_text}"')
         return lines
-    return [f'{name}: "{str(value).replace("\"", "\\\"")}"']
+    escaped_value = str(value).replace('"', '\\"')
+    return [f'{name}: "{escaped_value}"']
 
 
 def 渲染_opencode_agent(agent: 代理定义) -> str:

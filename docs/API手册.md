@@ -372,6 +372,74 @@ MonkeyOCR 单篇解析的输出契约建议统一如下：
 - `parse_direct_run.log`：实时日志文件。
 
 如果你在别的 Windows 11 设备上复现，建议优先复用这套参数组合：`device=cuda`、`gpu_visible_devices=0`、`triton-windows<3.4`、`MonkeyOCR-pro-1.2B`，并把 `models_dir` 指到本机权重目录。
+
+### 2.4 TeX DAG 管理工具
+
+用于扫描论文仓库中的 TeX 引用关系，并安全更新 `\subfile`、`\input`、`\include` 和 `\documentclass[...]{subfiles}`。
+
+推荐导入方式：
+
+```python
+from autodokit.tools import export_tex_graph, rewire_tex_reference, scan_tex_graph, set_tex_root
+```
+
+#### `scan_tex_graph(root_dir='.', exclude_glob=None)`
+
+用途：扫描整个根目录下的 `.tex` 文件，返回引用图对象。
+
+返回值：`TexGraph`。
+
+#### `export_tex_graph(root_dir='.', format='text', output=None, exclude_glob=None)`
+
+用途：导出引用图为 `text`、`json`、`mermaid` 或 `dot`。
+
+如果传了 `output`，会直接写入文件；否则返回图对象，便于程序侧继续分析。
+
+#### `rewire_tex_reference(...)`
+
+用途：把父文件里的旧子节点引用切换到新子节点，并可选同步更新新子树的 `subfiles` 根引用。
+
+常用参数：
+
+- `root_dir`：论文仓库根目录。
+- `parent`：父文件路径。
+- `old_target`：旧子文件路径。
+- `new_target`：新子文件路径。
+- `sync_root`：是否同步更新新子文件的根引用。
+- `recursive`：是否递归更新新子树的根引用。
+- `dry_run`：是否只预演不写回。
+
+#### `set_tex_root(...)`
+
+用途：直接为某个子文件或子树重设 `subfiles` 根文件。
+
+常用参数：
+
+- `root_dir`：论文仓库根目录。
+- `file`：目标子文件。
+- `root`：新的主根文件。
+- `recursive`：是否递归更新整个子树。
+- `dry_run`：是否只预演不写回。
+
+#### CLI 薄入口
+
+安装后可直接使用：
+
+```powershell
+manage-tex-dag --help
+```
+
+或者在仓库内运行：
+
+```powershell
+python scripts/manage_tex_dag.py --help
+```
+
+命令分为三类：
+
+1. `graph`：导出引用关系图。
+2. `rewire`：重连父文件中的子文档引用。
+3. `set-root`：更新子文件的 `subfiles` 根引用。
 - `task_status_append(status_log, aok_task_uid, ...)`
 - `task_gate_decision_record(gate_decisions, aok_task_uid, ...)`
 - `task_handoff_record(handoffs, from_task_uid, to_task_uid, ...)`

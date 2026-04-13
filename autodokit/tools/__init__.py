@@ -560,6 +560,13 @@ from autodokit.tools.workspace_path_migration import (
     PathMapping,
     migrate_workspace_paths,
 )
+from autodokit.tools.tex_dag_tools import (
+    export_tex_graph,
+    rewire_tex_reference,
+    scan_tex_graph,
+    set_tex_root,
+)
+
 def run_online_retrieval_router(payload: dict[str, Any]) -> dict[str, Any]:
     """延迟加载在线检索路由器并执行路由调用。
 
@@ -912,6 +919,10 @@ _开发者工具 = [
     "resolve_mainline_affair_entry",
     "render_pdf_pages_to_png",
     "crop_image_by_normalized_bbox",
+    "scan_tex_graph",
+    "export_tex_graph",
+    "rewire_tex_reference",
+    "set_tex_root",
     "build_pdf_multimodal_elements_payload",
     "build_pdf_multimodal_structure_tree",
     "build_pdf_multimodal_tree_linear_index",

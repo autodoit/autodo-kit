@@ -18,6 +18,9 @@ dependencies = [
     "rapidocr-onnxruntime>=1.4.4",
 ]
 
+[project.scripts]
+manage-tex-dag = "scripts.manage_tex_dag:main"
+
 [build-system]
 requires = ["setuptools>=61", "wheel"]
 build-backend = "setuptools.build_meta"
@@ -27,7 +30,7 @@ include-package-data = true
 
 [tool.setuptools.packages.find]
 where = ["."]
-include = ["autodokit*"]
+include = ["autodokit*", "scripts*"]
 exclude = ["demos*", "docs*", "config*", "flowgraphs*", "nodes*"]
 
 [tool.setuptools.package-data]
