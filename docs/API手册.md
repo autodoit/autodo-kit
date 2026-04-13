@@ -241,6 +241,27 @@ result = migrate_workspace_paths(
 - 该工具属于通用批处理工具，不隶属于 `online_retrieval_literatures/` 目录。
 - 工具内部仍然通过 `run_online_retrieval_router(...)` 进入在线检索三层结构，保持路由统一入口不变。
 
+### 1.10 在线检索文献模块的结构口径
+
+在线检索文献模块统一收敛到 `autodokit/tools/online_retrieval_literatures/`，公开调用仍只走 `run_online_retrieval_router(...)`。
+
+当前建议按以下三层理解：
+
+1. 请求画像层：`profiles/request_profile.py`，负责区分中文、英文、中英文不限。
+2. 路由层：`router/route_entry.py` 与 `online_retrieval_router.py`，负责入口治理与策略分发。
+3. 编排层：`orchestrators/*.py`、`policies/*.py`、`catalogs/*.py`，负责输入归一化、来源发现、来源选择、重试与批量组织。
+4. 执行层：`executors/*.py` 与各 `zh_cnki_*`、`en_open_access_*`、`content_portal_spis.py`，负责单篇 metadata、download、structured extract。
+
+用户不应直接调用的内部文件包括但不限于：
+
+1. `online_retrieval_resolver.py`：输入归一化与兼容回退。
+2. `online_retrieval_service.py`：路由分发与编排壳。
+3. `school_foreign_database_portal.py`：学校数据库导航门户适配。
+4. `en_chaoxing_portal_retry.py`：英文失败项学校门户重试。
+5. `executors/content_portal_cnki.py`、`executors/content_portal_spis.py`、`executors/open_platform.py`、`executors/navigation_portal.py`：执行层内部实现。
+
+如果你在写开发说明或排障记录，建议优先引用 `docs/在线检索文献模块专题.md`，再补具体文件名，避免只说“在线检索模块”而不说清楚层级边界。
+
 ## 2. autodokit.tools 导出
 
 `autodokit.tools` 采用“按函数直接调用”的公开方式，并按对象分为用户 API 与开发者 API。
@@ -441,9 +462,20 @@ MonkeyOCR 单篇解析的输出契约建议统一如下：
 
 三层结构（2026-04 起）：
 
-1. 路由层：`online_retrieval_router.py`，负责统一入口、规则注入和 debug 编排。
-2. 解析层：`online_retrieval_resolver.py`，负责把 `entries` / `records` / `seed_items` / `cite_keys` / `pdf_paths` 统一转换为可执行载荷。
-3. 功能层：`online_retrieval_service.py` + `zh_cnki_*` / `en_open_access_*` 执行器，负责实际检索、下载、抽取。
+1. 请求画像层：`profiles/request_profile.py`，负责区分中文、英文、中英文不限等约束。
+2. 路由层：`online_retrieval_router.py` + `router/route_entry.py`，负责统一入口、规则注入和调度选择。
+3. 编排层：`orchestrators/*.py` + `policies/*.py` + `catalogs/*.py`，负责把 `entries` / `records` / `seed_items` / `cite_keys` / `pdf_paths` 统一转换为可执行载荷，并完成来源发现、来源选择和 retry。
+4. 执行层：`executors/*.py` + `zh_cnki_*` / `en_open_access_*` / `content_portal_spis.py`，负责实际检索、下载、抽取。
+
+用户不应直接调用的内部实现文件包括但不限于：
+
+1. `online_retrieval_resolver.py`
+2. `online_retrieval_service.py`
+3. `school_foreign_database_portal.py`
+4. `en_chaoxing_portal_retry.py`
+5. `open_access_literature_retrieval.py`
+
+这些文件属于内部编排与执行实现，不是普通用户 API。
 
 新增输入契约（兼容旧 payload）：
 
@@ -451,12 +483,12 @@ MonkeyOCR 单篇解析的输出契约建议统一如下：
 - `cite_keys`: `list[str]`，用于批量输入文献引用键。
 - `pdf_paths`: `list[str]`，用于批量输入 PDF 绝对路径。
 - `content_db` / `content_db_path`: `str`，可选；提供后会优先尝试从 `literatures` 表补齐 `title` / `pdf_path`。
-- `workspace_root`: `str`，当未显式提供 `content_db` 时，解析层会尝试使用 `<workspace_root>/database/content/content.db`。
+- `workspace_root`: `str`，当未显式提供 `content_db` 时，编排层会尝试使用 `<workspace_root>/database/content/content.db`。
 
 解析策略说明：
 
-- `zh_cnki batch download/html_extract`：若未传 `entries`，会自动尝试由 `seed_items` / `cite_keys` / `pdf_paths` 解析生成。
-- `zh_cnki single download/html_extract`：若未传 `zh_query`（或 `query`）且未传 `detail_url`，会自动从解析结果补齐首条候选。
+- `zh_cnki batch download/html_extract`：若未传 `entries`，会自动尝试由编排层把 `seed_items` / `cite_keys` / `pdf_paths` 解析生成。
+- `zh_cnki single download/html_extract`：若未传 `zh_query`（或 `query`）且未传 `detail_url`，会自动从编排结果补齐首条候选。
 - `en_open_access single/batch download`：若未传 `record`（或 `records`），会自动由种子输入构造最小 `record` 载荷。
 
 典型场景：
@@ -466,7 +498,7 @@ MonkeyOCR 单篇解析的输出契约建议统一如下：
 - 中文 CNKI 单篇/批量 HTML 抽取
 - 英文开放源题录检索与全文下载
 - 学校数据库导航与超星门户相关流程
-- 本地 `cite_key`/PDF 清单驱动的在线补检索（解析层先归一，再由功能层执行）
+- 本地 `cite_key`/PDF 清单驱动的在线补检索（先由编排层归一，再由执行层执行）
 
 路由治理与回归补充（P5 起生效）：
 
