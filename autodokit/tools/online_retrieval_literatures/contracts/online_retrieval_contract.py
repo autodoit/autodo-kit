@@ -1,0 +1,17 @@
+"""在线检索路由基础契约常量。"""
+
+MODE_SEARCH = "search"
+MODE_SINGLE = "single"
+MODE_BATCH = "batch"
+MODE_CATALOG = "catalog"
+MODE_RETRY = "retry"
+MODE_DEBUG = "debug"
+
+ACTION_METADATA = "metadata"
+ACTION_SINGLE_DOWNLOAD = "download"
+ACTION_BATCH_DOWNLOAD = "download"
+ACTION_HTML_EXTRACT = "html_extract"
+ACTION_BATCH_HTML_EXTRACT = "html_extract"
+ACTION_FETCH = "fetch"
+ACTION_PORTAL_RETRY = "chaoxing_portal"
+ACTION_PIPELINE = "pipeline"

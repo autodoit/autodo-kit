@@ -25,5 +25,38 @@
       "cmfd",
       "cdfd"
     ]
-  }
+  },
+  "source_families": {
+    "zh_cnki": "content_portal",
+    "spis": "content_portal",
+    "en_open_access": "open_platform",
+    "school_foreign_database_portal": "navigation_portal"
+  },
+  "request_profiles": [
+    "zh",
+    "en",
+    "mixed"
+  ],
+  "capability_matrix": [
+    {"source": "zh_cnki", "mode": "search", "action": "metadata", "layer": "executor"},
+    {"source": "zh_cnki", "mode": "single", "action": "download", "layer": "executor"},
+    {"source": "zh_cnki", "mode": "single", "action": "html_extract", "layer": "executor"},
+    {"source": "zh_cnki", "mode": "batch", "action": "download", "layer": "orchestrator"},
+    {"source": "zh_cnki", "mode": "batch", "action": "html_extract", "layer": "orchestrator"},
+
+    {"source": "spis", "mode": "search", "action": "metadata", "layer": "executor"},
+    {"source": "spis", "mode": "single", "action": "download", "layer": "executor"},
+    {"source": "spis", "mode": "single", "action": "html_extract", "layer": "executor"},
+    {"source": "spis", "mode": "batch", "action": "download", "layer": "orchestrator"},
+    {"source": "spis", "mode": "batch", "action": "html_extract", "layer": "orchestrator"},
+
+    {"source": "en_open_access", "mode": "search", "action": "metadata", "layer": "executor"},
+    {"source": "en_open_access", "mode": "single", "action": "download", "layer": "executor"},
+    {"source": "en_open_access", "mode": "single", "action": "html_extract", "layer": "executor"},
+    {"source": "en_open_access", "mode": "batch", "action": "download", "layer": "orchestrator"},
+    {"source": "en_open_access", "mode": "batch", "action": "html_extract", "layer": "orchestrator"},
+    {"source": "en_open_access", "mode": "retry", "action": "chaoxing_portal", "layer": "orchestrator"},
+
+    {"source": "school_foreign_database_portal", "mode": "catalog", "action": "fetch", "layer": "orchestrator"}
+  ]
 }

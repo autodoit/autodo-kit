@@ -1,0 +1,37 @@
+"""在线检索契约定义。"""
+
+from .online_retrieval_contract import (
+    ACTION_BATCH_DOWNLOAD,
+    ACTION_BATCH_HTML_EXTRACT,
+    ACTION_FETCH,
+    ACTION_HTML_EXTRACT,
+    ACTION_METADATA,
+    ACTION_PIPELINE,
+    ACTION_PORTAL_RETRY,
+    ACTION_SINGLE_DOWNLOAD,
+    MODE_BATCH,
+    MODE_CATALOG,
+    MODE_DEBUG,
+    MODE_RETRY,
+    MODE_SEARCH,
+    MODE_SINGLE,
+)
+from .result_contract import finalize_result
+
+__all__ = [
+    "MODE_SEARCH",
+    "MODE_SINGLE",
+    "MODE_BATCH",
+    "MODE_CATALOG",
+    "MODE_RETRY",
+    "MODE_DEBUG",
+    "ACTION_METADATA",
+    "ACTION_SINGLE_DOWNLOAD",
+    "ACTION_BATCH_DOWNLOAD",
+    "ACTION_HTML_EXTRACT",
+    "ACTION_BATCH_HTML_EXTRACT",
+    "ACTION_FETCH",
+    "ACTION_PORTAL_RETRY",
+    "ACTION_PIPELINE",
+    "finalize_result",
+]

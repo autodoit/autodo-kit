@@ -9,7 +9,7 @@ from typing import Any
 
 from .en_open_access_pipeline import run_pipeline as run_english_pipeline
 from .cnki_paged_retrieval import run_pipeline as run_cnki_pipeline
-from .online_retrieval_service import dispatch as dispatch_online_retrieval
+from .router import route_request
 
 
 def _safe_run(func: Any, config: dict[str, Any]) -> dict[str, Any]:
@@ -25,6 +25,8 @@ def _safe_run(func: Any, config: dict[str, Any]) -> dict[str, Any]:
 
 def _load_debug_inputs(script_dir: Path) -> dict[str, Any]:
     input_path = script_dir / "debug_inputs.json"
+    if not input_path.exists():
+        return {}
     return json.loads(input_path.read_text(encoding="utf-8"))
 
 
@@ -203,7 +205,7 @@ def route(payload: dict[str, Any]) -> dict[str, Any]:
     """执行路由层治理并分发到功能层。"""
 
     payload = _inject_rules(payload)
-    return dispatch_online_retrieval(
+    return route_request(
         payload,
         debug_handler=lambda merged_payload: run_full_debug(Path(__file__).resolve().parent, merged_payload),
     )
