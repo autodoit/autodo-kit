@@ -813,7 +813,7 @@ def test_review_map_affair_should_ensure_parse_asset_on_entry(monkeypatch, tmp_p
         keep_default_na=False,
     )
     assert not downstream_df.empty
-    assert set(downstream_df["preferred_next_stage"].tolist()) >= {"A080"}
+    assert set(downstream_df["target_stage"].tolist()) == {"A080"}
 
     queue_a080 = load_reading_queue_df(content_db, stage="A080", only_current=True)
     assert not queue_a080.empty

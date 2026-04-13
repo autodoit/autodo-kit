@@ -864,7 +864,8 @@ def _build_downstream_candidates(
                 "title_or_hint": title or cite_key,
                 "class": bucket,
                 "recommended_reason": reason,
-                "preferred_next_stage": "A080",
+                "target_stage": "A080",
+                "candidate_source": "must_read_originals",
                 "theme_relation": "review_must_read",
                 "priority": 90.0 if bucket == "classical_core" else 84.0,
             }
@@ -878,8 +879,8 @@ def _build_downstream_candidates(
                 "queue_status": "queued",
                 "priority": 90.0 if bucket == "classical_core" else 84.0,
                 "bucket": bucket,
-                "preferred_next_stage": "A080",
                 "recommended_reason": reason,
+                "candidate_source": "must_read_originals",
                 "theme_relation": "review_must_read",
             }
         )
@@ -898,8 +899,9 @@ def _build_downstream_candidates(
                 "title_or_hint": title or cite_key,
                 "class": bucket,
                 "recommended_reason": reason,
-                "preferred_next_stage": "A090",
-                "theme_relation": "review_general_reading",
+                "target_stage": "A080",
+                "candidate_source": "review_general_reading_list",
+                "theme_relation": "review_reference_candidate",
                 "priority": 68.0 if bucket in {"method_transfer", "counterexample"} else 60.0,
             }
         )
@@ -907,19 +909,19 @@ def _build_downstream_candidates(
             {
                 "uid_literature": uid_literature,
                 "cite_key": cite_key,
-                "stage": "A090",
+                "stage": "A080",
                 "source_affair": "A070",
                 "queue_status": "queued",
                 "priority": 68.0 if bucket in {"method_transfer", "counterexample"} else 60.0,
                 "bucket": bucket,
-                "preferred_next_stage": "A090",
                 "recommended_reason": reason,
-                "theme_relation": "review_general_reading",
+                "candidate_source": "review_general_reading_list",
+                "theme_relation": "review_reference_candidate",
             }
         )
 
-    downstream_df = pd.DataFrame(downstream_rows).drop_duplicates(subset=["uid_literature", "cite_key", "preferred_next_stage"], keep="first") if downstream_rows else pd.DataFrame(columns=["uid_literature", "cite_key", "title_or_hint", "class", "recommended_reason", "preferred_next_stage", "theme_relation", "priority"])
-    queue_df = pd.DataFrame(queue_rows).drop_duplicates(subset=["stage", "uid_literature", "cite_key"], keep="first") if queue_rows else pd.DataFrame(columns=["uid_literature", "cite_key", "stage", "source_affair", "queue_status", "priority", "bucket", "preferred_next_stage", "recommended_reason", "theme_relation"])
+    downstream_df = pd.DataFrame(downstream_rows).drop_duplicates(subset=["uid_literature", "cite_key"], keep="first") if downstream_rows else pd.DataFrame(columns=["uid_literature", "cite_key", "title_or_hint", "class", "recommended_reason", "target_stage", "candidate_source", "theme_relation", "priority"])
+    queue_df = pd.DataFrame(queue_rows).drop_duplicates(subset=["stage", "uid_literature", "cite_key"], keep="first") if queue_rows else pd.DataFrame(columns=["uid_literature", "cite_key", "stage", "source_affair", "queue_status", "priority", "bucket", "recommended_reason", "candidate_source", "theme_relation"])
     return downstream_df, queue_df
 
 
@@ -1943,17 +1945,30 @@ def execute(config_path: Path) -> List[Path]:
         if written_path is not None:
             artifacts.append(written_path)
 
+    # 新口径导出命名：保留旧文件兼容，同时补充统一命名文件。
+    audits_dir = _a05_dirs(workspace_root)["audits"]
+    if audits_dir.exists():
+        normalized_a080_candidates = audits_dir / "review_priority_candidates.csv"
+        must_read_df.to_csv(normalized_a080_candidates, index=False, encoding="utf-8-sig")
+        artifacts.append(normalized_a080_candidates)
+        normalized_reference_candidates = audits_dir / "review_reference_candidates.csv"
+        general_reading_df.to_csv(normalized_reference_candidates, index=False, encoding="utf-8-sig")
+        artifacts.append(normalized_reference_candidates)
+
     batch_path = _update_batch_file(asset_paths["review_reading_batches"], review_states, missing_assets)
     if batch_path is not None:
         artifacts.append(batch_path)
 
     step_output_dir = output_dir
     step_output_dir.mkdir(parents=True, exist_ok=True)
-    downstream_path = step_output_dir / "downstream_non_review_candidates.csv"
+    downstream_path = step_output_dir / "a080_seed_candidates.csv"
     downstream_df.to_csv(downstream_path, index=False, encoding="utf-8-sig")
     artifacts.append(downstream_path)
-    downstream_md_path = step_output_dir / "downstream_non_review_candidates.md"
-    md_lines = ["# downstream_non_review_candidates", ""]
+    legacy_downstream_path = step_output_dir / "downstream_non_review_candidates.csv"
+    downstream_df.to_csv(legacy_downstream_path, index=False, encoding="utf-8-sig")
+    artifacts.append(legacy_downstream_path)
+    downstream_md_path = step_output_dir / "a080_seed_candidates.md"
+    md_lines = ["# a080_seed_candidates", ""]
     if downstream_df.empty:
         md_lines.append("- 当前无可导出的非综述候选条目。")
     else:
@@ -1961,11 +1976,14 @@ def execute(config_path: Path) -> List[Path]:
             md_lines.append(
                 "- "
                 + f"{_stringify(row.get('cite_key')) or _stringify(row.get('uid_literature'))} | "
-                + f"{_stringify(row.get('preferred_next_stage'))} | "
+                + f"{_stringify(row.get('target_stage')) or 'A080'} | "
                 + f"{_stringify(row.get('recommended_reason'))}"
             )
     downstream_md_path.write_text("\n".join(md_lines).strip() + "\n", encoding="utf-8")
     artifacts.append(downstream_md_path)
+    legacy_downstream_md_path = step_output_dir / "downstream_non_review_candidates.md"
+    legacy_downstream_md_path.write_text(downstream_md_path.read_text(encoding="utf-8"), encoding="utf-8")
+    artifacts.append(legacy_downstream_md_path)
 
     persist_knowledge_tables(index_df=knowledge_index, attachments_df=knowledge_attachments, db_path=content_db_path)
     persist_reference_tables(literatures_df=literature_table, attachments_df=attachment_table, db_path=content_db_path)
@@ -1983,17 +2001,10 @@ def execute(config_path: Path) -> List[Path]:
             for _, row in queue_df[queue_df["stage"].astype(str) == "A080"].iterrows()
             if _stringify(row.get("uid_literature")) or _stringify(row.get("cite_key"))
         ]
-        a090_tag_rows = [
-            {"uid_literature": _stringify(row.get("uid_literature")), "cite_key": _stringify(row.get("cite_key")), "tag": f"queued/{_stringify(row.get('queue_status'))}"}
-            for _, row in queue_df[queue_df["stage"].astype(str) == "A090"].iterrows()
-            if _stringify(row.get("uid_literature")) or _stringify(row.get("cite_key"))
-        ]
         if a080_tag_rows:
             replace_tags_for_namespace(content_db_path, namespace="queue/a080", tag_rows=a080_tag_rows, source_type="a070_downstream")
         if a080_bucket_rows:
             replace_tags_for_namespace(content_db_path, namespace="bucket", tag_rows=a080_bucket_rows, source_type="a070_downstream")
-        if a090_tag_rows:
-            replace_tags_for_namespace(content_db_path, namespace="queue/a090", tag_rows=a090_tag_rows, source_type="a070_downstream")
 
     review_state_updates: List[Dict[str, Any]] = []
     for state in review_states:
@@ -2119,6 +2130,6 @@ def execute(config_path: Path) -> List[Path]:
         pass
 
 
-    mirror_artifacts_to_legacy([downstream_path, downstream_md_path, gate_path], legacy_output_dir, output_dir)
+    mirror_artifacts_to_legacy([downstream_path, downstream_md_path, legacy_downstream_path, legacy_downstream_md_path, gate_path], legacy_output_dir, output_dir)
     return [*artifacts, gate_path]
 

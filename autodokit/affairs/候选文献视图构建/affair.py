@@ -1154,6 +1154,33 @@ def _prepare_review_assets(
 
         _append_section(reference_dump_path, cite_key, reference_lines)
         note_reference_entries: List[str] = [f"- [[{cite_key}]]"]
+        queue_row = {
+            "uid_literature": uid_literature,
+            "cite_key": cite_key,
+            "stage": "A080",
+            "source_affair": "A065",
+            "queue_status": "queued",
+            "priority": source_record.get("score") or source_record.get("priority") or 68.0,
+            "bucket": "review_preprocessed",
+            "preferred_next_stage": "A080",
+            "recommended_reason": "A065 参考文献处理与标准笔记骨架完成，进入非综述候选构建入口",
+            "theme_relation": str(source_record.get("research_topic") or source_record.get("topic") or "A065_topic"),
+            "source_round": "a065",
+            "run_uid": placeholder_run_uid,
+            "scope_key": "a065",
+            "is_current": 1,
+        }
+        review_row = {
+            "uid_literature": uid_literature,
+            "cite_key": cite_key,
+            "source_stage": "A065",
+            "pending_reference_preprocess": 0,
+            "reference_preprocessed": 1,
+            "pending_review_read": 1,
+        }
+        upsert_reading_queue_rows(content_db, [queue_row])
+        upsert_review_state_rows(content_db, [review_row])
+
         if not reference_lines:
             if scan_status == "scanned":
                 scan_status = "no_reference_list"
@@ -1525,12 +1552,12 @@ def execute(config_path: Path) -> List[Path]:
                     "stage": queue_stage,
                     "source_affair": "A050",
                     "queue_status": "queued",
-                    "priority": row.get("score") or row.get("priority") or 70.0,
-                    "bucket": "review_read_pool_preparsed" if queue_stage == "A065" else "review_read_pool",
+                    "priority": _stringify(row.get("score")) or _stringify(row.get("priority")) or 68.0,
+                    "bucket": "review_candidate",
                     "preferred_next_stage": queue_stage,
-                    "recommended_reason": _stringify(row.get("recommended_reason")) or ("A050 structured review seed already prepared, skip A060" if queue_stage == "A065" else "A050 review read pool"),
-                    "theme_relation": _stringify(row.get("research_topic")) or _stringify(raw_cfg.get("research_topic")) or "A050_topic",
-                    "source_round": _stringify(raw_cfg.get("source_round")) or "a050",
+                    "recommended_reason": "A050 候选视图构建完成，进入后续综述处理入口",
+                    "theme_relation": _stringify(raw_cfg.get("research_topic") or raw_cfg.get("topic") or "A050_topic"),
+                    "source_round": "a050",
                     "run_uid": run_uid,
                     "scope_key": scope_key,
                     "is_current": 1,
@@ -1541,36 +1568,14 @@ def execute(config_path: Path) -> List[Path]:
                     "uid_literature": uid_literature,
                     "cite_key": cite_key,
                     "source_stage": "A050",
-                    "source_origin": "auto",
-                    "recommended_reason": _stringify(row.get("recommended_reason")) or "A050 review candidate",
                     "pending_review_candidate": 0,
                     "review_candidate_ready": 1,
                     "pending_review_parse": 1,
-                    "review_parse_ready": 0,
-                    "pending_reference_preprocess": 0,
-                    "reference_preprocessed": 0,
-                    "pending_review_read": 0,
-                    "in_review_read": 0,
-                    "review_read_done": 0,
-                    "review_read_count": 0,
                 }
             )
         if queue_rows:
             upsert_reading_queue_rows(content_db, queue_rows)
             next_stage_queue_count = len(queue_rows)
-            replace_tags_for_namespace(
-                content_db,
-                namespace=f"queue/{queue_stage.lower()}",
-                tag_rows=[
-                    {
-                        "uid_literature": _stringify(item.get("uid_literature")),
-                        "cite_key": _stringify(item.get("cite_key")),
-                        "tag": "status/queued",
-                    }
-                    for item in queue_rows
-                ],
-                source_type="a050_queue",
-            )
         if review_rows:
             upsert_review_state_rows(content_db, review_rows)
             review_state_count = len(review_rows)
