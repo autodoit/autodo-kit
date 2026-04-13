@@ -229,6 +229,14 @@ def refresh_author_entities(payload: dict[str, Any]) -> dict[str, Any]:
     return impl(payload)
 
 
+def detect_and_clean_literature_title_braces(payload: dict[str, Any]) -> dict[str, Any]:
+    """延迟加载标题花括号检测与清洗原子工具。"""
+
+    module = importlib.import_module("autodokit.tools.literature_title_brace_cleanup_tools")
+    impl = getattr(module, "detect_and_clean_literature_title_braces")
+    return impl(payload)
+
+
 def isolate_unmatched_attachments(payload: dict[str, Any]) -> dict[str, Any]:
     """延迟加载孤儿附件隔离原子工具。"""
 
@@ -703,6 +711,7 @@ _用户公开工具 = [
     "normalize_primary_fulltext_attachment_names",
     "resolve_primary_attachment_normalization_settings",
     "refresh_author_entities",
+    "detect_and_clean_literature_title_braces",
     "isolate_unmatched_attachments",
 ]
 
@@ -796,6 +805,7 @@ _开发者工具 = [
     "normalize_primary_fulltext_attachment_names",
     "resolve_primary_attachment_normalization_settings",
     "refresh_author_entities",
+    "detect_and_clean_literature_title_braces",
     "isolate_unmatched_attachments",
     "build_reference_quality_summary",
     "build_online_lookup_placeholder_fields",

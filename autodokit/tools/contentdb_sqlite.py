@@ -43,16 +43,26 @@ WORKSPACE_NODE_FILTER_VIEWS: tuple[tuple[str, str], ...] = (
     ("闸门待处理节点清单", "IFNULL(闸门状态, '') IN ('retry_current', 'fallback_current', 'pause_current', 'stop_workflow')"),
     ("失败待重试节点清单", "IFNULL(失败原因, '') <> ''"),
 )
-REVIEW_STATE_OVERVIEW_VIEW_NAME = "综述阅读状态总视图"
+REVIEW_STATE_OVERVIEW_VIEW_NAME = "综述文献阅读状态总视图"
 REVIEW_STATE_FILTER_VIEWS: tuple[tuple[str, str], ...] = (
-    ("待综述筛选文献清单", "IFNULL(待综述筛选, 0) = 1"),
-    ("综述候选文献清单", "IFNULL(已入综述候选, 0) = 1"),
-    ("待综述解析文献清单", "IFNULL(待综述解析确认, 0) = 1"),
+    ("待筛选综述文献清单", "IFNULL(待综述筛选, 0) = 1"),
+    ("候选综述文献清单", "IFNULL(已入综述候选, 0) = 1"),
+    ("待解析综述文献清单", "IFNULL(待综述解析确认, 0) = 1"),
     ("已解析综述文献清单", "IFNULL(综述解析已就绪, 0) = 1"),
-    ("待参考文献预处理综述清单", "IFNULL(待参考文献预处理, 0) = 1"),
-    ("待综述阅读文献清单", "IFNULL(待综述阅读, 0) = 1"),
-    ("正综述阅读文献清单", "IFNULL(正综述阅读, 0) = 1"),
-    ("已综述阅读文献清单", "IFNULL(已综述阅读, 0) = 1"),
+    ("待预处理综述文献清单", "IFNULL(待参考文献预处理, 0) = 1"),
+    ("待阅读综述文献清单", "IFNULL(待综述阅读, 0) = 1"),
+    ("正在阅读综述文献清单", "IFNULL(正综述阅读, 0) = 1"),
+    ("已阅读综述文献清单", "IFNULL(已综述阅读, 0) = 1"),
+)
+LEGACY_REVIEW_VIEW_NAMES: tuple[str, ...] = (
+    "综述阅读状态总视图",
+    "待综述筛选文献清单",
+    "综述候选文献清单",
+    "待综述解析文献清单",
+    "待参考文献预处理综述清单",
+    "待综述阅读文献清单",
+    "正综述阅读文献清单",
+    "已综述阅读文献清单",
 )
 READING_STATE_FILTER_VIEWS: tuple[tuple[str, str], ...] = (
     ("待预处理文献清单", "IFNULL(pending_preprocess, 0) = 1"),
@@ -641,6 +651,13 @@ def _create_or_replace_view(conn: sqlite3.Connection, view_name: str, select_sql
 
 
 def _refresh_reading_state_views(conn: sqlite3.Connection) -> None:
+    for legacy_view_name in LEGACY_REVIEW_VIEW_NAMES:
+        if legacy_view_name == REVIEW_STATE_OVERVIEW_VIEW_NAME:
+            continue
+        if any(legacy_view_name == current_name for current_name, _ in REVIEW_STATE_FILTER_VIEWS):
+            continue
+        conn.execute(f"DROP VIEW IF EXISTS {_quote_identifier(legacy_view_name)}")
+
     overview_select_sql = f"""
     WITH attachment_summary AS (
         SELECT

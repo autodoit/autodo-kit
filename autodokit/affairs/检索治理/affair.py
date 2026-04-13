@@ -442,6 +442,13 @@ def _run_online_acquisition(
                     "output_dir": str((output_dir / "acquisition" / "en_open_access" / "download").resolve()),
                 }
                 source_results["download_pdf"] = run_online_retrieval_router(payload)
+                if _coerce_bool(raw_cfg.get("enable_en_school_portal_retry"), True):
+                    failed_records = _extract_en_failed_records(dict(source_results.get("download_pdf") or {}))
+                    source_results["download_pdf_retry_chaoxing_portal"] = _run_en_school_portal_retry(
+                        raw_cfg,
+                        output_dir=output_dir,
+                        failed_records=failed_records,
+                    )
             if mode in {"html_extract", "both"}:
                 payload = {
                     "source": "en_open_access",
@@ -459,6 +466,58 @@ def _run_online_acquisition(
         "mode": mode,
         "results": results,
     }
+
+
+def _extract_en_failed_records(download_result: dict[str, Any]) -> list[dict[str, Any]]:
+    failed: list[dict[str, Any]] = []
+    for item in list(download_result.get("results") or []):
+        item_dict = dict(item or {})
+        status = _normalize_text((item_dict.get("result") or {}).get("status") or item_dict.get("status"))
+        if status == "PASS":
+            continue
+        record = dict(item_dict.get("record") or {})
+        if not record:
+            continue
+        title = _normalize_text(record.get("title"))
+        doi = _normalize_text(record.get("doi"))
+        landing_url = _normalize_text(record.get("landing_url") or record.get("detail_url"))
+        if not (title or doi or landing_url):
+            continue
+        failed.append(record)
+    return failed
+
+
+def _run_en_school_portal_retry(
+    raw_cfg: dict[str, Any],
+    *,
+    output_dir: Path,
+    failed_records: list[dict[str, Any]],
+) -> dict[str, Any]:
+    if not failed_records:
+        return {
+            "status": "SKIPPED",
+            "reason": "no_failed_records",
+            "failed_records": 0,
+        }
+
+    payload = {
+        "source": "en_open_access",
+        "mode": "retry",
+        "action": "chaoxing_portal",
+        "failed_records": failed_records,
+        "library_nav_url": _normalize_text(raw_cfg.get("school_library_nav_url") or raw_cfg.get("library_nav_url") or raw_cfg.get("portal_url")),
+        "catalog_language": "英文",
+        "subject_categories": _coerce_list(raw_cfg.get("school_subject_categories") or raw_cfg.get("subject_categories") or ["经济学", "管理学", "综合"]),
+        "require_search_capable": _coerce_bool(raw_cfg.get("school_require_search_capable"), True),
+        "max_databases": max(0, _coerce_int(raw_cfg.get("school_max_databases"), 0)),
+        "max_databases_per_record": max(1, _coerce_int(raw_cfg.get("school_max_databases_per_record"), 2)),
+        "min_portal_retry_delay_seconds": float(raw_cfg.get("min_portal_retry_delay_seconds") or 2.2),
+        "max_portal_retry_delay_seconds": float(raw_cfg.get("max_portal_retry_delay_seconds") or 6.8),
+        "min_inter_record_delay_seconds": float(raw_cfg.get("min_inter_record_retry_delay_seconds") or 2.7),
+        "max_inter_record_delay_seconds": float(raw_cfg.get("max_inter_record_retry_delay_seconds") or 7.9),
+        "output_dir": str((output_dir / "acquisition" / "en_open_access" / "chaoxing_portal_retry").resolve()),
+    }
+    return run_online_retrieval_router(payload)
 
 
 def _read_json_list(path_text: str) -> list[dict[str, Any]]:
@@ -548,6 +607,21 @@ def _apply_download_paths(metadata_records: list[dict[str, Any]], acquisition_re
         result = dict(item_dict.get("result") or {})
         record = dict(item_dict.get("record") or {})
         saved_path = _normalize_text(result.get("saved_path") or item_dict.get("saved_path"))
+        detail_url = _normalize_text(record.get("landing_url") or record.get("detail_url"))
+        title = _normalize_text(record.get("title") or item_dict.get("title"))
+        if saved_path:
+            if detail_url:
+                path_by_key[f"detail:{detail_url.lower()}"] = saved_path
+            if title:
+                path_by_key[f"title:{title.lower()}"] = saved_path
+
+    en_retry = dict(en.get("download_pdf_retry_chaoxing_portal") or {})
+    for item in list(en_retry.get("results") or []):
+        item_dict = dict(item or {})
+        final_result = dict(item_dict.get("final_result") or {})
+        result = dict(final_result.get("result") or {})
+        record = dict(final_result.get("record") or item_dict.get("record") or {})
+        saved_path = _normalize_text(result.get("saved_path") or final_result.get("saved_path"))
         detail_url = _normalize_text(record.get("landing_url") or record.get("detail_url"))
         title = _normalize_text(record.get("title") or item_dict.get("title"))
         if saved_path:
