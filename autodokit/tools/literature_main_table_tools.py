@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Mapping, Tuple
 
@@ -28,6 +29,72 @@ def _pick_better_text(current: str, candidate: str) -> str:
     if not candidate_text:
         return current_text
     return candidate_text if len(candidate_text) > len(current_text) else current_text
+
+
+def _has_cjk(text: str) -> bool:
+    """检测文本是否包含中日韩统一表意字符。"""
+
+    return bool(re.search(r"[\u4e00-\u9fff]", str(text or "")))
+
+
+def _looks_like_english(text: str) -> bool:
+    """粗粒度判断文本是否英文为主。"""
+
+    candidate = str(text or "")
+    letters = re.findall(r"[A-Za-z]", candidate)
+    if len(letters) < 8:
+        return False
+    if _has_cjk(candidate):
+        return False
+    non_space = re.sub(r"\s+", "", candidate)
+    if not non_space:
+        return False
+    return (len(letters) / max(1, len(non_space))) >= 0.35
+
+
+def _normalize_language_tag(value: Any) -> str:
+    """将不同来源的语种标记统一到稳定值。"""
+
+    raw = str(value or "").strip().lower().replace("_", "-")
+    raw = re.sub(r"[\s\u3000]+", "", raw)
+    if not raw:
+        return ""
+
+    if raw in {"unknown", "und", "none", "null", "na", "n/a"}:
+        return ""
+
+    chinese_aliases = {
+        "zh", "zh-cn", "zh-hans", "zh-hant", "zh-tw", "zh-hk",
+        "chinese", "chs", "chi", "zho", "cn", "中文",
+    }
+    english_aliases = {"en", "en-us", "en-gb", "english", "eng"}
+    if "中文" in raw or "chinese" in raw:
+        return "zh-cn"
+    if "english" in raw:
+        return "en"
+
+    token = re.split(r"[;,，；|/]+", raw, maxsplit=1)[0]
+    if token in chinese_aliases or token.startswith("zh"):
+        return "zh-cn"
+    if token in english_aliases or token.startswith("en"):
+        return "en"
+    return token
+
+
+def _infer_literature_language(*, fields: Mapping[str, Any], title: str, abstract: str, keywords: str, authors: str) -> str:
+    """推断并返回文献语种。"""
+
+    for key in ("文献语种", "source_lang", "language", "langid"):
+        normalized = _normalize_language_tag(fields.get(key))
+        if normalized:
+            return normalized
+
+    probe = "\n".join([title, abstract, keywords, authors])
+    if _has_cjk(probe):
+        return "zh-cn"
+    if _looks_like_english(probe):
+        return "en"
+    return "unknown"
 
 
 def _merge_duplicate_row(existing: Dict[str, Any], candidate: Dict[str, Any]) -> Dict[str, Any]:
@@ -123,6 +190,17 @@ def build_literature_main_table(
                 ]
             )
 
+        abstract_text = str(getattr(record, "fields", {}).get("abstract", ""))
+        keywords_text = str(getattr(record, "fields", {}).get("keywords", ""))
+        authors_text = str(getattr(record, "fields", {}).get("author", ""))
+        literature_language = _infer_literature_language(
+            fields=getattr(record, "fields", {}),
+            title=title_text,
+            abstract=abstract_text,
+            keywords=keywords_text,
+            authors=authors_text,
+        )
+
         row["cite_key"] = cite_key
         row["clean_title"] = clean_title
         row["title"] = title_text
@@ -138,9 +216,15 @@ def build_literature_main_table(
         row["created_at"] = now_iso
         row["updated_at"] = now_iso
         row["imported_at"] = now_iso
-        row["authors"] = str(getattr(record, "fields", {}).get("author", ""))
-        row["abstract"] = str(getattr(record, "fields", {}).get("abstract", ""))
-        row["keywords"] = str(getattr(record, "fields", {}).get("keywords", ""))
+        row["authors"] = authors_text
+        row["abstract"] = abstract_text
+        row["keywords"] = keywords_text
+        row["文献语种"] = literature_language
+        existing_source_lang = _normalize_language_tag(row.get("source_lang"))
+        if existing_source_lang:
+            row["source_lang"] = existing_source_lang
+        elif literature_language in {"zh-cn", "en"}:
+            row["source_lang"] = literature_language
         row["source_type"] = "imported_bibtex"
         row["origin_path"] = ""
         row["source"] = "imported"

@@ -1,4 +1,4 @@
-﻿"""A080 非综述候选与预处理编排事务。"""
+﻿"""A080 非综述文献预处理事务。"""
 
 from __future__ import annotations
 
@@ -18,16 +18,12 @@ from autodokit.tools import (
     literature_bind_standard_note,
     load_json_or_py,
 )
+from autodokit.tools.atomic.task_aok.post_affair_git_commit import affair_auto_git_commit
 from autodokit.tools.bibliodb_sqlite import load_reading_queue_df, load_reading_state_df, save_dataframe_table, upsert_reading_state_rows
 from autodokit.tools.contentdb_sqlite import CONTENT_DB_DIRECTORY_NAME, DEFAULT_CONTENT_DB_NAME, resolve_content_db_config
-from autodokit.tools.ocr.runtime.monkeyocr_manifest_runtime import (
-    resolve_parse_runtime_settings,
-    resolve_postprocess_settings,
-    run_parse_manifest,
-)
+from autodokit.tools.ocr.runtime.monkeyocr_manifest_runtime import run_parse_manifest, resolve_parse_runtime_settings
 from autodokit.tools.reading_state_tools import build_standard_note_body
 from autodokit.tools.storage_backend import load_knowledge_tables, load_reference_tables, persist_knowledge_tables, persist_reference_tables
-from autodokit.tools.atomic.task_aok.post_affair_git_commit import affair_auto_git_commit
 
 
 OUTPUT_INDEX = "a080_preprocess_index.csv"
@@ -126,113 +122,6 @@ def _resolve_pdf_path(literature_row: pd.Series, attachments_df: pd.DataFrame) -
     return _stringify(literature_row.get("pdf_path"))
 
 
-def _build_human_seed_state_rows(
-    *,
-    seed_contract: Dict[str, Any],
-    literatures_df: pd.DataFrame,
-    attachments_df: pd.DataFrame,
-    existing_state_by_uid: Dict[str, Dict[str, Any]],
-) -> tuple[List[Dict[str, Any]], List[str]]:
-    """把 human_seed_contract 转换为 reading_state 行。"""
-
-    if not bool(seed_contract.get("enabled", False)):
-        return [], []
-
-    seed_items = seed_contract.get("seed_items") or []
-    if not isinstance(seed_items, list):
-        return [], ["human_seed_contract.seed_items 不是数组，已跳过"]
-
-    default_target_stage = _stringify(seed_contract.get("default_target_stage") or "rough_read") or "rough_read"
-    default_manual_guidance = _stringify(seed_contract.get("manual_guidance"))
-    default_reading_objective = _stringify(seed_contract.get("reading_objective"))
-    on_ambiguous = _stringify(seed_contract.get("on_ambiguous") or "manual_review") or "manual_review"
-    on_missing = _stringify(seed_contract.get("on_missing") or "route_to_a040") or "route_to_a040"
-
-    rows: List[Dict[str, Any]] = []
-    issues: List[str] = []
-    for item in seed_items:
-        if not isinstance(item, dict):
-            issues.append("human_seed_contract.seed_items 含非对象条目，已跳过")
-            continue
-
-        cite_key = _stringify(item.get("cite_key"))
-        if not cite_key:
-            issues.append("human_seed_contract.seed_items 存在空 cite_key，已跳过")
-            continue
-
-        matches = literatures_df[literatures_df.get("cite_key", pd.Series(dtype=str)).astype(str) == cite_key]
-        if matches.empty:
-            issues.append(f"{cite_key}: 未命中文献主表，策略={on_missing}")
-            continue
-        if len(matches) > 1:
-            issues.append(f"{cite_key}: 命中多条文献，策略={on_ambiguous}")
-            continue
-
-        literature_row = matches.iloc[0]
-        uid_literature = _stringify(literature_row.get("uid_literature"))
-        if not uid_literature:
-            issues.append(f"{cite_key}: 文献缺少 uid_literature，已跳过")
-            continue
-
-        existing = existing_state_by_uid.get(uid_literature, {})
-        target_stage = _stringify(item.get("target_stage") or default_target_stage) or "rough_read"
-        target_stage = "deep_read" if target_stage == "deep_read" else "rough_read"
-        manual_guidance = _stringify(item.get("manual_guidance") or default_manual_guidance)
-        reading_objective = _stringify(item.get("reading_objective") or default_reading_objective)
-        reason = _stringify(item.get("recommended_reason") or item.get("reason") or f"human seed: {target_stage}")
-        theme_relation = _stringify(item.get("theme_relation") or "human_seed")
-
-        has_attachment = bool(_resolve_pdf_path(literature_row, attachments_df))
-        preprocessed = int(existing.get("preprocessed") or 0)
-        rough_done = int(existing.get("rough_read_done") or 0)
-        deep_done = int(existing.get("deep_read_done") or 0)
-
-        pending_preprocess = int(existing.get("pending_preprocess") or 0)
-        pending_rough_read = int(existing.get("pending_rough_read") or 0)
-        pending_deep_read = int(existing.get("pending_deep_read") or 0)
-
-        if target_stage == "deep_read":
-            if deep_done:
-                issues.append(f"{cite_key}: 已 deep_read_done=1，跳过重复投递")
-                continue
-            if preprocessed and has_attachment:
-                pending_deep_read = 1
-                pending_preprocess = 0
-            else:
-                pending_preprocess = 1
-        else:
-            if rough_done:
-                issues.append(f"{cite_key}: 已 rough_read_done=1，跳过重复投递")
-                continue
-            if preprocessed and has_attachment:
-                pending_rough_read = 1
-                pending_preprocess = 0
-            else:
-                pending_preprocess = 1
-
-        row: Dict[str, Any] = {
-            "uid_literature": uid_literature,
-            "cite_key": cite_key,
-            "source_stage": "A080_human_seed",
-            "recommended_reason": reason,
-            "theme_relation": theme_relation,
-            "source_origin": "human",
-            "manual_guidance": manual_guidance,
-            "reading_objective": reading_objective,
-            "pending_preprocess": pending_preprocess,
-            "preprocessed": preprocessed,
-            "pending_rough_read": pending_rough_read,
-            "rough_read_done": rough_done,
-            "pending_deep_read": pending_deep_read,
-            "deep_read_done": deep_done,
-            "deep_read_count": int(existing.get("deep_read_count") or 0),
-        }
-        rows.append(row)
-        existing_state_by_uid[uid_literature] = row
-
-    return rows, issues
-
-
 @affair_auto_git_commit("A080")
 def execute(config_path: Path) -> List[Path]:
     raw_cfg = load_json_or_py(config_path)
@@ -247,29 +136,12 @@ def execute(config_path: Path) -> List[Path]:
     )
     assert content_db is not None
 
-    seeded_count = 0
+    seeded_from_legacy_queue = 0
     literatures_df, attachments_df, _ = load_reference_tables(db_path=content_db)
-    existing_state_df = load_reading_state_df(content_db)
-    existing_state_by_uid = {
-        _stringify(row.get("uid_literature")): row.to_dict()
-        for _, row in existing_state_df.fillna("").iterrows()
-        if _stringify(row.get("uid_literature"))
-    }
-
-    seed_contract = raw_cfg.get("human_seed_contract") or {}
-    human_seed_rows, human_seed_issues = _build_human_seed_state_rows(
-        seed_contract=seed_contract if isinstance(seed_contract, dict) else {},
-        literatures_df=literatures_df,
-        attachments_df=attachments_df,
-        existing_state_by_uid=existing_state_by_uid,
-    )
-    if human_seed_rows:
-        upsert_reading_state_rows(content_db, human_seed_rows)
-        seeded_count += len(human_seed_rows)
 
     state_df = load_reading_state_df(content_db, flag_filters={"pending_preprocess": 1})
     if state_df.empty:
-        seeded_count += _seed_state_from_legacy_queue(content_db)
+        seeded_from_legacy_queue = _seed_state_from_legacy_queue(content_db)
         state_df = load_reading_state_df(content_db, flag_filters={"pending_preprocess": 1})
 
     knowledge_index_df, knowledge_attachments_df, _ = load_knowledge_tables(db_path=content_db)
@@ -279,18 +151,17 @@ def execute(config_path: Path) -> List[Path]:
 
     global_config_path = workspace_root / "config" / "config.json"
     parse_runtime = resolve_parse_runtime_settings(raw_cfg, workspace_root=workspace_root, global_config_path=global_config_path)
-    postprocess_settings = resolve_postprocess_settings(raw_cfg, workspace_root=workspace_root)
     manifest_result = run_parse_manifest(
         content_db=content_db,
         source_df=state_df,
         output_dir=output_dir,
         source_stage="A080",
-        upstream_stage="A070",
+        upstream_stage="A075",
         downstream_stage="A090",
         parse_level="non_review_rough",
         literature_scope="non_review",
         runtime_settings=parse_runtime,
-        postprocess_settings=postprocess_settings,
+        postprocess_settings=None,
         global_config_path=global_config_path,
         overwrite_existing=False,
         max_items=max_items,
@@ -301,8 +172,7 @@ def execute(config_path: Path) -> List[Path]:
     note_dir.mkdir(parents=True, exist_ok=True)
     result_rows: List[Dict[str, Any]] = []
     state_updates: List[Dict[str, Any]] = []
-    failures: List[str] = list(human_seed_issues)
-    failures.extend(manifest_result["failures"])
+    failures: List[str] = list(manifest_result["failures"])
 
     for _, state_row in manifest_df.fillna("").iterrows():
         uid_literature = _stringify(state_row.get("uid_literature"))
@@ -323,13 +193,15 @@ def execute(config_path: Path) -> List[Path]:
             preprocess_status = "parse_failed"
             if "附件" in failure_reason or "pdf" in failure_reason.lower():
                 preprocess_status = "missing_attachment"
-            state_updates.append({
-                "uid_literature": uid_literature,
-                "cite_key": resolved_cite_key,
-                "pending_preprocess": 1,
-                "preprocessed": 0,
-                "preprocess_status": preprocess_status,
-            })
+            state_updates.append(
+                {
+                    "uid_literature": uid_literature,
+                    "cite_key": resolved_cite_key,
+                    "pending_preprocess": 1,
+                    "preprocessed": 0,
+                    "preprocess_status": preprocess_status,
+                }
+            )
             continue
 
         structured_path = _stringify(state_row.get("normalized_structured_path"))
@@ -383,23 +255,24 @@ def execute(config_path: Path) -> List[Path]:
                 "deep_read_count": int(state_row.get("deep_read_count") or 0),
             }
         )
-        result_rows.append({
-            "uid_literature": uid_literature,
-            "cite_key": resolved_cite_key,
-            "title": _stringify(literature_row.get("title")),
-            "standard_note_path": str(note_path),
-            "structured_path": structured_path,
-            "preprocess_status": "ready",
-            "postprocess_ok": int(state_row.get("postprocess_ok") or 0),
-            "postprocess_llm_basic_cleanup_status": _stringify(state_row.get("postprocess_llm_basic_cleanup_status")),
-            "postprocess_llm_structure_status": _stringify(state_row.get("postprocess_llm_structure_status")),
-            "postprocess_contamination_removed_block_count": int(state_row.get("postprocess_contamination_removed_block_count") or 0),
-        })
+        result_rows.append(
+            {
+                "uid_literature": uid_literature,
+                "cite_key": resolved_cite_key,
+                "title": _stringify(literature_row.get("title")),
+                "standard_note_path": str(note_path),
+                "structured_path": structured_path,
+                "preprocess_status": "ready",
+                "used_existing_asset": int(state_row.get("used_existing_asset") or 0),
+            }
+        )
 
     persist_reference_tables(literatures_df=literatures_df, attachments_df=attachments_df, db_path=content_db)
     persist_knowledge_tables(index_df=knowledge_index_df, attachments_df=knowledge_attachments_df, db_path=content_db)
     if state_updates:
         upsert_reading_state_rows(content_db, state_updates)
+
+    pending_rough_ready_count = len(load_reading_state_df(content_db, flag_filters={"pending_rough_read": 1}))
 
     result_df = pd.DataFrame(result_rows)
     index_path = output_dir / OUTPUT_INDEX
@@ -408,11 +281,26 @@ def execute(config_path: Path) -> List[Path]:
 
     gate_review = build_gate_review(
         node_uid="A080",
-        node_name="非综述候选与预处理编排",
-        summary=f"完成预处理 {len(result_df)} 篇；从旧 A080 queue 引导 {seeded_count} 条；失败 {len(failures)} 条。",
-        checks=[{"name": "seeded_from_legacy_queue", "value": seeded_count}, {"name": "preprocessed_count", "value": len(result_df)}, {"name": "failure_count", "value": len(failures)}],
-        artifacts=[str(index_path), str(manifest_result["manifest_path"]), str(manifest_result["management_table_path"]), str(manifest_result["handoff_path"])],
-        recommendation="pass" if len(result_df) > 0 else "retry_current",
+        node_name="非综述文献预处理",
+        summary=(
+            f"完成预处理 {len(result_df)} 篇；"
+            f"旧 A080 queue 引导 {seeded_from_legacy_queue} 条；"
+            f"待泛读就绪 {pending_rough_ready_count} 条；"
+            f"失败 {len(failures)} 条。"
+        ),
+        checks=[
+            {"name": "seeded_from_legacy_queue", "value": seeded_from_legacy_queue},
+            {"name": "preprocessed_count", "value": len(result_df)},
+            {"name": "pending_rough_ready_count", "value": pending_rough_ready_count},
+            {"name": "failure_count", "value": len(failures)},
+        ],
+        artifacts=[
+            str(index_path),
+            str(manifest_result["manifest_path"]),
+            str(manifest_result["management_table_path"]),
+            str(manifest_result["handoff_path"]),
+        ],
+        recommendation="pass_next" if len(result_df) > 0 or pending_rough_ready_count > 0 else "retry_current",
         score=max(40.0, 92.0 - len(failures) * 8.0),
         issues=failures,
         metadata={
@@ -423,13 +311,6 @@ def execute(config_path: Path) -> List[Path]:
             "handoff_path": str(manifest_result["handoff_path"]),
             "batch_report_path": str(manifest_result["batch_report_path"]),
             "parse_runtime": parse_runtime,
-            "enable_aliyun_postprocess": bool(postprocess_settings.get("enabled", True)),
-            "enable_llm_basic_cleanup": bool(postprocess_settings.get("enable_llm_basic_cleanup", True)),
-            "basic_cleanup_llm_model": postprocess_settings.get("basic_cleanup_llm_model"),
-            "enable_llm_structure_resolution": bool(postprocess_settings.get("enable_llm_structure_resolution", True)),
-            "structure_llm_model": postprocess_settings.get("structure_llm_model"),
-            "enable_llm_contamination_filter": bool(postprocess_settings.get("enable_llm_contamination_filter", True)),
-            "contamination_llm_model": postprocess_settings.get("contamination_llm_model"),
         },
     )
     gate_path = output_dir / OUTPUT_GATE
@@ -446,26 +327,28 @@ def execute(config_path: Path) -> List[Path]:
             event_type="A080_PREPROCESS_COMPLETED",
             project_root=workspace_root,
             affair_code="A080",
-            handler_name="非综述候选与预处理编排",
-            agent_names=["ar_A080_非综述候选与预处理编排事务智能体_v6"],
-            skill_names=["ar_非综述候选文献视图构建_v5"],
-            reasoning_summary="消费 literature_reading_state.pending_preprocess=1，并把成功条目推进到 pending_rough_read=1。",
+            handler_name="非综述文献预处理",
+            agent_names=["ar_A080_非综述文献预处理事务智能体_v6"],
+            skill_names=["ar_A080_非综述文献预处理_v7"],
+            reasoning_summary="只消费 literature_reading_state.pending_preprocess=1，并把成功条目推进到 pending_rough_read=1。",
             gate_review=gate_review,
             gate_review_path=gate_path,
             artifact_paths=[index_path, gate_path, manifest_result["manifest_path"], manifest_result["management_table_path"], manifest_result["handoff_path"]],
             payload={
                 "preprocessed_count": len(result_df),
-                "seeded_from_legacy_queue": seeded_count,
+                "seeded_from_legacy_queue": seeded_from_legacy_queue,
+                "pending_rough_ready_count": pending_rough_ready_count,
                 "failure_count": len(failures),
-                "enable_llm_basic_cleanup": bool(postprocess_settings.get("enable_llm_basic_cleanup", True)),
-                "enable_llm_structure_resolution": bool(postprocess_settings.get("enable_llm_structure_resolution", True)),
-                "enable_llm_contamination_filter": bool(postprocess_settings.get("enable_llm_contamination_filter", True)),
             },
         )
     except Exception:
         pass
 
-    return [index_path, gate_path, manifest_result["manifest_path"], manifest_result["management_table_path"], manifest_result["batch_report_path"], manifest_result["handoff_path"]]
-
-
-
+    return [
+        index_path,
+        gate_path,
+        manifest_result["manifest_path"],
+        manifest_result["management_table_path"],
+        manifest_result["batch_report_path"],
+        manifest_result["handoff_path"],
+    ]

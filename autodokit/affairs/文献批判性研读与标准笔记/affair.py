@@ -15,7 +15,12 @@ from autodokit.tools.contentdb_sqlite import CONTENT_DB_DIRECTORY_NAME, DEFAULT_
 from autodokit.tools.literature_translation_tools import run_literature_translation
 from autodokit.tools.ocr.classic.pdf_parse_asset_manager import ensure_multimodal_parse_asset, ensure_pdf_text_fallback_asset
 from autodokit.tools.ocr.classic.pdf_structured_data_tools import load_single_document_record
-from autodokit.tools.reading_state_tools import build_followup_candidate_state_row
+from autodokit.tools.reading_state_tools import (
+    build_followup_candidate_state_row,
+    build_retrieval_feedback_request,
+    merge_retrieval_feedback_requests,
+    should_route_back_to_a040,
+)
 from autodokit.tools.storage_backend import load_knowledge_tables, load_reference_tables, persist_knowledge_tables, persist_reference_tables
 from autodokit.tools.atomic.task_aok.task_instance_dir import create_task_instance_dir, mirror_artifacts_to_legacy, resolve_legacy_output_dir
 from autodokit.tools.atomic.task_aok.post_affair_git_commit import affair_auto_git_commit
@@ -165,6 +170,7 @@ def execute(config_path: Path) -> List[Path]:
 
     result_rows: List[Dict[str, Any]] = []
     state_updates: List[Dict[str, Any]] = []
+    retrieval_feedback_requests: List[Dict[str, Any]] = []
     failures: List[str] = []
 
     note_dir = workspace_root / "knowledge" / "standard_notes"
@@ -275,6 +281,12 @@ def execute(config_path: Path) -> List[Path]:
 
             reference_lines = _extract_reference_lines(full_text)
             discovered_rows: List[Dict[str, Any]] = []
+            short_loop_discovered_rows: List[Dict[str, Any]] = []
+            literature_by_uid: Dict[str, Dict[str, Any]] = {
+                _stringify(item.get("uid_literature")): item.to_dict()
+                for _, item in literatures_df.fillna("").iterrows()
+                if _stringify(item.get("uid_literature"))
+            }
             for reference_text in reference_lines:
                 try:
                     literatures_df, result = process_reference_citation(
@@ -290,6 +302,39 @@ def execute(config_path: Path) -> List[Path]:
                 target_uid = _stringify(result.get("matched_uid_literature"))
                 target_cite_key = _stringify(result.get("matched_cite_key"))
                 if target_uid and target_uid != uid_literature:
+                    provisional_mapping_row = {
+                        "matched_uid_literature": target_uid,
+                        "matched_cite_key": target_cite_key,
+                        "action": _stringify(result.get("action")),
+                        "parse_failed": _stringify(result.get("parse_failed") or "0"),
+                        "match_score": _stringify(result.get("match_score") or "0"),
+                        "parse_failure_reason": _stringify(result.get("parse_failure_reason")),
+                        "suspicious_mismatch": _stringify(result.get("suspicious_mismatch") or "0"),
+                        "suspicious_merged": _stringify(result.get("suspicious_merged") or "0"),
+                        "reference_text": reference_text,
+                    }
+                    decision = should_route_back_to_a040(
+                        mapping_row=provisional_mapping_row,
+                        target_state=existing_state_by_uid.get(target_uid),
+                        target_literature_row=literature_by_uid.get(target_uid),
+                    )
+                    if decision.get("route_to_a040"):
+                        retrieval_feedback_requests.append(
+                            build_retrieval_feedback_request(
+                                source_stage="A105",
+                                source_task_uid=output_dir.name,
+                                source_note_path=str(note_path),
+                                source_uid_literature=uid_literature,
+                                source_cite_key=cite_key,
+                                reference_lines=[reference_text],
+                                mapping_row=provisional_mapping_row,
+                                retrieval_reason=_stringify(decision.get("reason")),
+                                need_fulltext=True,
+                                need_metadata_completion=True,
+                            )
+                        )
+                        continue
+
                     candidate_row = build_followup_candidate_state_row(
                         uid_literature=target_uid,
                         cite_key=target_cite_key,
@@ -303,6 +348,7 @@ def execute(config_path: Path) -> List[Path]:
                     if candidate_row is None:
                         continue
                     discovered_rows.append(candidate_row)
+                    short_loop_discovered_rows.append(candidate_row)
                     existing_state_by_uid[target_uid] = candidate_row
 
             deep_read_count = int(row.get("deep_read_count") or 0) + 1
@@ -358,7 +404,7 @@ def execute(config_path: Path) -> List[Path]:
                     "title": title,
                     "structured_json": structured_json,
                     "deep_read_note_path": str(note_path),
-                    "discovered_candidate_count": len(discovered_rows),
+                    "discovered_candidate_count": len(short_loop_discovered_rows),
                     "knowledge_uid": _stringify(note_info.get("uid_knowledge")),
                     "asset_backend": asset_backend,
                     "postprocess_ok": int(bool(postprocess_summary) or (not enable_aliyun_postprocess)),
@@ -391,13 +437,28 @@ def execute(config_path: Path) -> List[Path]:
     result_df = pd.DataFrame(result_rows)
     index_path = output_dir / OUTPUT_INDEX
     result_df.to_csv(index_path, index=False, encoding="utf-8-sig")
+    merged_feedback_requests = merge_retrieval_feedback_requests(retrieval_feedback_requests)
+    feedback_path = output_dir / "retrieval_feedback_requests_A105.json"
+    feedback_summary_path = output_dir / "retrieval_feedback_summary_A105.json"
+    feedback_summary = {
+        "task_uid": output_dir.name,
+        "source_stage": "A105",
+        "request_count": len(merged_feedback_requests),
+        "critical_read_count": len(result_rows),
+    }
+    feedback_path.write_text(json.dumps(merged_feedback_requests, ensure_ascii=False, indent=2), encoding="utf-8")
+    feedback_summary_path.write_text(json.dumps(feedback_summary, ensure_ascii=False, indent=2), encoding="utf-8")
 
     gate_review = build_gate_review(
         node_uid="A105",
         node_name="文献批判性研读与标准笔记",
         summary=f"完成批判性研读 {len(result_rows)} 篇；失败 {len(failures)} 篇。",
-        checks=[{"name": "critical_read_count", "value": len(result_rows)}, {"name": "failure_count", "value": len(failures)}],
-        artifacts=[str(index_path)],
+        checks=[
+            {"name": "critical_read_count", "value": len(result_rows)},
+            {"name": "failure_count", "value": len(failures)},
+            {"name": "retrieval_feedback_request_count", "value": len(merged_feedback_requests)},
+        ],
+        artifacts=[str(index_path), str(feedback_path), str(feedback_summary_path)],
         recommendation="pass" if result_rows else "retry_current",
         score=max(45.0, 92.0 - len(failures) * 10.0),
         issues=failures,
@@ -431,6 +492,7 @@ def execute(config_path: Path) -> List[Path]:
             payload={
                 "critical_read_count": len(result_rows),
                 "failure_count": len(failures),
+                "retrieval_feedback_request_count": len(merged_feedback_requests),
                 "enable_llm_basic_cleanup": enable_llm_basic_cleanup,
                 "enable_llm_structure_resolution": enable_llm_structure_resolution,
                 "enable_llm_contamination_filter": enable_llm_contamination_filter,
@@ -439,6 +501,6 @@ def execute(config_path: Path) -> List[Path]:
     except Exception:
         pass
 
-    mirror_artifacts_to_legacy([index_path, gate_path], legacy_output_dir, output_dir)
-    return [index_path, gate_path]
+    mirror_artifacts_to_legacy([index_path, feedback_path, feedback_summary_path, gate_path], legacy_output_dir, output_dir)
+    return [index_path, feedback_path, feedback_summary_path, gate_path]
 

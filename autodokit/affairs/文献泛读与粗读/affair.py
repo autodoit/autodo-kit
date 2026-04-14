@@ -14,7 +14,15 @@ import pandas as pd
 from autodokit.tools import append_aok_log_event, build_gate_review, build_reference_quality_summary, extract_reference_lines_from_attachment, knowledge_index_sync_from_note, knowledge_note_register, load_json_or_py, process_reference_citation
 from autodokit.tools.contentdb_sqlite import CONTENT_DB_DIRECTORY_NAME, DEFAULT_CONTENT_DB_NAME, resolve_content_db_config
 from autodokit.tools.bibliodb_sqlite import load_reading_state_df, save_dataframe_table, upsert_reading_state_rows
-from autodokit.tools.reading_state_tools import ANALYSIS_NOTE_SPECS, append_markdown_section, build_followup_candidate_state_row, resolve_analysis_note_paths
+from autodokit.tools.reading_state_tools import (
+    ANALYSIS_NOTE_SPECS,
+    append_markdown_section,
+    build_followup_candidate_state_row,
+    build_retrieval_feedback_request,
+    merge_retrieval_feedback_requests,
+    resolve_analysis_note_paths,
+    should_route_back_to_a040,
+)
 from autodokit.tools.storage_backend import (
     load_knowledge_tables,
     load_reference_tables,
@@ -284,6 +292,7 @@ def execute(config_path: Path) -> List[Path]:
 
     index_rows: List[Dict[str, Any]] = []
     mapping_rows: List[Dict[str, Any]] = []
+    retrieval_feedback_requests: List[Dict[str, Any]] = []
     state_rows: List[Dict[str, Any]] = []
     written_paths: List[Path] = []
     missing_items: List[str] = []
@@ -394,6 +403,12 @@ def execute(config_path: Path) -> List[Path]:
         item_reference_lines = list(extract_result.get("reference_lines") or [])[:max_references_per_item]
         processed_count = 0
         item_mapping_rows: List[Dict[str, Any]] = []
+        literature_by_uid: Dict[str, Dict[str, Any]] = {
+            _stringify(item.get("uid_literature")): item.to_dict()
+            for _, item in literature_table.fillna("").iterrows()
+            if _stringify(item.get("uid_literature"))
+        }
+        short_loop_mapping_rows: List[Dict[str, Any]] = []
         for reference_text in item_reference_lines:
             try:
                 literature_table, result = process_reference_citation(
@@ -424,6 +439,30 @@ def execute(config_path: Path) -> List[Path]:
                 mapping_rows.append(mapping_row)
                 item_mapping_rows.append(mapping_row)
                 processed_count += 1
+
+                target_uid = _stringify(mapping_row.get("matched_uid_literature"))
+                decision = should_route_back_to_a040(
+                    mapping_row=mapping_row,
+                    target_state=existing_state_by_uid.get(target_uid) if target_uid else None,
+                    target_literature_row=literature_by_uid.get(target_uid) if target_uid else None,
+                )
+                if decision.get("route_to_a040"):
+                    retrieval_feedback_requests.append(
+                        build_retrieval_feedback_request(
+                            source_stage="A090",
+                            source_task_uid=output_dir.name,
+                            source_note_path=str(note_path),
+                            source_uid_literature=uid_literature,
+                            source_cite_key=cite_key,
+                            reference_lines=[reference_text],
+                            mapping_row=mapping_row,
+                            retrieval_reason=_stringify(decision.get("reason")),
+                            need_fulltext=True,
+                            need_metadata_completion=True,
+                        )
+                    )
+                else:
+                    short_loop_mapping_rows.append(mapping_row)
             except Exception as exc:
                 mapping_row = {
                     "source_uid_literature": uid_literature,
@@ -444,6 +483,20 @@ def execute(config_path: Path) -> List[Path]:
                 }
                 mapping_rows.append(mapping_row)
                 item_mapping_rows.append(mapping_row)
+                retrieval_feedback_requests.append(
+                    build_retrieval_feedback_request(
+                        source_stage="A090",
+                        source_task_uid=output_dir.name,
+                        source_note_path=str(note_path),
+                        source_uid_literature=uid_literature,
+                        source_cite_key=cite_key,
+                        reference_lines=[reference_text],
+                        mapping_row=mapping_row,
+                        retrieval_reason="参考文献处理异常，需回流 A040 补检",
+                        need_fulltext=True,
+                        need_metadata_completion=True,
+                    )
+                )
 
         result_payload = {
             "uid_literature": uid_literature,
@@ -506,7 +559,7 @@ def execute(config_path: Path) -> List[Path]:
         )
 
         discovered_rows = _build_discovered_rows_from_mappings(
-            item_mapping_rows=item_mapping_rows,
+            item_mapping_rows=short_loop_mapping_rows,
             uid_literature=uid_literature,
             cite_key=cite_key,
             existing_state_by_uid=existing_state_by_uid,
@@ -520,11 +573,23 @@ def execute(config_path: Path) -> List[Path]:
     index_path = output_dir / OUTPUT_INDEX
     mapping_path = output_dir / OUTPUT_MAPPING
     quality_path = output_dir / OUTPUT_QUALITY
+    feedback_path = output_dir / "retrieval_feedback_requests_A090.json"
+    feedback_summary_path = output_dir / "retrieval_feedback_summary_A090.json"
     gate_path = output_dir / OUTPUT_GATE
     index_df.to_csv(index_path, index=False, encoding="utf-8-sig")
     mapping_df.to_csv(mapping_path, index=False, encoding="utf-8-sig")
     quality_path.write_text(json.dumps(quality_summary, ensure_ascii=False, indent=2), encoding="utf-8")
-    written_paths.extend([index_path, mapping_path, quality_path])
+    merged_feedback_requests = merge_retrieval_feedback_requests(retrieval_feedback_requests)
+    feedback_summary = {
+        "task_uid": output_dir.name,
+        "source_stage": "A090",
+        "request_count": len(merged_feedback_requests),
+        "processed_mapping_count": len(mapping_rows),
+        "short_loop_mapping_count": max(0, len(mapping_rows) - len(merged_feedback_requests)),
+    }
+    feedback_path.write_text(json.dumps(merged_feedback_requests, ensure_ascii=False, indent=2), encoding="utf-8")
+    feedback_summary_path.write_text(json.dumps(feedback_summary, ensure_ascii=False, indent=2), encoding="utf-8")
+    written_paths.extend([index_path, mapping_path, quality_path, feedback_path, feedback_summary_path])
 
     save_dataframe_table(content_db, "a090_rough_reading_index", index_df, if_exists="replace", unique_columns=["uid_literature"] if not index_df.empty else None)
     save_dataframe_table(content_db, "a090_reference_citation_mapping", mapping_df, if_exists="replace")
@@ -546,6 +611,7 @@ def execute(config_path: Path) -> List[Path]:
             {"name": "placeholder_count", "value": quality_summary.get("placeholder_count", 0)},
             {"name": "parse_failed_count", "value": quality_summary.get("parse_failed_count", 0)},
             {"name": "missing_item_count", "value": len(missing_items)},
+            {"name": "retrieval_feedback_request_count", "value": len(merged_feedback_requests)},
         ],
         artifacts=[str(path) for path in written_paths],
         recommendation="pass" if len(index_df) > 0 else "retry_current",
@@ -580,6 +646,7 @@ def execute(config_path: Path) -> List[Path]:
                 "reference_total_count": quality_summary.get("total_reference_count", 0),
                 "placeholder_count": quality_summary.get("placeholder_count", 0),
                 "missing_item_count": len(missing_items),
+                "retrieval_feedback_request_count": len(merged_feedback_requests),
             },
         )
     except Exception:

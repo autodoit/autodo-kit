@@ -207,6 +207,7 @@ PDF_STRUCTURED_VARIANT_PATH_COLUMNS: dict[str, str] = {
     for spec in PDF_STRUCTURED_VARIANT_SPECS
 }
 LITERATURE_REQUIRED_COLUMNS: dict[str, str] = {
+    "文献语种": "TEXT",
     "clean_title": "TEXT",
     "title_norm": "TEXT",
     "authors": "TEXT",

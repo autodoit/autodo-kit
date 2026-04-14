@@ -47,7 +47,7 @@ from autodokit.tools import (
 )
 from autodokit.tools.atomic.task_aok.task_instance_dir import create_task_instance_dir, mirror_artifacts_to_legacy, resolve_legacy_output_dir
 from autodokit.tools.contentdb_sqlite import resolve_content_db_config
-from autodokit.tools.bibliodb_sqlite import load_reading_queue_df, load_reading_state_df, load_review_state_df, replace_tags_for_namespace, upsert_reading_queue_rows, upsert_reading_state_rows, upsert_review_state_rows
+from autodokit.tools.bibliodb_sqlite import load_reading_queue_df, load_review_state_df, replace_tags_for_namespace, upsert_reading_queue_rows, upsert_review_state_rows
 from autodokit.tools.storage_backend import (
     load_knowledge_tables,
     load_reference_tables,
@@ -1790,7 +1790,7 @@ def execute(config_path: Path) -> List[Path]:
     general_reading_df = build_review_general_reading_list(review_states, literature_table, mapping_rows)
     must_read_df = _enrich_identity(must_read_df, literature_table)
     general_reading_df = _enrich_identity(general_reading_df, literature_table)
-    downstream_df, queue_df = _build_downstream_candidates(must_read_df, general_reading_df, literature_table)
+    _, queue_df = _build_downstream_candidates(must_read_df, general_reading_df, literature_table)
 
     for state in review_states:
         note_path = state.get("note_path")
@@ -1959,32 +1959,6 @@ def execute(config_path: Path) -> List[Path]:
     if batch_path is not None:
         artifacts.append(batch_path)
 
-    step_output_dir = output_dir
-    step_output_dir.mkdir(parents=True, exist_ok=True)
-    downstream_path = step_output_dir / "a080_seed_candidates.csv"
-    downstream_df.to_csv(downstream_path, index=False, encoding="utf-8-sig")
-    artifacts.append(downstream_path)
-    legacy_downstream_path = step_output_dir / "downstream_non_review_candidates.csv"
-    downstream_df.to_csv(legacy_downstream_path, index=False, encoding="utf-8-sig")
-    artifacts.append(legacy_downstream_path)
-    downstream_md_path = step_output_dir / "a080_seed_candidates.md"
-    md_lines = ["# a080_seed_candidates", ""]
-    if downstream_df.empty:
-        md_lines.append("- 当前无可导出的非综述候选条目。")
-    else:
-        for _, row in downstream_df.fillna("").iterrows():
-            md_lines.append(
-                "- "
-                + f"{_stringify(row.get('cite_key')) or _stringify(row.get('uid_literature'))} | "
-                + f"{_stringify(row.get('target_stage')) or 'A080'} | "
-                + f"{_stringify(row.get('recommended_reason'))}"
-            )
-    downstream_md_path.write_text("\n".join(md_lines).strip() + "\n", encoding="utf-8")
-    artifacts.append(downstream_md_path)
-    legacy_downstream_md_path = step_output_dir / "downstream_non_review_candidates.md"
-    legacy_downstream_md_path.write_text(downstream_md_path.read_text(encoding="utf-8"), encoding="utf-8")
-    artifacts.append(legacy_downstream_md_path)
-
     persist_knowledge_tables(index_df=knowledge_index, attachments_df=knowledge_attachments, db_path=content_db_path)
     persist_reference_tables(literatures_df=literature_table, attachments_df=attachment_table, db_path=content_db_path)
 
@@ -2025,32 +1999,6 @@ def execute(config_path: Path) -> List[Path]:
         )
     if review_state_updates:
         upsert_review_state_rows(content_db_path, review_state_updates)
-
-    if not queue_df.empty:
-        reading_state_seed: List[Dict[str, Any]] = []
-        for _, row in queue_df[queue_df["stage"].astype(str) == "A080"].fillna("").iterrows():
-            uid_literature = _stringify(row.get("uid_literature"))
-            cite_key = _stringify(row.get("cite_key"))
-            if not uid_literature and not cite_key:
-                continue
-            reading_state_seed.append(
-                {
-                    "uid_literature": uid_literature,
-                    "cite_key": cite_key,
-                    "source_stage": "A070",
-                    "recommended_reason": _stringify(row.get("recommended_reason")) or "A070 downstream",
-                    "theme_relation": _stringify(row.get("theme_relation")) or "a070_downstream",
-                    "pending_preprocess": 1,
-                    "preprocessed": 0,
-                    "pending_rough_read": 0,
-                    "rough_read_done": 0,
-                    "pending_deep_read": 0,
-                    "deep_read_done": 0,
-                    "deep_read_count": 0,
-                }
-            )
-        if reading_state_seed:
-            upsert_reading_state_rows(content_db_path, reading_state_seed)
 
     issues = missing_attachments + missing_text + missing_assets
     evidence_unit_count = sum(
@@ -2130,6 +2078,6 @@ def execute(config_path: Path) -> List[Path]:
         pass
 
 
-    mirror_artifacts_to_legacy([downstream_path, downstream_md_path, legacy_downstream_path, legacy_downstream_md_path, gate_path], legacy_output_dir, output_dir)
+    mirror_artifacts_to_legacy([gate_path], legacy_output_dir, output_dir)
     return [*artifacts, gate_path]
 

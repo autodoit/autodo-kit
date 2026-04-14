@@ -2098,6 +2098,11 @@ def save_tables(
                 _delete_all_if_table(conn, ATTACHMENT_TABLE_NAME)
                 _delete_all_if_table(conn, attachment_target)
                 _delete_all_if_table(conn, tag_target)
+                # 先清理可能对 literatures 有外键引用的从表，避免在删除 literatures 时触发 FOREIGN KEY 约束失败
+                _delete_all_if_table(conn, 'literature_authors')
+                _delete_all_if_table(conn, 'knowledge_literature_links')
+                _delete_all_if_table(conn, 'knowledge_notes')
+                _delete_all_if_table(conn, 'literature_translation_assets')
                 _delete_all_if_table(conn, literature_target)
                 working.to_sql(literature_target, conn, if_exists="append", index=False)
             else:

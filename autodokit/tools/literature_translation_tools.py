@@ -97,6 +97,54 @@ def _looks_like_english(text: str) -> bool:
     return (len(letters) / max(1, len(non_space))) >= 0.35
 
 
+def _normalize_literature_language(value: Any) -> str:
+    """统一语种值，优先标准化为 zh-cn / en。"""
+
+    raw = str(value or "").strip().lower().replace("_", "-")
+    raw = re.sub(r"[\s\u3000]+", "", raw)
+    if not raw:
+        return ""
+    if raw in {"unknown", "und", "none", "null", "na", "n/a"}:
+        return ""
+
+    chinese_aliases = {
+        "zh", "zh-cn", "zh-hans", "zh-hant", "zh-tw", "zh-hk",
+        "chinese", "chs", "chi", "zho", "cn", "中文",
+    }
+    english_aliases = {"en", "en-us", "en-gb", "english", "eng"}
+    if "中文" in raw or "chinese" in raw:
+        return "zh-cn"
+    if "english" in raw:
+        return "en"
+
+    token = re.split(r"[;,，；|/]+", raw, maxsplit=1)[0]
+    if token in chinese_aliases or token.startswith("zh"):
+        return "zh-cn"
+    if token in english_aliases or token.startswith("en"):
+        return "en"
+    return token
+
+
+def _resolve_literature_language(row: pd.Series) -> str:
+    """从文献行中解析语种，优先读取文献语种字段。"""
+
+    for key in ("文献语种", "source_lang", "language", "langid"):
+        normalized = _normalize_literature_language(row.get(key))
+        if normalized:
+            return normalized
+
+    probe_text = "\n".join([
+        str(row.get("title") or ""),
+        str(row.get("abstract") or ""),
+        str(row.get("keywords") or ""),
+    ])
+    if _looks_like_english(probe_text):
+        return "en"
+    if _has_cjk(probe_text):
+        return "zh-cn"
+    return "unknown"
+
+
 def _merge_policy(policy: Dict[str, Any] | None) -> Dict[str, Any]:
     """合并用户策略与默认翻译策略。"""
 
@@ -320,6 +368,7 @@ def _update_literature_translation_fields(
     content_db: Path,
     uid_literature: str,
     source_lang: str,
+    literature_language: str,
     title_zh: str,
     abstract_zh: str,
     keywords_zh: str,
@@ -335,6 +384,7 @@ def _update_literature_translation_fields(
             """
             UPDATE literatures
             SET source_lang = ?,
+                "文献语种" = ?,
                 title_zh = ?,
                 abstract_zh = ?,
                 keywords_zh = ?,
@@ -347,6 +397,7 @@ def _update_literature_translation_fields(
             """,
             (
                 source_lang,
+                literature_language,
                 title_zh,
                 abstract_zh,
                 keywords_zh,
@@ -385,7 +436,7 @@ def translate_literature_metadata(
     if table.empty:
         return {"status": "SKIP", "translated_count": 0, "failed_count": 0, "audit_path": "", "reason": "empty_literatures"}
 
-    expected_cols = ["source_lang", "title_zh", "abstract_zh", "keywords_zh"]
+    expected_cols = ["文献语种", "source_lang", "title_zh", "abstract_zh", "keywords_zh"]
     for column in expected_cols:
         if column not in table.columns:
             table[column] = ""
@@ -408,11 +459,7 @@ def translate_literature_metadata(
         abstract = str(row.get("abstract") or "").strip()
         keywords = str(row.get("keywords") or "").strip()
 
-        source_lang = str(row.get("source_lang") or "").strip().lower()
-        if source_lang not in {"en", "zh", "zh-cn"}:
-            probe_text = "\n".join([title, abstract, keywords])
-            source_lang = "en" if _looks_like_english(probe_text) else ("zh" if _has_cjk(probe_text) else "unknown")
-
+        source_lang = _resolve_literature_language(row)
         if source_lang != "en":
             continue
 
@@ -507,6 +554,7 @@ def translate_literature_metadata(
             content_db=resolved_content_db,
             uid_literature=uid_literature,
             source_lang="en",
+            literature_language="en",
             title_zh=title_zh,
             abstract_zh=abstract_zh,
             keywords_zh=keywords_zh,

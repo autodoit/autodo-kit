@@ -17,7 +17,6 @@ import pandas as pd
 
 from autodokit.tools.bibliodb_sqlite import save_structured_state, upsert_parse_asset_rows
 from autodokit.tools.contentdb_sqlite import infer_workspace_root_from_content_db
-from autodokit.tools.llm_clients import postprocess_aliyun_multimodal_parse_outputs
 from autodokit.tools.ocr.classic.pdf_parse_asset_manager import (
     _bootstrap_existing_asset,
     _load_global_config,
@@ -85,26 +84,10 @@ def _resolve_path(value: Any, *, base_dir: Path | None = None) -> str:
 
 
 def resolve_postprocess_settings(raw_cfg: Mapping[str, Any], *, workspace_root: Path) -> Dict[str, Any]:
-    return {
-        "enabled": bool(raw_cfg.get("enable_aliyun_postprocess", True)),
-        "rewrite_structured": bool(raw_cfg.get("postprocess_rewrite_structured", True)),
-        "rewrite_markdown": bool(raw_cfg.get("postprocess_rewrite_markdown", True)),
-        "keep_page_markers": bool(raw_cfg.get("postprocess_keep_page_markers", False)),
-        "enable_llm_basic_cleanup": bool(raw_cfg.get("enable_llm_basic_cleanup", True)),
-        "basic_cleanup_llm_model": _stringify(raw_cfg.get("basic_cleanup_llm_model")) or "qwen3.5-flash",
-        "basic_cleanup_llm_sdk_backend": _stringify(raw_cfg.get("basic_cleanup_llm_sdk_backend")) or None,
-        "basic_cleanup_llm_region": _stringify(raw_cfg.get("basic_cleanup_llm_region")) or "cn-beijing",
-        "enable_llm_structure_resolution": bool(raw_cfg.get("enable_llm_structure_resolution", True)),
-        "structure_llm_model": _stringify(raw_cfg.get("structure_llm_model")) or "qwen3.5-plus",
-        "structure_llm_sdk_backend": _stringify(raw_cfg.get("structure_llm_sdk_backend")) or None,
-        "structure_llm_region": _stringify(raw_cfg.get("structure_llm_region")) or "cn-beijing",
-        "enable_llm_contamination_filter": bool(raw_cfg.get("enable_llm_contamination_filter", True)),
-        "contamination_llm_model": _stringify(raw_cfg.get("contamination_llm_model")) or "qwen3-max",
-        "contamination_llm_sdk_backend": _stringify(raw_cfg.get("contamination_llm_sdk_backend")) or None,
-        "contamination_llm_region": _stringify(raw_cfg.get("contamination_llm_region")) or "cn-beijing",
-        "config_path": str((workspace_root / "config" / "config.json").resolve()),
-        "api_key_file": _stringify(raw_cfg.get("api_key_file")) or None,
-    }
+    del raw_cfg
+    del workspace_root
+    # 统一禁用阿里后处理，解析链路仅保留 MonkeyOCR 主路径。
+    return {"enabled": False}
 
 
 def resolve_parse_runtime_settings(
@@ -459,7 +442,6 @@ def run_parse_manifest(
                 failure_reason = _stringify(row_dict.get("failure_reason"))
                 used_existing_asset = False
                 asset_row: Dict[str, Any] = {}
-                postprocess_summary: Dict[str, Any] = {}
                 if manifest_status == "failed":
                     failed_count += 1
                     results.append({
@@ -469,11 +451,6 @@ def run_parse_manifest(
                         "failure_reason": failure_reason or "manifest_precheck_failed",
                         "run_summary": failure_reason or "manifest_precheck_failed",
                         "used_existing_asset": 0,
-                        "postprocess_enabled": 0,
-                        "postprocess_ok": 0,
-                        "postprocess_llm_basic_cleanup_status": "",
-                        "postprocess_llm_structure_status": "",
-                        "postprocess_contamination_removed_block_count": 0,
                         "duration_seconds": round(time.perf_counter() - start, 6),
                     })
                     failures.append(f"{cite_key}: {failure_reason or 'manifest_precheck_failed'}")
@@ -487,31 +464,6 @@ def run_parse_manifest(
                         runtime_settings=runtime_settings,
                         overwrite_existing=overwrite_existing,
                     )
-                    if postprocess_settings and _normalize_bool(postprocess_settings.get("enabled"), True):
-                        normalized_structured_path = _stringify(asset_row.get("normalized_structured_path"))
-                        reconstructed_markdown_path = _stringify(asset_row.get("reconstructed_markdown_path"))
-                        if normalized_structured_path:
-                            postprocess_summary = postprocess_aliyun_multimodal_parse_outputs(
-                                normalized_structured_path=normalized_structured_path,
-                                reconstructed_markdown_path=reconstructed_markdown_path,
-                                rewrite_structured=bool(postprocess_settings.get("rewrite_structured", True)),
-                                rewrite_markdown=bool(postprocess_settings.get("rewrite_markdown", True)),
-                                keep_page_markers=bool(postprocess_settings.get("keep_page_markers", False)),
-                                enable_llm_basic_cleanup=bool(postprocess_settings.get("enable_llm_basic_cleanup", True)),
-                                basic_cleanup_llm_model=_stringify(postprocess_settings.get("basic_cleanup_llm_model")) or "qwen3.5-flash",
-                                basic_cleanup_llm_sdk_backend=postprocess_settings.get("basic_cleanup_llm_sdk_backend"),
-                                basic_cleanup_llm_region=_stringify(postprocess_settings.get("basic_cleanup_llm_region")) or "cn-beijing",
-                                enable_llm_structure_resolution=bool(postprocess_settings.get("enable_llm_structure_resolution", True)),
-                                structure_llm_model=_stringify(postprocess_settings.get("structure_llm_model")) or "qwen3.5-plus",
-                                structure_llm_sdk_backend=postprocess_settings.get("structure_llm_sdk_backend"),
-                                structure_llm_region=_stringify(postprocess_settings.get("structure_llm_region")) or "cn-beijing",
-                                enable_llm_contamination_filter=bool(postprocess_settings.get("enable_llm_contamination_filter", True)),
-                                contamination_llm_model=_stringify(postprocess_settings.get("contamination_llm_model")) or "qwen3-max",
-                                contamination_llm_sdk_backend=postprocess_settings.get("contamination_llm_sdk_backend"),
-                                contamination_llm_region=_stringify(postprocess_settings.get("contamination_llm_region")) or "cn-beijing",
-                                config_path=postprocess_settings.get("config_path"),
-                                api_key_file=postprocess_settings.get("api_key_file"),
-                            )
                     if manifest_status == "skipped":
                         skipped_count += 1
                     else:
@@ -528,11 +480,6 @@ def run_parse_manifest(
                         "run_summary": "existing_asset_reused" if used_existing_asset else "parse_ready",
                         "failure_reason": "",
                         "used_existing_asset": int(used_existing_asset),
-                        "postprocess_enabled": int(bool(postprocess_settings and _normalize_bool(postprocess_settings.get("enabled"), True))),
-                        "postprocess_ok": int(bool(postprocess_summary) or not bool(postprocess_settings and _normalize_bool(postprocess_settings.get("enabled"), True))),
-                        "postprocess_llm_basic_cleanup_status": _stringify(postprocess_summary.get("llm_basic_cleanup_status")),
-                        "postprocess_llm_structure_status": _stringify(postprocess_summary.get("llm_structure_resolution_status")),
-                        "postprocess_contamination_removed_block_count": _normalize_int(postprocess_summary.get("contamination_removed_block_count"), 0),
                         "duration_seconds": round(time.perf_counter() - start, 6),
                     })
                 except Exception as exc:
@@ -546,11 +493,6 @@ def run_parse_manifest(
                         "failure_reason": failure_reason,
                         "run_summary": failure_reason,
                         "used_existing_asset": 0,
-                        "postprocess_enabled": int(bool(postprocess_settings and _normalize_bool(postprocess_settings.get("enabled"), True))),
-                        "postprocess_ok": 0,
-                        "postprocess_llm_basic_cleanup_status": "",
-                        "postprocess_llm_structure_status": "",
-                        "postprocess_contamination_removed_block_count": 0,
                         "duration_seconds": round(time.perf_counter() - start, 6),
                     })
     except Exception as exc:
@@ -569,11 +511,6 @@ def run_parse_manifest(
                 "failure_reason": lock_error,
                 "run_summary": lock_error,
                 "used_existing_asset": 0,
-                "postprocess_enabled": int(bool(postprocess_settings and _normalize_bool(postprocess_settings.get("enabled"), True))),
-                "postprocess_ok": 0,
-                "postprocess_llm_basic_cleanup_status": "",
-                "postprocess_llm_structure_status": "",
-                "postprocess_contamination_removed_block_count": 0,
                 "duration_seconds": 0.0,
             })
     results_df = pd.DataFrame(results)

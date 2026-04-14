@@ -490,10 +490,32 @@ def _select_existing_asset(
         table = table[table.get("cite_key", "").astype(str) == resolved_cite_key]
     if table.empty:
         return None
-    candidate = dict(table.iloc[0].to_dict())
-    normalized_structured_path = Path(_stringify(candidate.get("normalized_structured_path")))
-    if normalized_structured_path.exists() and normalized_structured_path.is_file():
-        return candidate
+
+    def _level_priority(level: str) -> int:
+        normalized = _stringify(level)
+        if normalized == requested_level:
+            return 0
+        if normalized == UNIFIED_PARSE_LEVEL:
+            return 1
+        return 2
+
+    sort_columns = []
+    ascending = []
+    if "updated_at" in table.columns:
+        sort_columns.append("updated_at")
+        ascending.append(False)
+    if sort_columns:
+        table = table.sort_values(by=sort_columns, ascending=ascending, kind="stable")
+
+    ordered_rows = sorted(
+        table.to_dict(orient="records"),
+        key=lambda row: _level_priority(row.get("parse_level", "")),
+    )
+    for row in ordered_rows:
+        candidate = dict(row)
+        normalized_structured_path = Path(_stringify(candidate.get("normalized_structured_path")))
+        if normalized_structured_path.exists() and normalized_structured_path.is_file():
+            return candidate
     return None
 
 

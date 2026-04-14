@@ -123,7 +123,11 @@ def persist_reference_tables(
     db_path: Optional[Path] = None,
     references_root: Optional[Path] = None,
 ) -> Path:
-    """把文献主表与附件表写回 SQLite 主库。"""
+    """把文献主表与附件表写回 SQLite 主库。
+
+    对 content.db 这类带运行态外键关系的主库，只替换文献域表，
+    避免整表 replace 时误删阅读状态、解析资产等运行态数据。
+    """
     if db_path is None:
         if references_root is None:
             raise ValueError("db_path 与 references_root 至少提供一个")
@@ -131,12 +135,11 @@ def persist_reference_tables(
     else:
         db_path = Path(db_path).resolve()
 
-    bibliodb_sqlite.save_tables(
+    bibliodb_sqlite.replace_reference_tables_only(
         db_path,
         literatures_df=literatures_df,
         attachments_df=attachments_df,
         tags_df=tags_df,
-        if_exists="replace",
     )
     return db_path
 
