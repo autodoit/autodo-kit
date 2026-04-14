@@ -620,113 +620,29 @@ python scripts/manage_tex_dag.py --help
 
 ### 2.2.1 PDF 工具套件总览
 
-当前 `autodokit.tools` 仅保留两套正式 PDF 套件：
-
-1. 传统 PDF 结构化与分块套件
-2. 阿里百炼多模态 PDF 解析套件
+当前 `autodokit.tools` 正式 PDF 主链只保留 MonkeyOCR。
 
 边界约束：
 
-- 传统套件负责 `aok.pdf_structured.v3`、chunk shards 与 SQLite 状态回写。
-- 阿里百炼套件负责高精度页图理解、结构树、线性索引、重建 Markdown 与多模态 chunks。
-- 历史实验入口 `pdf_multimodal_structured_parser.py` 已退出公开导出，不应再作为生产调用面。
+- 正式事务只允许消费 MonkeyOCR 解析资产及其共享运行时。
+- 历史实验入口与旧多模态入口都已退出公开导出，不应再作为生产调用面。
+- `autodokit.tools.llm_clients` 仍是正式保留的通用 LLM 调用入口，但其职责限于翻译、辅助筛选、抽取、判别等非 PDF 任务，不再承担正式 PDF 解析/旧多模态后处理主链。
+- 若需要追溯旧实现，只能到 `autodokit/tools/old/` 查看归档源码。
 
-### 2.2.2 阿里百炼多模态 PDF 解析套件
+### 2.2.2 已归档的旧 PDF 解析接口
 
-用途：对单篇或多篇 PDF 执行阿里百炼视觉大模型解析，输出结构树、线性索引、chunks、解析记录和质量报告。
+以下接口已经退出正式公开 API：
 
-核心入口：
+- 旧阿里百炼多模态单篇解析入口
+- 旧阿里百炼多模态批量管理入口
+- 旧阿里百炼多模态后处理门面
 
-- `parse_pdf_with_aliyun_multimodal(...)`
-- `batch_manage_pdf_with_aliyun_multimodal(...)`
+约束：
 
-#### `parse_pdf_with_aliyun_multimodal(...)`
-
-用途：执行单篇阿里百炼多模态 PDF 解析，默认一个 PDF 对应一套独立输出目录。
-
-关键参数：
-
-| 字段 | 类型 | 必填 | 说明 |
-| --- | --- | --- | --- |
-| `pdf_path` | `str \| Path` | 是 | 待解析 PDF 的绝对路径。 |
-| `output_root` | `str \| Path` | 是 | 单篇输出根目录。 |
-| `api_key_file` | `str \| Path` | 是 | 阿里百炼 API Key 文件绝对路径。 |
-| `output_name` | `str` | 否 | 单篇目录名；为空时自动生成 UID。 |
-| `model` | `str` | 否 | 模型名，默认 `auto`。 |
-| `language` | `str` | 否 | 语言提示，例如 `zh`、`en`。 |
-| `source_metadata` | `dict` | 否 | 标题、年份等元数据提示。 |
-| `start_page` | `int` | 否 | 起始页码，从 1 开始。 |
-| `end_page` | `int` | 否 | 结束页码。 |
-| `max_pages` | `int` | 否 | 最多处理页数。 |
-| `page_dpi` | `int` | 否 | 页图 DPI，默认 `180`。 |
-| `chunk_max_chars` | `int` | 否 | chunk 最大字符数。 |
-| `chunk_overlap_chars` | `int` | 否 | chunk 重叠字符数。 |
-| `overwrite_output` | `bool` | 否 | 是否允许覆盖已有输出目录。 |
-
-默认输出文件：
-
-- `structured_tree.json`
-- `elements.json`
-- `attachments_manifest.json`
-- `linear_index.json`
-- `chunk_manifest.json`
-- `chunks.jsonl`
-- `reconstructed_content.md`
-- `parse_record.json`
-- `quality_report.json`
-- `result.json`
-
-#### `batch_manage_pdf_with_aliyun_multimodal(...)`
-
-用途：批量循环调用单篇阿里百炼解析工具，并负责输出目录命名、汇总和报告生成。
-
-关键参数：
-
-| 字段 | 类型 | 必填 | 说明 |
-| --- | --- | --- | --- |
-| `output_root` | `str \| Path` | 是 | 批处理输出根目录。 |
-| `api_key_file` | `str \| Path` | 是 | 阿里百炼 API Key 文件绝对路径。 |
-| `jobs` | `Iterable[dict]` | 否 | 批处理任务数组。 |
-| `jobs_file` | `str \| Path` | 否 | JSON 数组文件路径，与 `jobs` 二选一。 |
-| `output_name_key` | `str` | 否 | 从每个 job 中取输出目录名的字段，默认 `output_name`。 |
-| `model` | `str` | 否 | 默认模型名。 |
-| `generate_report` | `bool` | 否 | 是否生成 `report.md`。 |
-| `fail_fast` | `bool` | 否 | 是否遇错立即停止。 |
-
-默认输出文件：
-
-- `run_summary.json`
-- `report.md`
-- 每个 job 一个独立子目录
-
-#### 阿里百炼多模态解析后处理统一入口（llm_clients）
-
-用途：对阿里百炼多模态解析生成的 `reconstructed_content.md` 与 `normalized.structured.json` 做统一后处理、污染块剥离与轻量文本清洗。
-
-推荐入口：
-
-- `from autodokit.tools.llm_clients import postprocess_aliyun_multimodal_parse_outputs`
-
-说明：
-
-- 事务层与业务脚本不要直接导入 `autodokit.tools.ocr.aliyun_multimodal.aliyun_multimodal_postprocess_tools`；统一通过 `llm_clients.py` 的门面函数调用。
-- A060、A100 以及其它直接生成阿里百炼解析资产的 AOK 事务，都会在解析完成后自动调用该入口。
-- `autodokit.tools.__init__` 不再对外公开该函数，避免绕过统一门面。
-
-最小示例：
-
-```python
-from autodokit.tools.llm_clients import postprocess_aliyun_multimodal_parse_outputs
-
-summary = postprocess_aliyun_multimodal_parse_outputs(
-  normalized_structured_path=r"D:\outputs\paper\normalized.structured.json",
-  reconstructed_markdown_path=r"D:\outputs\paper\reconstructed_content.md",
-  rewrite_structured=True,
-  rewrite_markdown=True,
-  keep_page_markers=False,
-)
-print(summary["postprocessed_markdown_path"])
-```
+- 正式 API 只保留 MonkeyOCR 主链与其共享运行时。
+- 旧接口源码已归档到 `autodokit/tools/old/`，仅用于历史审计，不再提供公开参数表、示例或接入承诺。
+- llm_clients 模块本身未归档；归档的是其中旧 PDF 多模态后处理兼容门面所对应的历史实现。
+- 事务、脚本和文档不得再把这些旧接口当作当前推荐入口。
 
 ### 2.2.3 AOK 日志数据库工具（autodokit.tools.atomic.log_aok）
 

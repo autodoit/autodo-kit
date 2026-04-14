@@ -95,9 +95,11 @@ def _resolve_model(*, model: str = "auto", global_config_path: str | Path | None
             payload = _load_json_file(config_path)
             llm_cfg = payload.get("llm") if isinstance(payload.get("llm"), dict) else {}
             candidate = _stringify(
-                llm_cfg.get("pdf_multimodal_parse_model")
+                llm_cfg.get("monkeyocr_parse_model")
+                or llm_cfg.get("pdf_multimodal_parse_model")
                 or llm_cfg.get("aliyun_pdf_parse_model")
                 or llm_cfg.get("pdf_parse_model")
+                or payload.get("monkeyocr_parse_model")
                 or payload.get("pdf_multimodal_parse_model")
             )
             if candidate:

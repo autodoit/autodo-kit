@@ -26,7 +26,7 @@
   ],
   "enable_reference_block_llm": false,
   "reference_block_model": "qwen-flash",
-  "structured_converter": "aliyun_multimodal",
+  "structured_converter": "monkeyocr",
   "structured_task_type": "review_deep",
   "structured_reuse_any_variant": true,
   "structured_generation_required": true,

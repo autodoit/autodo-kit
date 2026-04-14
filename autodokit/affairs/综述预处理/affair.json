@@ -2,7 +2,7 @@
   "workspace_root": "",
   "content_db": "",
   "output_dir": "",
-  "structured_converter": "aliyun_multimodal",
+  "structured_converter": "monkeyocr",
   "structured_task_type": "review_deep",
   "structured_reuse_any_variant": false,
   "structured_generation_required": true,

@@ -31,7 +31,6 @@ from autodokit.tools import (
     process_reference_citation,
     refine_reference_lines_with_llm,
 )
-from autodokit.tools.llm_clients import postprocess_aliyun_multimodal_parse_outputs
 from autodokit.tools.ocr.classic.pdf_parse_asset_manager import ensure_multimodal_parse_asset
 from autodokit.tools.bibliodb_sqlite import replace_tags_for_namespace, save_structured_state, upsert_reading_queue_rows, upsert_review_state_rows
 from autodokit.tools.contentdb_sqlite import get_pdf_structured_variant_column, resolve_content_db_config, resolve_pdf_structured_variant_output_dir
@@ -110,6 +109,11 @@ def _stringify(value: Any) -> str:
     if pd.isna(value):
         return ""
     return str(value).strip()
+
+
+def _is_monkeyocr_converter(value: str) -> bool:
+    normalized = _stringify(value).lower()
+    return normalized in {"monkeyocr", "legacy_multimodal_alias"}
 
 
 def _build_scope_key(raw_cfg: Dict[str, Any]) -> str:
@@ -274,7 +278,7 @@ def _ensure_structured_reference_lines(
     api_key_file: str = "",
     parse_model: str = "",
     structured_babeldoc: Dict[str, Any] | None = None,
-    enable_aliyun_postprocess: bool = True,
+    enable_legacy_postprocess: bool = False,
     enable_llm_basic_cleanup: bool = True,
     basic_cleanup_llm_model: str = "qwen3.5-flash",
     basic_cleanup_llm_sdk_backend: str | None = None,
@@ -303,7 +307,7 @@ def _ensure_structured_reference_lines(
                 )
             return working_literature, source_record, [], [], False
 
-        if structured_converter == "aliyun_multimodal":
+        if _is_monkeyocr_converter(structured_converter):
             global_config_path = workspace_root / "config" / "config.json"
             parse_level = structured_task_type if structured_task_type not in {"reference_context", "full_fine_grained"} else "review_deep"
             parse_asset = ensure_multimodal_parse_asset(
@@ -317,30 +321,8 @@ def _ensure_structured_reference_lines(
                 overwrite_existing=False,
                 model=parse_model or "auto",
             )
-            if enable_aliyun_postprocess:
-                postprocess_aliyun_multimodal_parse_outputs(
-                    normalized_structured_path=_stringify(parse_asset.get("normalized_structured_path")),
-                    reconstructed_markdown_path=_stringify(parse_asset.get("reconstructed_markdown_path")),
-                    rewrite_structured=postprocess_rewrite_structured,
-                    rewrite_markdown=postprocess_rewrite_markdown,
-                    keep_page_markers=postprocess_keep_page_markers,
-                    enable_llm_basic_cleanup=enable_llm_basic_cleanup,
-                    basic_cleanup_llm_model=basic_cleanup_llm_model,
-                    basic_cleanup_llm_sdk_backend=basic_cleanup_llm_sdk_backend,
-                    basic_cleanup_llm_region=basic_cleanup_llm_region,
-                    enable_llm_structure_resolution=enable_llm_structure_resolution,
-                    structure_llm_model=structure_llm_model,
-                    structure_llm_sdk_backend=structure_llm_sdk_backend,
-                    structure_llm_region=structure_llm_region,
-                    enable_llm_contamination_filter=enable_llm_contamination_filter,
-                    contamination_llm_model=contamination_llm_model,
-                    contamination_llm_sdk_backend=contamination_llm_sdk_backend,
-                    contamination_llm_region=contamination_llm_region,
-                    config_path=global_config_path,
-                    api_key_file=api_key_file or None,
-                )
             structured_path = Path(_stringify(parse_asset.get("normalized_structured_path"))).resolve()
-            backend = "aliyun_multimodal"
+            backend = "monkeyocr"
             task_type = parse_level
         else:
             output_dir = resolve_pdf_structured_variant_output_dir(
@@ -942,7 +924,7 @@ def _prepare_review_assets(
     reference_line_repair_model: str = "auto",
     placeholder_source: str = "placeholder_from_a065_review_scan",
     run_uid_prefix: str = "a065",
-    enable_aliyun_postprocess: bool = True,
+    enable_legacy_postprocess: bool = False,
     enable_llm_basic_cleanup: bool = True,
     basic_cleanup_llm_model: str = "qwen3.5-flash",
     basic_cleanup_llm_sdk_backend: str | None = None,

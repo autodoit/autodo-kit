@@ -535,26 +535,10 @@ from autodokit.tools.ocr.classic.pdf_page_image_tools import (
     crop_image_by_normalized_bbox,
     render_pdf_pages_to_png,
 )
-from autodokit.tools.ocr.aliyun_multimodal.pdf_multimodal_tree_builder import (
-    build_elements_payload as build_pdf_multimodal_elements_payload,
-    build_quality_report as build_pdf_multimodal_quality_report,
-    build_tree_linear_index as build_pdf_multimodal_tree_linear_index,
-    build_structure_tree as build_pdf_multimodal_structure_tree,
-    render_reconstructed_markdown as render_pdf_multimodal_reconstructed_markdown,
-)
 from autodokit.tools.ocr.monkeyocr.monkeyocr_windows_tools import (
     prepare_monkeyocr_windows_runtime,
     run_monkeyocr_windows_batch_folder,
     run_monkeyocr_windows_single_pdf,
-)
-from autodokit.tools.ocr.aliyun_multimodal.aok_pdf_aliyun_multimodal_parse import (
-    build_aliyun_multimodal_chunks,
-    generate_aok_pdf_parse_uid,
-    parse_pdf_with_aliyun_multimodal,
-    resolve_aok_pdf_parse_output_dir,
-)
-from autodokit.tools.ocr.aliyun_multimodal.aok_pdf_aliyun_multimodal_batch_manage import (
-    batch_manage_pdf_with_aliyun_multimodal,
 )
 from autodokit.tools.workspace_path_migration import (
     PathMapping,
@@ -662,16 +646,6 @@ _用户公开工具 = [
     "extract_pdf_elements_from_structured_file",
     "render_pdf_pages_to_png",
     "crop_image_by_normalized_bbox",
-    "build_pdf_multimodal_elements_payload",
-    "build_pdf_multimodal_structure_tree",
-    "build_pdf_multimodal_tree_linear_index",
-    "build_pdf_multimodal_quality_report",
-    "render_pdf_multimodal_reconstructed_markdown",
-    "generate_aok_pdf_parse_uid",
-    "resolve_aok_pdf_parse_output_dir",
-    "build_aliyun_multimodal_chunks",
-    "parse_pdf_with_aliyun_multimodal",
-    "batch_manage_pdf_with_aliyun_multimodal",
     "PathMapping",
     "migrate_workspace_paths",
     "build_structured_data_payload",
@@ -923,18 +897,8 @@ _开发者工具 = [
     "export_tex_graph",
     "rewire_tex_reference",
     "set_tex_root",
-    "build_pdf_multimodal_elements_payload",
-    "build_pdf_multimodal_structure_tree",
-    "build_pdf_multimodal_tree_linear_index",
-    "build_pdf_multimodal_quality_report",
-    "render_pdf_multimodal_reconstructed_markdown",
-    "generate_aok_pdf_parse_uid",
-    "resolve_aok_pdf_parse_output_dir",
     "prepare_monkeyocr_windows_runtime",
     "run_monkeyocr_windows_single_pdf",
-    "build_aliyun_multimodal_chunks",
-    "parse_pdf_with_aliyun_multimodal",
-    "batch_manage_pdf_with_aliyun_multimodal",
     "run_online_retrieval_router",
     "run_online_retrieval_from_bib",
 ]

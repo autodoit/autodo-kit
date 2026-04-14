@@ -4,10 +4,16 @@
 - 统一读取 API Key（不在仓库中硬编码密钥）。
 - 支持 DashScope SDK 与 OpenAI 兼容 SDK 两种调用后端。
 - 支持按事务类型、成本档位、输入规模进行自动模型路由。
+- 作为非 PDF 类 LLM 任务的统一入口，例如翻译、辅助筛选、字段抽取与文本判别。
 
 设计目标：
 - 对事务层保持最小侵入：已有 `load_aliyun_llm_config` + `AliyunDashScopeClient` 调用方式继续可用。
 - 将“选模型/选后端/选地域 base_url”逻辑集中在工具层，避免散落在事务脚本中。
+
+边界说明：
+- 本模块仍是正式保留的通用 LLM 能力入口。
+- 当前退出正式主链的，仅是旧阿里多模态 PDF 解析/后处理职责。
+- 正式 PDF 解析统一由 MonkeyOCR 主链承担，不再由本模块反向充当解析器。
 """
 
 from __future__ import annotations
@@ -1476,14 +1482,19 @@ def build_aliyun_llm_runtime_payload(
 
 
 def postprocess_aliyun_multimodal_parse_outputs(*args: Any, **kwargs: Any) -> Dict[str, Any]:
-    """通过统一 LLM 工具入口执行阿里百炼多模态解析后处理。
+    """归档兼容门面：执行旧阿里多模态解析后处理。
+
+    说明：
+        该函数仅为历史 PDF 解析链保留归档兼容入口，
+        不代表 llm_clients 模块整体退役。翻译、辅助筛选、
+        抽取、判别等非 PDF 任务，仍应继续通过本模块统一路由。
 
     Args:
-        *args: 透传给底层后处理工具的参数。
-        **kwargs: 透传给底层后处理工具的参数。
+        *args: 透传给归档后处理工具的参数。
+        **kwargs: 透传给归档后处理工具的参数。
 
     Returns:
-        后处理执行摘要。
+        归档后处理执行摘要。
 
     Raises:
         各底层实现可能抛出的文件、配置或解析异常。
@@ -1492,7 +1503,15 @@ def postprocess_aliyun_multimodal_parse_outputs(*args: Any, **kwargs: Any) -> Di
         >>> postprocess_aliyun_multimodal_parse_outputs(normalized_structured_path='...')
     """
 
-    from autodokit.tools.ocr.aliyun_multimodal.aliyun_multimodal_postprocess_tools import postprocess_aliyun_multimodal_parse_outputs as _impl
+    from warnings import warn
+
+    from autodokit.tools.old.ocr.aliyun_multimodal.aliyun_multimodal_postprocess_tools import postprocess_aliyun_multimodal_parse_outputs as _impl
+
+    warn(
+        "postprocess_aliyun_multimodal_parse_outputs 已归档到 autodokit.tools.old，不再属于正式 PDF 主链。",
+        DeprecationWarning,
+        stacklevel=2,
+    )
 
     return _impl(*args, **kwargs)
 

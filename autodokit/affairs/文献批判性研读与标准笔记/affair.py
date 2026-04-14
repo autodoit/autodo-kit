@@ -9,7 +9,6 @@ from typing import Any, Dict, List
 import pandas as pd
 
 from autodokit.tools import append_aok_log_event, build_gate_review, knowledge_index_sync_from_note, knowledge_note_register, load_json_or_py, process_reference_citation
-from autodokit.tools.llm_clients import postprocess_aliyun_multimodal_parse_outputs
 from autodokit.tools.bibliodb_sqlite import load_reading_state_df, upsert_reading_state_rows
 from autodokit.tools.contentdb_sqlite import CONTENT_DB_DIRECTORY_NAME, DEFAULT_CONTENT_DB_NAME, resolve_content_db_config
 from autodokit.tools.literature_translation_tools import run_literature_translation
@@ -147,7 +146,7 @@ def execute(config_path: Path) -> List[Path]:
     if max_items > 0:
         state_df = state_df.head(max_items).reset_index(drop=True)
 
-    enable_aliyun_postprocess = bool(raw_cfg.get("enable_aliyun_postprocess", True))
+    legacy_postprocess_enabled = False
     enable_llm_basic_cleanup = bool(raw_cfg.get("enable_llm_basic_cleanup", True))
     basic_cleanup_llm_model = _stringify(raw_cfg.get("basic_cleanup_llm_model")) or "qwen3.5-flash"
     basic_cleanup_llm_sdk_backend = _stringify(raw_cfg.get("basic_cleanup_llm_sdk_backend")) or None
@@ -220,28 +219,7 @@ def execute(config_path: Path) -> List[Path]:
 
             asset_backend = _stringify(parse_asset.get("backend"))
             postprocess_summary: Dict[str, Any] = {}
-            if enable_aliyun_postprocess and asset_backend == "aliyun_multimodal":
-                postprocess_summary = postprocess_aliyun_multimodal_parse_outputs(
-                    normalized_structured_path=_stringify(parse_asset.get("normalized_structured_path")),
-                    reconstructed_markdown_path=_stringify(parse_asset.get("reconstructed_markdown_path")),
-                    rewrite_structured=postprocess_rewrite_structured,
-                    rewrite_markdown=postprocess_rewrite_markdown,
-                    keep_page_markers=postprocess_keep_page_markers,
-                    enable_llm_basic_cleanup=enable_llm_basic_cleanup,
-                    basic_cleanup_llm_model=basic_cleanup_llm_model,
-                    basic_cleanup_llm_sdk_backend=basic_cleanup_llm_sdk_backend,
-                    basic_cleanup_llm_region=basic_cleanup_llm_region,
-                    enable_llm_structure_resolution=enable_llm_structure_resolution,
-                    structure_llm_model=structure_llm_model,
-                    structure_llm_sdk_backend=structure_llm_sdk_backend,
-                    structure_llm_region=structure_llm_region,
-                    enable_llm_contamination_filter=enable_llm_contamination_filter,
-                    contamination_llm_model=contamination_llm_model,
-                    contamination_llm_sdk_backend=contamination_llm_sdk_backend,
-                    contamination_llm_region=contamination_llm_region,
-                    config_path=workspace_root / "config" / "config.json",
-                )
-            elif asset_backend == "pdf_text_fallback":
+            if asset_backend == "pdf_text_fallback":
                 postprocess_summary = {
                     "llm_basic_cleanup_status": "skipped_pdf_text_fallback",
                     "llm_structure_resolution_status": "skipped_pdf_text_fallback",
@@ -407,7 +385,7 @@ def execute(config_path: Path) -> List[Path]:
                     "discovered_candidate_count": len(short_loop_discovered_rows),
                     "knowledge_uid": _stringify(note_info.get("uid_knowledge")),
                     "asset_backend": asset_backend,
-                    "postprocess_ok": int(bool(postprocess_summary) or (not enable_aliyun_postprocess)),
+                    "postprocess_ok": int(bool(postprocess_summary) or (not legacy_postprocess_enabled)),
                     "postprocess_llm_basic_cleanup_status": _stringify(postprocess_summary.get("llm_basic_cleanup_status")),
                     "postprocess_llm_structure_status": _stringify(postprocess_summary.get("llm_structure_resolution_status")),
                     "postprocess_contamination_removed_block_count": int(postprocess_summary.get("contamination_removed_block_count") or 0),
@@ -465,7 +443,7 @@ def execute(config_path: Path) -> List[Path]:
         metadata={
             "workspace_root": str(workspace_root),
             "content_db": str(content_db),
-            "enable_aliyun_postprocess": enable_aliyun_postprocess,
+            "legacy_postprocess_enabled": legacy_postprocess_enabled,
             "enable_llm_basic_cleanup": enable_llm_basic_cleanup,
             "basic_cleanup_llm_model": basic_cleanup_llm_model,
             "enable_llm_structure_resolution": enable_llm_structure_resolution,

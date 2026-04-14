@@ -345,7 +345,7 @@ def execute(config_path: Path) -> List[Path]:
             "handoff_path": str(manifest_result["handoff_path"]),
             "batch_report_path": str(manifest_result["batch_report_path"]),
             "parse_runtime": parse_runtime,
-            "enable_aliyun_postprocess": bool(postprocess_settings.get("enabled", True)),
+            "legacy_postprocess_enabled": bool(postprocess_settings.get("enabled", True)),
             "postprocess_rewrite_structured": bool(postprocess_settings.get("rewrite_structured", True)),
             "postprocess_rewrite_markdown": bool(postprocess_settings.get("rewrite_markdown", True)),
             "postprocess_keep_page_markers": bool(postprocess_settings.get("keep_page_markers", False)),

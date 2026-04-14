@@ -13,7 +13,6 @@ from autodokit.tools import append_aok_log_event, build_gate_review, load_json_o
 from autodokit.tools.bibliodb_sqlite import load_reading_state_df, upsert_reading_state_rows
 from autodokit.tools.contentdb_sqlite import CONTENT_DB_DIRECTORY_NAME, DEFAULT_CONTENT_DB_NAME, resolve_content_db_config
 from autodokit.tools.literature_translation_tools import run_literature_translation
-from autodokit.tools.ocr.aliyun_multimodal.aliyun_multimodal_postprocess_tools import postprocess_aliyun_multimodal_parse_outputs
 from autodokit.tools.ocr.runtime.monkeyocr_manifest_runtime import (
     resolve_parse_runtime_settings,
     resolve_postprocess_settings,
@@ -299,7 +298,7 @@ def execute(config_path: Path) -> List[Path]:
             "handoff_path": str(manifest_result["handoff_path"]),
             "batch_report_path": str(manifest_result["batch_report_path"]),
             "parse_runtime": parse_runtime,
-            "enable_aliyun_postprocess": bool(postprocess_settings.get("enabled", True)),
+            "legacy_postprocess_enabled": bool(postprocess_settings.get("enabled", True)),
             "postprocess_rewrite_structured": bool(postprocess_settings.get("rewrite_structured", True)),
             "postprocess_rewrite_markdown": bool(postprocess_settings.get("rewrite_markdown", True)),
             "postprocess_keep_page_markers": bool(postprocess_settings.get("keep_page_markers", False)),

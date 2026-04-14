@@ -139,7 +139,7 @@ def execute(config_path: Path) -> List[Path]:
         reference_block_model=str(raw_cfg.get("reference_block_model") or ""),
         reference_block_max_items=int(raw_cfg.get("reference_block_max_items") or 120),
         structured_variants=structured_variants,
-        structured_converter=str(raw_cfg.get("structured_converter") or "aliyun_multimodal"),
+        structured_converter=str(raw_cfg.get("structured_converter") or "monkeyocr"),
         structured_task_type=str(raw_cfg.get("structured_task_type") or "review_deep"),
 
         structured_generation_required=bool(raw_cfg.get("structured_generation_required", False)),

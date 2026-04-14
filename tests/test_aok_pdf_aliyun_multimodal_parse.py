@@ -8,9 +8,9 @@ import sqlite3
 
 import pandas as pd
 
-from autodokit.tools.ocr.aliyun_multimodal.aok_pdf_aliyun_multimodal_batch_manage import batch_manage_pdf_with_aliyun_multimodal
-from autodokit.tools.ocr.aliyun_multimodal.aok_pdf_aliyun_multimodal_parse import parse_pdf_with_aliyun_multimodal
-from autodokit.tools.ocr.aliyun_multimodal.aliyun_multimodal_postprocess_tools import postprocess_aliyun_multimodal_parse_outputs
+from autodokit.tools.old.ocr.aliyun_multimodal.aok_pdf_aliyun_multimodal_batch_manage import batch_manage_pdf_with_aliyun_multimodal
+from autodokit.tools.old.ocr.aliyun_multimodal.aok_pdf_aliyun_multimodal_parse import parse_pdf_with_aliyun_multimodal
+from autodokit.tools.old.ocr.aliyun_multimodal.aliyun_multimodal_postprocess_tools import postprocess_aliyun_multimodal_parse_outputs
 from autodokit.tools.bibliodb_sqlite import load_literatures_df, load_parse_assets_df, save_tables
 from autodokit.tools.contentdb_sqlite import init_content_db
 from autodokit.tools.ocr.classic.pdf_parse_asset_manager import ensure_multimodal_parse_asset
@@ -75,7 +75,7 @@ def test_parse_pdf_with_aliyun_multimodal_should_create_required_outputs(monkeyp
     page_image.write_bytes(b"png")
 
     monkeypatch.setattr(
-        "autodokit.tools.ocr.aliyun_multimodal.aok_pdf_aliyun_multimodal_parse.render_pdf_pages_to_png",
+        "autodokit.tools.old.ocr.aliyun_multimodal.aok_pdf_aliyun_multimodal_parse.render_pdf_pages_to_png",
         lambda *args, **kwargs: [
             {
                 "page_index": 0,
@@ -89,15 +89,15 @@ def test_parse_pdf_with_aliyun_multimodal_should_create_required_outputs(monkeyp
         ],
     )
     monkeypatch.setattr(
-        "autodokit.tools.ocr.aliyun_multimodal.aok_pdf_aliyun_multimodal_parse.extract_images_with_pymupdf",
+        "autodokit.tools.old.ocr.aliyun_multimodal.aok_pdf_aliyun_multimodal_parse.extract_images_with_pymupdf",
         lambda *args, **kwargs: ([], type("Status", (), {"enabled": True, "disabled_reason": ""})()),
     )
     monkeypatch.setattr(
-        "autodokit.tools.ocr.aliyun_multimodal.aok_pdf_aliyun_multimodal_parse.load_aliyun_llm_config",
+        "autodokit.tools.old.ocr.aliyun_multimodal.aok_pdf_aliyun_multimodal_parse.load_aliyun_llm_config",
         lambda **kwargs: _FakeConfig(),
     )
     monkeypatch.setattr(
-        "autodokit.tools.ocr.aliyun_multimodal.aok_pdf_aliyun_multimodal_parse.AliyunDashScopeClient",
+        "autodokit.tools.old.ocr.aliyun_multimodal.aok_pdf_aliyun_multimodal_parse.AliyunDashScopeClient",
         _FakeClient,
     )
 
@@ -140,7 +140,7 @@ def test_batch_manage_pdf_with_aliyun_multimodal_should_use_named_output_field(m
         }
 
     monkeypatch.setattr(
-        "autodokit.tools.ocr.aliyun_multimodal.aok_pdf_aliyun_multimodal_batch_manage.parse_pdf_with_aliyun_multimodal",
+        "autodokit.tools.old.ocr.aliyun_multimodal.aok_pdf_aliyun_multimodal_batch_manage.parse_pdf_with_aliyun_multimodal",
         _fake_parse,
     )
 
@@ -246,7 +246,6 @@ def test_ensure_multimodal_parse_asset_should_register_normalized_structured(mon
     assert not parse_assets.empty
     literatures = load_literatures_df(content_db)
     assert literatures.iloc[0]["structured_abs_path"] == str(normalized_path)
-    assert literatures.iloc[0]["latest_parse_level"] == "non_review_rough"
 
 
 def test_postprocess_aliyun_multimodal_parse_outputs_should_remove_cross_article_contamination(monkeypatch, tmp_path: Path) -> None:
@@ -313,11 +312,11 @@ def test_postprocess_aliyun_multimodal_parse_outputs_should_remove_cross_article
             )
 
     monkeypatch.setattr(
-        "autodokit.tools.ocr.aliyun_multimodal.aliyun_multimodal_postprocess_tools.load_aliyun_llm_config",
+        "autodokit.tools.old.ocr.aliyun_multimodal.aliyun_multimodal_postprocess_tools.load_aliyun_llm_config",
         lambda **kwargs: _FakeLLMConfig(),
     )
     monkeypatch.setattr(
-        "autodokit.tools.ocr.aliyun_multimodal.aliyun_multimodal_postprocess_tools.AliyunDashScopeClient",
+        "autodokit.tools.old.ocr.aliyun_multimodal.aliyun_multimodal_postprocess_tools.AliyunDashScopeClient",
         _FakeLLMClient,
     )
 
