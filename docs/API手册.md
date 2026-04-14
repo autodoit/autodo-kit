@@ -258,6 +258,26 @@ result = migrate_workspace_paths(
 2. `online_retrieval_service.py`：路由分发与编排壳。
 3. `school_foreign_database_portal.py`：学校数据库导航门户适配。
 4. `en_chaoxing_portal_retry.py`：英文失败项学校门户重试。
+
+### 1.11 A040 检索治理事务的特殊渠道参数
+
+A040 的正式事务入口是 `autodokit.affairs.检索治理.affair.execute(...)`。当前特殊渠道不再通过独立 tools 模块承载，而是作为 A040 事务程序的参数分支执行。
+
+常用参数：
+
+- `enable_special_channel`：是否启用特殊渠道分支。
+- `special_channel_mode`：特殊渠道模式，当前使用 `en_special_download` 或 `en_open_access_special`。
+- `special_channel.cite_keys` / `special_channel.cite_keys_file`：限定处理的 cite_key。
+- `special_channel.skip_existing`：是否跳过已具备 fulltext / pdf_path / primary_attachment_source_path / primary link 的条目。
+- `attachments_target_dir`：成功下载后附件落盘目录，默认 `workspace/references/attachments`。
+- `school_library_nav_url` / `library_nav_url` / `portal_url`：学校门户重试入口。
+
+命名与回写口径：
+
+1. 下载成功后，PDF 文件名统一为 `att-<cite_key>-<uid_attachment>.pdf`。
+2. 下载后的内容主库更新应复用 A020 同源的 `bibliodb_sqlite.replace_reference_tables_only(...)` 链路。
+3. 附件事实层以 `attachments` + `literature_attachment_links` 为准；`literature_attachments` 仅保留兼容投影。
+4. A040 事务智能体应直接调用 A040 affair 程序，由事务程序根据参数走常规流程或特殊流程。
 5. `executors/content_portal_cnki.py`、`executors/content_portal_spis.py`、`executors/open_platform.py`、`executors/navigation_portal.py`：执行层内部实现。
 
 如果你在写开发说明或排障记录，建议优先引用 `docs/在线检索文献模块专题.md`，再补具体文件名，避免只说“在线检索模块”而不说清楚层级边界。
@@ -878,6 +898,7 @@ if repair_result["status"] == "PASS":
 
 新增字段约定（`literatures` 主表）：
 
+- `文献语种`：规范化语种字段。优先值为 `zh-cn`、`en`；其他语种保留为小写标签（如 `fr`、`de`、`ja`）。
 - `structured_status`：结构化状态，如 `ready`。
 - `structured_abs_path`：结构化 JSON 的绝对路径。
 - `structured_backend`：生成后端，如 `local_pipeline_v2`、`babeldoc`。
