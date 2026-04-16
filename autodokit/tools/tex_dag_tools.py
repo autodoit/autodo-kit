@@ -9,6 +9,7 @@ import argparse
 import json
 import os
 import re
+import shutil
 import sys
 from dataclasses import dataclass
 from pathlib import Path
@@ -17,6 +18,7 @@ from typing import Any, Iterable, Optional, Sequence
 
 INCLUDE_PATTERN = re.compile(r"\\(?P<kind>subfile|input|include)\{(?P<target>[^}]+)\}")
 DOCCLASS_PATTERN = re.compile(r"\\documentclass\[(?P<root>[^\]]+)\]\{subfiles\}")
+TEX_ROOT_MAGIC_PATTERN = re.compile(r"^(?P<prefix>\s*%\s*!TeX\s+root\s*=\s*)(?P<root>[^\s].*?)(?P<suffix>\s*)$")
 
 
 @dataclass(frozen=True)
@@ -338,6 +340,159 @@ def resolve_user_path(root_dir: Path, value: str) -> Path:
     return path.resolve()
 
 
+def _derive_clone_target_path(source_path: Path, from_tag: str | None, to_tag: str) -> Path:
+    source_name = source_path.name
+    if from_tag:
+        if from_tag not in source_name:
+            raise ValueError(f"源文件名未包含 from_tag={from_tag}: {source_path}")
+        target_name = source_name.replace(from_tag, to_tag)
+    else:
+        if source_name.lower().endswith(".tex"):
+            target_name = source_name[:-4] + f"_{to_tag}.tex"
+        else:
+            target_name = source_name + f"_{to_tag}"
+    return source_path.with_name(target_name)
+
+
+def _resolve_clone_map(
+    *,
+    root: Path,
+    source_files: Sequence[str | Path],
+    from_tag: str | None,
+    to_tag: str,
+    target_files: Sequence[str | Path] | None,
+) -> dict[Path, Path]:
+    resolved_sources = [resolve_user_path(root, str(item)) for item in source_files]
+    if not resolved_sources:
+        raise ValueError("source_files 不能为空。")
+
+    clone_map: dict[Path, Path] = {}
+    if target_files:
+        resolved_targets = [resolve_user_path(root, str(item)) for item in target_files]
+        if len(resolved_targets) != len(resolved_sources):
+            raise ValueError("target_files 数量必须与 source_files 相同。")
+        for source, target in zip(resolved_sources, resolved_targets):
+            clone_map[source] = target
+    else:
+        for source in resolved_sources:
+            clone_map[source] = _derive_clone_target_path(source, from_tag=from_tag, to_tag=to_tag)
+
+    target_values = list(clone_map.values())
+    if len(set(target_values)) != len(target_values):
+        raise ValueError("推导得到重复的目标文件路径，请检查 from_tag/to_tag 或 target_files。")
+    return clone_map
+
+
+def _rewrite_cloned_file_links(file_path: Path, clone_map: dict[Path, Path], dry_run: bool) -> list[str]:
+    previews: list[str] = []
+    lines = file_path.read_text(encoding="utf-8").splitlines(keepends=True)
+    new_lines: list[str] = []
+
+    for line_no, original_line in enumerate(lines, start=1):
+        updated_line = original_line
+        active_line = strip_line_comment(updated_line)
+
+        include_matches = list(INCLUDE_PATTERN.finditer(active_line))
+        for match in reversed(include_matches):
+            raw_target = match.group("target").strip()
+            resolved = resolve_reference(file_path, raw_target)
+            if resolved not in clone_map:
+                continue
+            keep_extension = raw_target.lower().endswith(".tex")
+            replacement = relative_tex_reference(file_path, clone_map[resolved], keep_extension=keep_extension)
+            if replacement == raw_target:
+                continue
+            start, end = match.span("target")
+            updated_line = updated_line[:start] + replacement + updated_line[end:]
+            previews.append(f"{file_path}:{line_no}: include {raw_target} -> {replacement}")
+
+        active_line = strip_line_comment(updated_line)
+        docclass_match = DOCCLASS_PATTERN.search(active_line)
+        if docclass_match:
+            raw_root = docclass_match.group("root").strip()
+            resolved_root = resolve_reference(file_path, raw_root)
+            if resolved_root in clone_map:
+                replacement_root = relative_tex_reference(file_path, clone_map[resolved_root], keep_extension=True)
+                if replacement_root != raw_root:
+                    start, end = docclass_match.span("root")
+                    updated_line = updated_line[:start] + replacement_root + updated_line[end:]
+                    previews.append(f"{file_path}:{line_no}: subfiles-root {raw_root} -> {replacement_root}")
+
+        magic_match = TEX_ROOT_MAGIC_PATTERN.match(updated_line.rstrip("\r\n"))
+        if magic_match:
+            raw_root = magic_match.group("root").strip()
+            resolved_root = resolve_reference(file_path, raw_root)
+            if resolved_root in clone_map:
+                replacement_root = relative_tex_reference(file_path, clone_map[resolved_root], keep_extension=True)
+                if replacement_root != raw_root:
+                    line_ending = ""
+                    if updated_line.endswith("\r\n"):
+                        line_ending = "\r\n"
+                    elif updated_line.endswith("\n"):
+                        line_ending = "\n"
+                    updated_line = (
+                        f"{magic_match.group('prefix')}{replacement_root}{magic_match.group('suffix')}{line_ending}"
+                    )
+                    previews.append(f"{file_path}:{line_no}: tex-root {raw_root} -> {replacement_root}")
+
+        new_lines.append(updated_line)
+
+    if previews and not dry_run:
+        file_path.write_text("".join(new_lines), encoding="utf-8")
+    return previews
+
+
+def clone_tex_version(
+    *,
+    root_dir: str | Path = ".",
+    source_files: Sequence[str | Path],
+    to_tag: str,
+    from_tag: str | None = None,
+    target_files: Sequence[str | Path] | None = None,
+    overwrite: bool = False,
+    dry_run: bool = False,
+) -> dict[str, Any]:
+    root = Path(root_dir).resolve()
+    clone_map = _resolve_clone_map(
+        root=root,
+        source_files=source_files,
+        from_tag=from_tag,
+        to_tag=to_tag,
+        target_files=target_files,
+    )
+
+    missing_sources = [item for item in clone_map if not item.exists()]
+    if missing_sources:
+        raise FileNotFoundError("以下源文件不存在:\n" + "\n".join(str(item) for item in missing_sources))
+
+    existing_targets = [item for item in clone_map.values() if item.exists() and not overwrite]
+    if existing_targets:
+        raise FileExistsError(
+            "以下目标文件已存在（如需覆盖请设置 overwrite=True）:\n" + "\n".join(str(item) for item in existing_targets)
+        )
+
+    copied_pairs: list[tuple[Path, Path]] = []
+    for source_file, target_file in clone_map.items():
+        copied_pairs.append((source_file, target_file))
+        if dry_run:
+            continue
+        target_file.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copyfile(source_file, target_file)
+
+    rewrite_previews: list[str] = []
+    for _, target_file in copied_pairs:
+        file_previews = _rewrite_cloned_file_links(target_file, clone_map=clone_map, dry_run=dry_run)
+        rewrite_previews.extend(file_previews)
+
+    return {
+        "status": "PASS",
+        "dry_run": dry_run,
+        "overwrite": overwrite,
+        "copied": [{"source": str(src), "target": str(dst)} for src, dst in copied_pairs],
+        "rewrites": rewrite_previews,
+    }
+
+
 def scan_tex_graph(root_dir: str | Path = ".", exclude_glob: Sequence[str] | None = None) -> TexGraph:
     return parse_tex_graph(root_dir=root_dir, exclude_globs=exclude_glob)
 
@@ -537,6 +692,37 @@ def cmd_set_root(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_clone_version(args: argparse.Namespace) -> int:
+    result = clone_tex_version(
+        root_dir=args.root_dir,
+        source_files=args.source,
+        to_tag=args.to_tag,
+        from_tag=args.from_tag,
+        target_files=args.target,
+        overwrite=args.overwrite,
+        dry_run=args.dry_run,
+    )
+    if args.dry_run:
+        print("预演：将复制以下文件:")
+    else:
+        print("已复制以下文件:")
+    root = Path(args.root_dir).resolve()
+    for pair in result.get("copied", []):
+        print(f"  {repo_rel(root, Path(pair['source']))} -> {repo_rel(root, Path(pair['target']))}")
+
+    rewrites = result.get("rewrites", [])
+    if rewrites:
+        if args.dry_run:
+            print("预演：将同步更新以下关联引用:")
+        else:
+            print("已同步更新以下关联引用:")
+        for preview in rewrites:
+            print(f"  {preview}")
+    else:
+        print("未检测到需要重写的内部引用。")
+    return 0
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="扫描 TeX DAG，并更新父子引用与 subfiles 根引用。")
     parser.add_argument("--root-dir", default=".", help="论文根目录")
@@ -570,6 +756,25 @@ def build_parser() -> argparse.ArgumentParser:
     set_root_parser.add_argument("--dry-run", action="store_true", help="只预演，不写回文件")
     set_root_parser.set_defaults(func=cmd_set_root)
 
+    clone_parser = subparsers.add_parser("clone-version", help="复制一组 tex 源文件为新版本，并保持组内关联引用")
+    clone_parser.add_argument(
+        "--source",
+        action="append",
+        required=True,
+        help="源 tex 文件，可重复指定多次",
+    )
+    clone_parser.add_argument(
+        "--target",
+        action="append",
+        default=None,
+        help="目标 tex 文件，可重复指定；若不提供则按 from-tag/to-tag 推导",
+    )
+    clone_parser.add_argument("--from-tag", default=None, help="源文件名中的旧版本标记（可选）")
+    clone_parser.add_argument("--to-tag", required=True, help="新版本标记，用于目标文件名推导")
+    clone_parser.add_argument("--overwrite", action="store_true", help="允许覆盖已存在的目标文件")
+    clone_parser.add_argument("--dry-run", action="store_true", help="只预演，不写回文件")
+    clone_parser.set_defaults(func=cmd_clone_version)
+
     return parser
 
 
@@ -597,6 +802,7 @@ __all__ = [
     "render_text_summary",
     "rewire_tex_reference",
     "set_tex_root",
+    "clone_tex_version",
     "build_parser",
     "main",
 ]
