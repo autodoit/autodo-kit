@@ -9,9 +9,9 @@ from pathlib import Path
 
 import pandas as pd
 
-from autodokit.tools.bibliodb_sqlite import load_chunk_sets_df, load_chunks_df, load_reading_queue_df, upsert_reading_queue_rows
+from autodokit.tools.bibliodb_sqlite import load_chunk_sets_df, load_chunks_df, load_reading_queue_df, load_reading_state_df, upsert_reading_queue_rows, upsert_review_state_rows
 from autodokit.tools.ocr.classic.pdf_structured_data_tools import build_structured_data_payload
-from autodokit.tools.storage_backend import persist_reference_main_table, persist_reference_tables
+from autodokit.tools.storage_backend import load_reference_tables, persist_reference_main_table, persist_reference_tables
 
 
 def _write_json_config(config_path: Path, payload: dict) -> None:
@@ -542,10 +542,10 @@ def test_candidate_view_affair_should_use_reference_tools_for_mapping(monkeypatc
     assert quality_summary["suspicious_merged_count"] == 0
 
 
-def test_a080_human_seed_should_route_unique_cite_key() -> None:
-    """A080 人工 seed 在 cite_key 唯一命中时应写入状态行。"""
+def test_a075_human_seed_should_route_unique_cite_key() -> None:
+    """A075 人工 seed 在 cite_key 唯一命中时应写入状态行。"""
 
-    module = importlib.import_module("autodokit.affairs.非综述候选视图构建.affair")
+    module = importlib.import_module("autodokit.affairs.非综述候选种子生成.affair")
     literatures_df = pd.DataFrame(
         [
             {
@@ -605,10 +605,10 @@ def test_a080_human_seed_should_route_unique_cite_key() -> None:
     assert int(rows[0]["pending_rough_read"]) == 1
 
 
-def test_a080_human_seed_should_report_ambiguous_cite_key() -> None:
-    """A080 人工 seed 在 cite_key 多重命中时应进入问题列表。"""
+def test_a075_human_seed_should_report_ambiguous_cite_key() -> None:
+    """A075 人工 seed 在 cite_key 多重命中时应进入问题列表。"""
 
-    module = importlib.import_module("autodokit.affairs.非综述候选视图构建.affair")
+    module = importlib.import_module("autodokit.affairs.非综述候选种子生成.affair")
     literatures_df = pd.DataFrame(
         [
             {"uid_literature": "lit-001", "cite_key": "dup-key", "pdf_path": "C:/tmp/a.pdf"},
@@ -702,29 +702,23 @@ def test_review_map_affair_execute_should_work(monkeypatch, tmp_path: Path) -> N
 
 
 def test_review_map_affair_should_ensure_parse_asset_on_entry(monkeypatch, tmp_path: Path) -> None:
-    """A06 缺少 structured 时应优先补齐 review_deep parse asset。"""
+    """A070 在 structured 可用时应优先走 structured 抽取并完成闸门产出。"""
 
     module = importlib.import_module("autodokit.affairs.综述研读与研究地图生成.affair")
-    workspace_root, content_db, review_read_pool_csv, output_dir = _prepare_review_synthesis_workspace(tmp_path)
+    workspace_root, content_db, _, review_read_pool_csv, output_dir = _prepare_review_synthesis_workspace(tmp_path)
     normalized_path = _write_structured_json(
         tmp_path / "structured" / "review-001.normalized.structured.json",
         uid_literature="lit-001",
         cite_key="review-001",
         text="本文梳理了目标主题中的关键问题。文章基于已有资料总结了常见分析路径。结果表明核心变量之间存在稳定关联。未来需要进一步扩展样本范围和验证条件。",
     )
+    with sqlite3.connect(content_db) as conn:
+        conn.execute(
+            "UPDATE literatures SET structured_abs_path = ? WHERE uid_literature = ?",
+            (str(normalized_path), "lit-001"),
+        )
+        conn.commit()
 
-    called: dict[str, str] = {}
-
-    def _fake_ensure(**kwargs):
-        called["parse_level"] = str(kwargs.get("parse_level", ""))
-        called["source_stage"] = str(kwargs.get("source_stage", ""))
-        return {
-            "normalized_structured_path": str(normalized_path),
-            "parse_level": "review_deep",
-            "backend": "aliyun_multimodal",
-        }
-
-    monkeypatch.setattr(module, "ensure_multimodal_parse_asset", _fake_ensure)
     monkeypatch.setattr(
         module,
         "extract_review_state_from_structured_file",
@@ -788,12 +782,10 @@ def test_review_map_affair_should_ensure_parse_asset_on_entry(monkeypatch, tmp_p
     )
 
     outputs = module.execute(config_path)
-    gate_path = output_dir / "gate_review.json"
-    assert gate_path in outputs
+    gate_candidates = [Path(item) for item in outputs if Path(item).name == "gate_review.json"]
+    assert gate_candidates
+    gate_path = gate_candidates[-1]
     assert gate_path.exists()
-    assert called["parse_level"] == "review_deep"
-    assert called["source_stage"] == "A06"
-
     payload = json.loads(gate_path.read_text(encoding="utf-8"))
     assert payload["node_uid"] == "A070"
     assert payload["recommendation"] == "pass"
@@ -807,17 +799,19 @@ def test_review_map_affair_should_ensure_parse_asset_on_entry(monkeypatch, tmp_p
     assert len(must_read_df) == 1
     assert must_read_df.iloc[0]["cite_key"] == "origin-001"
 
-    downstream_df = pd.read_csv(
-        workspace_root / "steps" / "A070_review_synthesis" / "downstream_non_review_candidates.csv",
-        dtype=str,
-        keep_default_na=False,
-    )
-    assert not downstream_df.empty
-    assert set(downstream_df["target_stage"].tolist()) == {"A080"}
-
     queue_a080 = load_reading_queue_df(content_db, stage="A080", only_current=True)
-    assert not queue_a080.empty
-    assert "origin-001" in queue_a080["cite_key"].astype(str).tolist()
+    assert queue_a080.empty
+
+    reading_state_df = load_reading_state_df(content_db)
+    assert "origin-001" not in reading_state_df.get("cite_key", pd.Series(dtype=str)).astype(str).tolist()
+
+    review_priority_path = workspace_root / "knowledge" / "audits" / "review_priority_candidates.csv"
+    review_reference_path = workspace_root / "knowledge" / "audits" / "review_reference_candidates.csv"
+    assert review_priority_path.exists()
+    assert review_reference_path.exists()
+
+    # A070 新口径不直接生成普通文献种子文件，A075 负责构造。
+    assert not (gate_path.parent / "a075_seed_candidates.csv").exists()
 
     batch_df = pd.read_csv(
         workspace_root / "batches" / "review_candidates" / "review_reading_batches.csv",
@@ -825,6 +819,58 @@ def test_review_map_affair_should_ensure_parse_asset_on_entry(monkeypatch, tmp_p
         keep_default_na=False,
     )
     assert batch_df.iloc[0]["a070_status"] == "completed"
+
+
+def test_a075_should_build_seed_rows_from_a070_exports(tmp_path: Path) -> None:
+    """A075 应从 A070 导出件构建 pending_preprocess 种子。"""
+
+    module = importlib.import_module("autodokit.affairs.非综述候选种子生成.affair")
+    workspace_root, content_db, _, _, _ = _prepare_review_synthesis_workspace(tmp_path)
+
+    audits_dir = workspace_root / "knowledge" / "audits"
+    pd.DataFrame(
+        [
+            {
+                "uid_literature": "lit-002",
+                "cite_key": "origin-001",
+                "title": "Original Document One",
+                "reason": "综述高置信引用推荐",
+                "year": "2022",
+            }
+        ]
+    ).to_csv(audits_dir / "review_priority_candidates.csv", index=False, encoding="utf-8-sig")
+    pd.DataFrame(columns=["uid_literature", "cite_key", "title", "source_review", "status"]).to_csv(
+        audits_dir / "review_reference_candidates.csv", index=False, encoding="utf-8-sig"
+    )
+
+    upsert_review_state_rows(
+        content_db,
+        [
+            {
+                "uid_literature": "lit-001",
+                "cite_key": "review-001",
+                "review_read_done": 1,
+            }
+        ],
+    )
+
+    literatures_df, attachments_df, _ = load_reference_tables(db_path=content_db)
+    rows, seed_df, issues = module._build_seed_rows_from_a070_exports(
+        workspace_root=workspace_root,
+        content_db=content_db,
+        literatures_df=literatures_df,
+        attachments_df=attachments_df,
+        existing_state_by_uid={},
+    )
+
+    assert issues == []
+    assert not seed_df.empty
+    assert "origin-001" in seed_df["cite_key"].astype(str).tolist()
+    target = [item for item in rows if item.get("cite_key") == "origin-001"]
+    assert target
+    assert int(target[0]["pending_preprocess"]) == 1
+    assert int(target[0]["pending_rough_read"]) == 0
+    assert target[0]["source_stage"] == "A075_seed"
 
 
 def test_review_map_affair_should_fallback_to_current_view(monkeypatch, tmp_path: Path) -> None:
@@ -943,7 +989,7 @@ def test_research_trajectory_affair_execute_should_work(tmp_path: Path) -> None:
             "topic": "主题演进",
             "items": [
                 {"uid_literature": "lit-001", "title": "Paper A", "year": "2022", "keywords": "digital"},
-                {"uid_literature": "lit-002", "title": "Paper B", "year": "2024", "keywords": "finance"},
+                {"uid_literature": "lit-002", "title": "Paper B", "year": "2024", "keywords": "scientometrics"},
             ],
         },
     )
@@ -966,11 +1012,11 @@ def test_innovation_affairs_should_work_as_chain(tmp_path: Path) -> None:
         {
             "output_dir": str(tmp_path),
             "topic": "目标主题",
-            "gaps": ["缺少关键机制解释"],
-            "scenario": "目标对象样本",
-            "data_source": "结构化面板数据",
-            "method_family": "对照组比较",
-            "output_form": "机制分析结果",
+                "gaps": ["缺少关键机制解释"],
+                "scenario": "科研样本（引文/合作子网）",
+                "data_source": "引文网络数据",
+                "method_family": "网络分析",
+                "output_form": "机制与演化分析",
         },
     )
     pool_outputs = pool_module.execute(pool_config)
@@ -1257,7 +1303,7 @@ def test_a08_should_consume_queue_and_write_back_completion(monkeypatch, tmp_pat
                     "year": "2023",
                     "entry_type": "journal",
                     "abstract": "A paper for rough reading.",
-                    "keywords": "bank; risk",
+                    "keywords": "scientometrics; collaboration",
                     "pdf_path": str(dummy_pdf),
                     "primary_attachment_name": dummy_pdf.name,
                     "standardization_status": "standardized",
@@ -1312,7 +1358,7 @@ def test_a08_should_consume_queue_and_write_back_completion(monkeypatch, tmp_pat
             "extract_method": "pypdf",
             "reference_lines": ["Li. 2022. Original Study One."],
             "reference_line_details": [],
-            "full_text": "本文研究银行风险。文章基于实证设计说明识别策略。结果表明核心变量存在稳定关系。",
+            "full_text": "本文研究科研协作网络。文章基于网络分析设计说明识别与度量策略。结果表明核心变量存在稳定关系。",
             "pending_reason": "",
         },
     )
