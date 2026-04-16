@@ -334,11 +334,12 @@ class CnkiPlaywrightRuntime:
             attempts.append({"channel": None, "executable_path": self.config.executable_path})
         if self.config.channel:
             attempts.append({"channel": self.config.channel, "executable_path": None})
-        edge_candidates = [
-            r"C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe",
-            r"C:\Program Files\Microsoft\Edge\Application\msedge.exe",
+        chrome_candidates = [
+            r"C:\Program Files\Google\Chrome\Application\chrome.exe",
+            r"C:\Program Files (x86)\Google\Chrome\Application\chrome.exe",
+            str(Path.home() / "AppData" / "Local" / "Google" / "Chrome" / "Application" / "chrome.exe"),
         ]
-        for candidate in edge_candidates:
+        for candidate in chrome_candidates:
             if Path(candidate).exists():
                 attempts.append({"channel": None, "executable_path": candidate})
         attempts.append({"channel": None, "executable_path": None})

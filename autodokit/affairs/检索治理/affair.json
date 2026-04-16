@@ -10,6 +10,8 @@
   "access_type": "open",
   "metadata": {},
   "seed_items": [],
+  "retrieval_feedback_requests": [],
+  "retrieval_feedback_requests_path": "",
   "enable_local_retrieval": true,
   "max_local_hits": 300,
   "local_hit_threshold": 20,

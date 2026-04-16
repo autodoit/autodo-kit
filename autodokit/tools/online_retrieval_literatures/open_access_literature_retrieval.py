@@ -10,6 +10,8 @@
 
 from __future__ import annotations
 
+import asyncio
+import atexit
 import csv
 import hashlib
 import json
@@ -17,6 +19,7 @@ import random
 import re
 import shutil
 import subprocess
+import threading
 import time
 import urllib.error
 import urllib.parse
@@ -108,6 +111,178 @@ class PdfLinkExtractor(HTMLParser):
             href = str(attrs_dict.get("href") or "").strip()
             if href and (href.lower().endswith(".pdf") or "/pdf" in href.lower()):
                 self.links.append(href)
+
+
+@dataclass(slots=True)
+class _BrowserSession:
+    """可复用的浏览器会话缓存。"""
+
+    playwright: Any
+    browser: Any
+    context: Any
+    browser_proc: subprocess.Popen[str] | None
+    managed_proc: bool
+    close_on_exit: bool
+
+
+_BROWSER_SESSION_CACHE: dict[tuple[str, int], _BrowserSession] = {}
+_BROWSER_SESSION_CLEANUP_REGISTERED = False
+
+
+def _browser_session_key(profile_dir: Path, port: int) -> tuple[str, int]:
+    """生成浏览器会话缓存键。"""
+
+    return (str(profile_dir.resolve()), int(port))
+
+
+def _browser_session_alive(session: _BrowserSession) -> bool:
+    """判断缓存中的浏览器会话是否仍可复用。"""
+
+    try:
+        if hasattr(session.browser, "is_connected") and not session.browser.is_connected():
+            return False
+        _ = session.context.pages
+        return True
+    except Exception:
+        return False
+
+
+def _close_browser_session(session: _BrowserSession) -> None:
+    """关闭浏览器会话并回收其进程。"""
+
+    try:
+        session.playwright.stop()
+    except Exception:
+        pass
+    if not session.close_on_exit:
+        return
+    if session.browser_proc is None or not session.managed_proc:
+        return
+    try:
+        if session.browser_proc.poll() is None:
+            session.browser_proc.terminate()
+            time.sleep(0.5)
+            if session.browser_proc.poll() is None:
+                session.browser_proc.kill()
+    except Exception:
+        pass
+
+
+def _cleanup_browser_sessions() -> None:
+    """进程退出时统一清理缓存的浏览器会话。"""
+
+    for session in list(_BROWSER_SESSION_CACHE.values()):
+        _close_browser_session(session)
+    _BROWSER_SESSION_CACHE.clear()
+
+
+def _ensure_browser_session_cleanup_registered() -> None:
+    """注册一次退出清理钩子。"""
+
+    global _BROWSER_SESSION_CLEANUP_REGISTERED
+    if not _BROWSER_SESSION_CLEANUP_REGISTERED:
+        atexit.register(_cleanup_browser_sessions)
+        _BROWSER_SESSION_CLEANUP_REGISTERED = True
+
+
+def _acquire_browser_session(profile_dir: Path, port: int, start_url: str) -> tuple[_BrowserSession, bool]:
+    """获取可复用的浏览器会话。
+
+    返回值中的布尔值表示这次是否复用了已有窗口。
+    """
+
+    _ensure_browser_session_cleanup_registered()
+    key = _browser_session_key(profile_dir, port)
+    candidate_ports: list[int] = []
+    for candidate in [port, 9222, 9332]:
+        normalized = int(candidate)
+        if normalized not in candidate_ports:
+            candidate_ports.append(normalized)
+
+    # 优先接管设备上已开的调试浏览器，避免重复弹新窗口。
+    for candidate_port in candidate_ports:
+        external_key = ("external", candidate_port)
+        cached_external = _BROWSER_SESSION_CACHE.get(external_key)
+        if cached_external is not None:
+            if _browser_session_alive(cached_external):
+                return cached_external, True
+            _BROWSER_SESSION_CACHE.pop(external_key, None)
+            _close_browser_session(cached_external)
+
+        cdp_url = f"http://127.0.0.1:{candidate_port}"
+        try:
+            playwright, browser, context = _connect_context(cdp_url)
+        except Exception:
+            continue
+        session = _BrowserSession(
+            playwright=playwright,
+            browser=browser,
+            context=context,
+            browser_proc=None,
+            managed_proc=False,
+            close_on_exit=False,
+        )
+        _BROWSER_SESSION_CACHE[external_key] = session
+        return session, True
+
+    cached_session = _BROWSER_SESSION_CACHE.get(key)
+    if cached_session is not None:
+        if _browser_session_alive(cached_session):
+            return cached_session, True
+        _BROWSER_SESSION_CACHE.pop(key, None)
+        _close_browser_session(cached_session)
+
+    cdp_url = f"http://127.0.0.1:{port}"
+    browser_proc: subprocess.Popen[str] | None = None
+    managed_proc = False
+    try:
+        playwright, browser, context = _connect_context(cdp_url)
+    except Exception:
+        browser_proc = _launch_edge_with_cdp(profile_dir, port, start_url)
+        managed_proc = True
+        time.sleep(2)
+        try:
+            playwright, browser, context = _connect_context(cdp_url)
+        except Exception:
+            if browser_proc is not None and browser_proc.poll() is None:
+                try:
+                    browser_proc.terminate()
+                except Exception:
+                    pass
+            raise
+
+    session = _BrowserSession(
+        playwright=playwright,
+        browser=browser,
+        context=context,
+        browser_proc=browser_proc,
+        managed_proc=managed_proc,
+        close_on_exit=False,
+    )
+    _BROWSER_SESSION_CACHE[key] = session
+    return session, False
+
+
+def _ensure_placeholder_page(context: Any) -> None:
+    """确保存在一个占位空白页，避免误关最后一个标签关闭整窗。"""
+
+    try:
+        pages = list(context.pages)
+    except Exception:
+        return
+
+    for page in pages:
+        try:
+            if _normalize_text(page.url).lower() in {"about:blank", "chrome://newtab/", "edge://newtab/"}:
+                return
+        except Exception:
+            continue
+
+    try:
+        holder = context.new_page()
+        holder.goto("about:blank", wait_until="domcontentloaded", timeout=5000)
+    except Exception:
+        return
 
 
 def _request(
@@ -700,7 +875,18 @@ def _detect_access_barrier(text: str) -> tuple[str, str] | None:
     patterns = [
         ("captcha_required", ["captcha", "verify you are human", "security check"]),
         ("login_required", ["sign in", "log in", "institutional login", "shibboleth"]),
-        ("paywalled", ["purchase pdf", "buy article", "institutional access", "access through your institution"]),
+        (
+            "paywalled",
+            [
+                "purchase pdf",
+                "buy article",
+                "institutional access",
+                "access through your institution",
+                "access denied",
+                "request could not be satisfied",
+                "forbidden",
+            ],
+        ),
     ]
     for barrier, tokens in patterns:
         if any(token in lowered for token in tokens):
@@ -709,21 +895,30 @@ def _detect_access_barrier(text: str) -> tuple[str, str] | None:
 
 
 def _find_edge_executable() -> str:
-    """定位 Edge 可执行文件。"""
+    """定位可用于 CDP 的浏览器可执行文件，优先 Edge。"""
 
     candidates = [
         shutil.which("msedge"),
+        shutil.which("msedge.exe"),
         r"C:\Program Files\Microsoft\Edge\Application\msedge.exe",
         r"C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe",
+        str(Path.home() / "AppData" / "Local" / "Microsoft" / "Edge" / "Application" / "msedge.exe"),
+        shutil.which("chrome"),
+        shutil.which("chrome.exe"),
+        shutil.which("google-chrome"),
+        shutil.which("google-chrome.exe"),
+        r"C:\Program Files\Google\Chrome\Application\chrome.exe",
+        r"C:\Program Files (x86)\Google\Chrome\Application\chrome.exe",
+        str(Path.home() / "AppData" / "Local" / "Google" / "Chrome" / "Application" / "chrome.exe"),
     ]
     for candidate in candidates:
         if candidate and Path(candidate).exists():
             return str(candidate)
-    raise RuntimeError("未找到 Microsoft Edge，可先安装 Edge 或补充浏览器路径。")
+    raise RuntimeError("未找到可用浏览器（Edge/Chrome），可先安装 Edge 或 Chrome，或补充浏览器路径。")
 
 
 def _launch_edge_with_cdp(profile_dir: Path, port: int, start_url: str) -> subprocess.Popen[str]:
-    """以远程调试模式启动 Edge。"""
+    """以远程调试模式启动浏览器（优先 Edge）。"""
 
     profile_dir.mkdir(parents=True, exist_ok=True)
     command = [
@@ -735,7 +930,7 @@ def _launch_edge_with_cdp(profile_dir: Path, port: int, start_url: str) -> subpr
     return subprocess.Popen(command, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, text=True)
 
 
-def _connect_context(cdp_url: str) -> tuple[Any, Any]:
+def _connect_context(cdp_url: str) -> tuple[Any, Any, Any]:
     """连接 CDP 浏览器上下文。"""
 
     from playwright.sync_api import sync_playwright
@@ -743,8 +938,8 @@ def _connect_context(cdp_url: str) -> tuple[Any, Any]:
     playwright = sync_playwright().start()
     browser = playwright.chromium.connect_over_cdp(cdp_url)
     if browser.contexts:
-        return playwright, browser.contexts[0]
-    return playwright, browser.new_context()
+        return playwright, browser, browser.contexts[0]
+    return playwright, browser, browser.new_context()
 
 
 def _select_existing_page(context: Any, preferred_url: str = "") -> Any:
@@ -828,7 +1023,7 @@ def _wait_for_human_if_needed(page: Any, allow_manual_intervention: bool, timeou
             return manual_events
         remaining = timeout_seconds - elapsed
         print(
-            "[人工接管][英文下载] 当前页面需要登录或完成验证，请在已打开的 Edge 窗口中完成认证。"
+            "[人工接管][英文下载] 当前页面需要登录或完成验证，请在已打开的 Edge/Chrome 窗口中完成认证。"
             f" 已等待 {elapsed} 秒，剩余约 {remaining} 秒。"
         )
         page.wait_for_timeout(5000)
@@ -871,6 +1066,40 @@ def _download_with_browser_session(
 
         # 优先走浏览器原生会话，请求链路更接近真实用户，命中率高于 urllib+cookie。
         try:
+            # 某些站点会直接触发附件下载，此处优先接管下载并落盘到目标目录，避免系统下载弹窗。
+            try:
+                with page.expect_download(timeout=max(8000, request_timeout * 1000)) as download_info:
+                    page.goto(candidate, wait_until="domcontentloaded", timeout=max(8000, request_timeout * 1000))
+                download = download_info.value
+                suggested_name = _normalize_text(getattr(download, "suggested_filename", ""))
+                if not suggested_name.lower().endswith(".pdf"):
+                    suggested_name = _safe_filename(record.bibtex_key or record.title, ".pdf")
+                output_path = download_dir / suggested_name
+                download.save_as(str(output_path))
+                body = output_path.read_bytes()
+                if body[:4] == b"%PDF":
+                    attempts.append(
+                        {
+                            "url": candidate,
+                            "status": "PASS",
+                            "message": "已通过浏览器下载事件自动保存 PDF",
+                            "final_url": page.url,
+                            "request_delay_seconds": 0.0,
+                        }
+                    )
+                    return {
+                        "status": "PASS",
+                        "title": record.title,
+                        "source": record.source,
+                        "saved_path": str(output_path),
+                        "sha256": _sha256_bytes(body),
+                        "final_url": page.url,
+                        "attempts": attempts,
+                    }
+                output_path.unlink(missing_ok=True)
+            except Exception:
+                pass
+
             response = page.goto(candidate, wait_until="domcontentloaded", timeout=max(8000, request_timeout * 1000))
             response_headers = {str(k).lower(): str(v) for k, v in dict((response.headers if response else {}) or {}).items()}
             response_ct = _normalize_text(response_headers.get("content-type")).lower()
@@ -1003,45 +1232,107 @@ def _manual_login_retry(
 
     profile_dir = Path(browser_profile_dir).expanduser().resolve()
     cdp_url = f"http://127.0.0.1:{browser_cdp_port}"
-    browser_proc = _launch_edge_with_cdp(profile_dir, browser_cdp_port, start_url)
-    playwright = None
-    context = None
+    session, reused_window = _acquire_browser_session(profile_dir, browser_cdp_port, start_url)
+    page = _select_existing_page(session.context, preferred_url=start_url)
+    page.goto(start_url, wait_until="domcontentloaded", timeout=45000)
+    manual_events = _wait_for_human_if_needed(page, allow_manual_intervention, manual_wait_timeout_seconds)
+    retry_result = _download_with_browser_session(
+        record,
+        download_dir,
+        context=session.context,
+        page=page,
+        ref_url=page.url or start_url,
+        request_timeout=request_timeout,
+        max_attempts=max_attempts,
+        min_request_delay_seconds=min_request_delay_seconds,
+        max_request_delay_seconds=max_request_delay_seconds,
+    )
+    retry_result["manual_events"] = manual_events
+    retry_result["browser"] = {
+        "cdp_url": cdp_url,
+        "profile_dir": str(profile_dir),
+        "kept_open": keep_browser_open,
+        "reused_window": reused_window,
+    }
+    _ensure_placeholder_page(session.context)
+    saved_path = _normalize_text(retry_result.get("saved_path"))
+    if saved_path and not Path(saved_path).exists():
+        retry_result["status"] = "BLOCKED"
+        retry_result["error_type"] = "MissingDownloadedFile"
+        retry_result["error"] = f"人工登录后返回的下载文件不存在: {saved_path}"
+        retry_result["saved_path"] = ""
+    return retry_result
+
+
+def _manual_login_retry_async_safe(
+    record: RetrievalRecord,
+    download_dir: Path,
+    *,
+    start_url: str,
+    request_timeout: int,
+    max_attempts: int,
+    min_request_delay_seconds: float,
+    max_request_delay_seconds: float,
+    allow_manual_intervention: bool,
+    keep_browser_open: bool,
+    browser_profile_dir: str,
+    browser_cdp_port: int,
+    manual_wait_timeout_seconds: int,
+) -> dict[str, Any]:
+    """在存在事件循环时，将 Playwright Sync 重试放入独立线程执行。"""
+
     try:
-        time.sleep(2)
-        playwright, context = _connect_context(cdp_url)
-        page = _select_existing_page(context, preferred_url=start_url)
-        page.goto(start_url, wait_until="domcontentloaded", timeout=45000)
-        manual_events = _wait_for_human_if_needed(page, allow_manual_intervention, manual_wait_timeout_seconds)
-        retry_result = _download_with_browser_session(
+        loop = asyncio.get_running_loop()
+        loop_running = loop.is_running()
+    except RuntimeError:
+        loop_running = False
+
+    if not loop_running:
+        return _manual_login_retry(
             record,
             download_dir,
-            context=context,
-            page=page,
-            ref_url=page.url or start_url,
+            start_url=start_url,
             request_timeout=request_timeout,
             max_attempts=max_attempts,
             min_request_delay_seconds=min_request_delay_seconds,
             max_request_delay_seconds=max_request_delay_seconds,
+            allow_manual_intervention=allow_manual_intervention,
+            keep_browser_open=keep_browser_open,
+            browser_profile_dir=browser_profile_dir,
+            browser_cdp_port=browser_cdp_port,
+            manual_wait_timeout_seconds=manual_wait_timeout_seconds,
         )
-        retry_result["manual_events"] = manual_events
-        retry_result["browser"] = {
-            "cdp_url": cdp_url,
-            "profile_dir": str(profile_dir),
-            "kept_open": keep_browser_open,
-        }
-        return retry_result
-    finally:
-        if playwright is not None:
-            try:
-                playwright.stop()
-            except Exception:
-                pass
-        if browser_proc is not None and not keep_browser_open:
-            try:
-                if browser_proc.poll() is None:
-                    browser_proc.terminate()
-            except Exception:
-                pass
+
+    result: dict[str, Any] = {}
+    error: BaseException | None = None
+
+    def _worker() -> None:
+        nonlocal result, error
+        try:
+            result = _manual_login_retry(
+                record,
+                download_dir,
+                start_url=start_url,
+                request_timeout=request_timeout,
+                max_attempts=max_attempts,
+                min_request_delay_seconds=min_request_delay_seconds,
+                max_request_delay_seconds=max_request_delay_seconds,
+                allow_manual_intervention=allow_manual_intervention,
+                keep_browser_open=keep_browser_open,
+                browser_profile_dir=browser_profile_dir,
+                browser_cdp_port=browser_cdp_port,
+                manual_wait_timeout_seconds=manual_wait_timeout_seconds,
+            )
+        except BaseException as exc:  # noqa: BLE001
+            error = exc
+
+    worker = threading.Thread(target=_worker, name="open_access_manual_retry", daemon=True)
+    worker.start()
+    worker.join()
+
+    if error is not None:
+        raise error
+    return result
 
 
 def analyze_barrier_with_bailian(barrier_text: str, api_key_file: str) -> dict[str, Any]:
@@ -1095,7 +1386,7 @@ def download_record(
     min_request_delay_seconds: float = 0.35,
     max_request_delay_seconds: float = 1.6,
     allow_manual_intervention: bool = False,
-    keep_browser_open: bool = False,
+    keep_browser_open: bool = True,
     browser_profile_dir: str = "sandbox/runtime/web_browser_profiles/en_open_access_auth",
     browser_cdp_port: int = 9332,
     manual_wait_timeout_seconds: int = 900,
@@ -1191,11 +1482,15 @@ def download_record(
                         barrier_payload["bailian_analysis"] = analyze_barrier_with_bailian(html_text, bailian_api_key_file)
                     except Exception as exc:  # noqa: BLE001
                         barrier_payload["bailian_analysis_error"] = str(exc)
-                if barrier[0] in {"login_required", "captcha_required"} and allow_manual_intervention:
-                    manual_result = _manual_login_retry(
+                if barrier[0] in {"login_required", "captcha_required", "paywalled"}:
+                    if not allow_manual_intervention:
+                        barrier_payload["browser_retry_skipped"] = True
+                        barrier_payload["browser_retry_reason"] = "allow_manual_intervention_disabled"
+                        return barrier_payload
+                    browser_retry_result = _manual_login_retry_async_safe(
                         record,
                         download_dir,
-                        start_url=final_url or candidate or record.landing_url or record.pdf_url,
+                        start_url=record.landing_url or final_url or candidate or record.pdf_url,
                         request_timeout=request_timeout,
                         max_attempts=max_attempts,
                         min_request_delay_seconds=min_request_delay_seconds,
@@ -1206,8 +1501,9 @@ def download_record(
                         browser_cdp_port=browser_cdp_port,
                         manual_wait_timeout_seconds=manual_wait_timeout_seconds,
                     )
-                    manual_result["pre_manual_barrier"] = barrier_payload
-                    return manual_result
+                    browser_retry_result["pre_manual_barrier"] = barrier_payload
+                    browser_retry_result["browser_retry_mode"] = "manual" if allow_manual_intervention else "auto"
+                    return browser_retry_result
                 return barrier_payload
 
             for next_candidate in _extract_pdf_links_from_html(html_text, final_url):
@@ -1235,8 +1531,20 @@ def download_record(
             }
         )
 
-    if allow_manual_intervention and blocked_http_detected:
-        manual_result = _manual_login_retry(
+    if blocked_http_detected:
+        if not allow_manual_intervention:
+            return {
+                "status": "BLOCKED",
+                "title": record.title,
+                "source": record.source,
+                "barrier_type": "http_blocked",
+                "evidence": "http_status_401_403_429",
+                "attempt_count": len(attempts),
+                "attempts": attempts,
+                "browser_retry_skipped": True,
+                "browser_retry_reason": "allow_manual_intervention_disabled",
+            }
+        browser_retry_result = _manual_login_retry_async_safe(
             record,
             download_dir,
             start_url=record.landing_url or (f"https://doi.org/{record.doi}" if record.doi else ""),
@@ -1250,8 +1558,9 @@ def download_record(
             browser_cdp_port=browser_cdp_port,
             manual_wait_timeout_seconds=manual_wait_timeout_seconds,
         )
-        manual_result["pre_manual_http_blocked"] = True
-        return manual_result
+        browser_retry_result["pre_manual_http_blocked"] = True
+        browser_retry_result["browser_retry_mode"] = "manual" if allow_manual_intervention else "auto"
+        return browser_retry_result
 
     return {
         "status": "NO_OPEN_PDF",

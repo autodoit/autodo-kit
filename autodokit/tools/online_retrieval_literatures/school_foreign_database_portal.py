@@ -13,6 +13,8 @@ import urllib.request
 from pathlib import Path
 from typing import Any
 
+from autodokit.tools.online_retrieval_literatures.progress_reporter import print_progress_line, write_progress_snapshot
+
 
 # ===== Stable Contract Zone =====
 # 本区属于相对稳定区域：
@@ -417,12 +419,37 @@ def fetch_school_databases(config: dict[str, Any]) -> dict[str, Any]:
 
     list_payload = _fetch_list_payload(config)
     datas = list(list_payload.get("datas") or [])
+    total_catalog_items = len(datas)
     detail_rows: list[dict[str, Any]] = []
     activity_log_path = output_dir / "portal_activity.jsonl"
+    progress_snapshot_path = output_dir / "portal_progress.json"
     for index, entry in enumerate(datas, start=1):
         detail_rows.append(_build_entry_from_list_item(dict(entry), config, index))
         with activity_log_path.open("a", encoding="utf-8") as stream:
             stream.write(json.dumps({"event": "list_item_processed", "index": index, "database_id": entry.get("id"), "name": entry.get("name")}, ensure_ascii=False) + "\n")
+        print_progress_line(
+            prefix="A040-portal-catalog",
+            total=total_catalog_items,
+            completed=index,
+            current_label=str(entry.get("name") or ""),
+            current_status="LIST_ITEM_PROCESSED",
+            counters={
+                "db_id": str(entry.get("id") or ""),
+            },
+        )
+        write_progress_snapshot(
+            progress_snapshot_path,
+            {
+                "stage": "catalog_list_scan",
+                "total": total_catalog_items,
+                "completed": index,
+                "remaining": max(total_catalog_items - index, 0),
+                "current": {
+                    "database_id": entry.get("id"),
+                    "name": entry.get("name"),
+                },
+            },
+        )
         time.sleep(round(_sample_delay(float(config.get("min_catalog_delay_seconds") or 0.4), float(config.get("max_catalog_delay_seconds") or 1.3)), 3))
 
     selected = select_databases(detail_rows, config)
@@ -481,6 +508,7 @@ def fetch_school_databases(config: dict[str, Any]) -> dict[str, Any]:
         "language_catalog_jsonl": str(language_catalog_jsonl),
         "language_entry_list_markdown": str(language_entry_list_markdown),
         "activity_log_path": str(activity_log_path),
+        "progress_snapshot_path": str(progress_snapshot_path),
         **legacy_artifacts,
     }
     return summary

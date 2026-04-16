@@ -1415,7 +1415,7 @@ def _build_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument("--cdp-url", default="", help="已启动浏览器的 CDP URL")
     parser.add_argument("--cdp-port", type=int, default=0, help="远程调试端口")
     parser.add_argument("--timeout-ms", type=int, default=0, help="页面默认超时毫秒数")
-    parser.add_argument("--skip-launch", action="store_true", help="只接管现有远程调试浏览器，不自动启动 Edge")
+    parser.add_argument("--skip-launch", action="store_true", help="只接管现有远程调试浏览器，不自动启动 Chrome")
     parser.add_argument("--keep-browser-open", action="store_true", help="脚本结束后保留自动启动的浏览器")
     return parser
 

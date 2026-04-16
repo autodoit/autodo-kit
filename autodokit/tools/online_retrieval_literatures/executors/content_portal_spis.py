@@ -1,61 +1,74 @@
 """SPIS 内容门户执行器。
 
-当前仓库尚未提供独立 SPIS 抓取实现，因此采用
-“画像驱动委派”策略：
-1. 中文画像优先走 CNKI 执行器。
-2. 英文画像优先走开放平台执行器。
-3. mixed 画像先尝试开放平台，再回退 CNKI。
+SPIS 作为统一门户入口，内部按画像做“顺序尝试链”：
+1. zh: 先中文链，再英文链。
+2. en: 先英文链，再中文链。
+3. mixed: 先英文链，再中文链。
 """
 
 from __future__ import annotations
 
 from typing import Any
 
-from autodokit.tools.online_retrieval_literatures.executors.content_portal_cnki import (
-    execute_cnki_metadata,
-    execute_cnki_single_download,
-    execute_cnki_single_structured,
+from autodokit.tools.online_retrieval_literatures.executors.content_portal_spis_en import (
+    execute_spis_en_metadata,
+    execute_spis_en_single_download,
+    execute_spis_en_single_structured,
 )
-from autodokit.tools.online_retrieval_literatures.executors.open_platform import (
-    execute_open_metadata,
-    execute_open_single_download,
-    execute_open_single_structured,
+from autodokit.tools.online_retrieval_literatures.executors.content_portal_spis_zh import (
+    execute_spis_zh_metadata,
+    execute_spis_zh_single_download,
+    execute_spis_zh_single_structured,
 )
 
 
-def _delegate(payload: dict[str, Any], *, request_profile: str, zh_func: Any, en_func: Any) -> dict[str, Any]:
+def _run_spis_chain(payload: dict[str, Any], *, request_profile: str, zh_func: Any, en_func: Any) -> dict[str, Any]:
     patched_payload = dict(payload)
     patched_payload["source"] = "spis"
 
     if request_profile == "zh":
-        result = zh_func(patched_payload)
-        result["spis_delegate"] = "zh_cnki"
-        return result
+        chain = [("spis_zh", zh_func), ("spis_en", en_func)]
+    elif request_profile == "en":
+        chain = [("spis_en", en_func), ("spis_zh", zh_func)]
+    else:
+        chain = [("spis_en", en_func), ("spis_zh", zh_func)]
 
-    if request_profile == "en":
-        result = en_func(patched_payload)
-        result["spis_delegate"] = "en_open_access"
-        return result
+    errors: list[dict[str, str]] = []
+    for index, (delegate, func) in enumerate(chain, start=1):
+        try:
+            result = dict(func(patched_payload))
+            result["spis_delegate"] = delegate
+            result["spis_chain_index"] = index
+            result["spis_fallback_used"] = index > 1
+            return result
+        except Exception as exc:  # noqa: BLE001
+            errors.append({"delegate": delegate, "error": f"{exc.__class__.__name__}: {exc}"})
 
-    try:
-        result = en_func(patched_payload)
-        result["spis_delegate"] = "en_open_access"
-        result["spis_fallback_used"] = False
-        return result
-    except Exception:  # noqa: BLE001
-        fallback = zh_func(patched_payload)
-        fallback["spis_delegate"] = "zh_cnki"
-        fallback["spis_fallback_used"] = True
-        return fallback
+    return {
+        "status": "BLOCKED",
+        "error_type": "RuntimeError",
+        "error": "SPIS 顺序尝试链全部失败。",
+        "spis_chain_errors": errors,
+    }
 
 
 def execute_spis_metadata(payload: dict[str, Any], *, request_profile: str) -> dict[str, Any]:
-    return _delegate(payload, request_profile=request_profile, zh_func=execute_cnki_metadata, en_func=execute_open_metadata)
+    return _run_spis_chain(payload, request_profile=request_profile, zh_func=execute_spis_zh_metadata, en_func=execute_spis_en_metadata)
 
 
 def execute_spis_single_download(payload: dict[str, Any], *, request_profile: str) -> dict[str, Any]:
-    return _delegate(payload, request_profile=request_profile, zh_func=execute_cnki_single_download, en_func=execute_open_single_download)
+    return _run_spis_chain(
+        payload,
+        request_profile=request_profile,
+        zh_func=execute_spis_zh_single_download,
+        en_func=execute_spis_en_single_download,
+    )
 
 
 def execute_spis_single_structured(payload: dict[str, Any], *, request_profile: str) -> dict[str, Any]:
-    return _delegate(payload, request_profile=request_profile, zh_func=execute_cnki_single_structured, en_func=execute_open_single_structured)
+    return _run_spis_chain(
+        payload,
+        request_profile=request_profile,
+        zh_func=execute_spis_zh_single_structured,
+        en_func=execute_spis_en_single_structured,
+    )

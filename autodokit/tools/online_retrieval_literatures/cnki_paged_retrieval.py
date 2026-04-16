@@ -104,30 +104,32 @@ def _resolve_repo_path(project_root: Path, raw_path: str | Path | None, default_
 
 
 def _find_edge_executable() -> str:
-    """查找 Edge 可执行文件。
+    """查找 Google Chrome 可执行文件。
 
     Returns:
-        Edge 可执行文件路径。
+        Google Chrome 可执行文件路径。
 
     Raises:
-        RuntimeError: 当前系统未找到 Edge 时抛出。
+        RuntimeError: 当前系统未找到 Chrome 时抛出。
     """
 
     candidates = [
-        r"C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe",
-        r"C:\Program Files\Microsoft\Edge\Application\msedge.exe",
+        shutil.which("chrome"),
+        shutil.which("chrome.exe"),
+        shutil.which("google-chrome"),
+        shutil.which("google-chrome.exe"),
+        r"C:\Program Files\Google\Chrome\Application\chrome.exe",
+        r"C:\Program Files (x86)\Google\Chrome\Application\chrome.exe",
+        str(Path.home() / "AppData" / "Local" / "Google" / "Chrome" / "Application" / "chrome.exe"),
     ]
     for candidate in candidates:
-        if Path(candidate).exists():
+        if candidate and Path(candidate).exists():
             return candidate
-    fallback = shutil.which("msedge")
-    if fallback:
-        return fallback
-    raise RuntimeError("未找到 Microsoft Edge，可先安装 Edge 或在脚本中补充浏览器路径。")
+    raise RuntimeError("未找到 Google Chrome，可先安装 Chrome 或在脚本中补充浏览器路径。")
 
 
 def _launch_edge_with_cdp(profile_dir: Path, port: int, start_url: str) -> subprocess.Popen[str]:
-    """以远程调试模式启动 Edge。
+    """以远程调试模式启动 Google Chrome。
 
     Args:
         profile_dir: 持久化 profile 目录。
@@ -949,7 +951,7 @@ def run_pipeline(config: dict[str, Any]) -> dict[str, Any]:
             playwright, context = _connect_context(cdp_url)
         except Exception:
             if skip_launch:
-                print("[CNKI] 未发现可接管的远程调试浏览器，改为自动启动 Edge。")
+                print("[CNKI] 未发现可接管的远程调试浏览器，改为自动启动 Chrome。")
                 browser_proc = _launch_edge_with_cdp(profile_dir=profile_dir, port=port, start_url=entry_url)
                 time.sleep(2)
                 playwright, context = _connect_context(cdp_url)

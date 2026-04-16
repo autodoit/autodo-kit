@@ -1,4 +1,4 @@
-"""CNKI 搜索结果页面自动化收藏脚本（基于 Playwright，针对 Edge）。
+"""CNKI 搜索结果页面自动化收藏脚本（基于 Playwright，针对 Chrome）。
 
 # #DEBUG 暂时还未调试，不可以直接投入运行。
 # #HACK 警告： 危险！该程序会自动在你的 CNKI 账号里批量执行收藏操作！请务必先仔细阅读以下说明，理解脚本行为，并做好充分准备（例如先在测试账号或小范围内验证）。错误的使用可能导致大量不必要的收藏或者丢失有用数据、甚至账号问题。
@@ -16,9 +16,9 @@
      python -m playwright install
      ```
 
-   - 启动脚本后脚本会以一个独立的 Edge profile（位于脚本同目录的 `cnki_user_data`）打开一个 Edge 窗口。这个配置默认不会改动你系统 Edge 的默认 profile。但请注意：切勿把 `USER_DATA_DIR` 指向系统 Edge 的主 profile，避免覆盖/损坏已有收藏。
+    - 启动脚本后脚本会以一个独立的 Chrome profile（位于脚本同目录的 `cnki_user_data`）打开一个 Chrome 窗口。这个配置默认不会改动你系统 Chrome 的默认 profile。但请注意：切勿把 `USER_DATA_DIR` 指向系统 Chrome 的主 profile，避免覆盖/损坏已有收藏。
 
-   - 在脚本打开的新 Edge 窗口中，请手动完成以下操作（仅需在最初页做一次）:
+    - 在脚本打开的新 Chrome 窗口中，请手动完成以下操作（仅需在最初页做一次）:
      1. 登录 CNKI（若尚未登录）；
      2. 在搜索结果页设置排序为“相关度”（你之前已设置，这里再次确认）；
      3. 设置每页显示 50 条；
@@ -46,7 +46,7 @@
 
 4) 在运行中遇到验证码时的建议操作流程（快速参考）
    1. 脚本在终端提示出现验证码并暂停；
-   2. 切到 Edge 浏览器窗口，按要求完成滑块/图形/短信等验证；
+    2. 切到 Chrome 浏览器窗口，按要求完成滑块/图形/短信等验证；
    3. 验证通过且页面恢复正常后，回终端按回车让脚本继续循环；
    4. 若验证未能生效或页面仍提示验证，脚本会再次检测并继续等待（可重复按回车尝试或手动刷新页面）。
 
@@ -68,7 +68,7 @@
 python -m pip install playwright
 python -m playwright install
 
-# 运行脚本（会打开一个新的 Edge 窗口）
+# 运行脚本（会打开一个新的 Chrome 窗口）
 python .\autodo-kit\affairs\自动化导入知网研学专题.py
 ```
 
@@ -137,7 +137,7 @@ def wait_for_user_login() -> None:
     Examples:
         >>> wait_for_user_login()
     """
-    print("请在打开的 Edge 浏览器中完成登录（若尚未登录）并在完成后回到终端按回车继续...")
+    print("请在打开的 Chrome 浏览器中完成登录（若尚未登录）并在完成后回到终端按回车继续...")
     input()
 
 
@@ -384,7 +384,7 @@ def main(start_url: str = START_URL, topic_name: Optional[str] = TOPIC_NAME, max
         browser = pw.chromium.launch_persistent_context(
             user_data_dir=str(USER_DATA_DIR),
             headless=False,
-            channel="msedge",
+            channel="chrome",
         )
         page = browser.new_page()
         page.set_default_timeout(DEFAULT_TIMEOUT_MS)
