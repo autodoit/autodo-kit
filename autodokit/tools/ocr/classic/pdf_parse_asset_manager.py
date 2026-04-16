@@ -7,6 +7,7 @@
 from __future__ import annotations
 
 import json
+import os
 import re
 from pathlib import Path
 from typing import Any, Dict, List
@@ -109,12 +110,57 @@ def _resolve_model(*, model: str = "auto", global_config_path: str | Path | None
 
 
 def _resolve_monkeyocr_root(*, workspace_root: Path, raw_cfg: Dict[str, Any]) -> Path:
+    def _normalize_candidate(path: Path) -> Path | None:
+        direct = (path / "parse.py").resolve()
+        if direct.exists() and direct.is_file():
+            return path.resolve()
+        nested = (path / "MonkeyOCR-main" / "parse.py").resolve()
+        if nested.exists() and nested.is_file():
+            return (path / "MonkeyOCR-main").resolve()
+        return None
+
+    def _discover_shared_root() -> Path | None:
+        env_candidates = [
+            _stringify(os.environ.get("MONKEYOCR_ROOT")),
+            _stringify(os.environ.get("AUTODOKIT_MONKEYOCR_ROOT")),
+        ]
+        for candidate in env_candidates:
+            if not candidate:
+                continue
+            path = Path(candidate)
+            if path.is_absolute():
+                normalized = _normalize_candidate(path)
+                if normalized is not None:
+                    return normalized
+
+        repo_root = Path(__file__).resolve().parents[4]
+        candidates = [
+            workspace_root / "pypackage",
+            workspace_root / "pypackage" / "MonkeyOCR-main",
+            workspace_root / "sandbox" / "MonkeyOCR-main",
+            repo_root / "pypackage",
+            repo_root / "pypackage" / "MonkeyOCR-main",
+            repo_root / "sandbox" / "MonkeyOCR-main",
+            repo_root / "sandbox" / "test monkey ocr cuda" / "MonkeyOCR-main",
+            repo_root / "MonkeyOCR-main",
+        ]
+        for candidate in candidates:
+            normalized = _normalize_candidate(candidate)
+            if normalized is not None:
+                return normalized
+        return None
+
     candidate = _stringify(raw_cfg.get("monkeyocr_root"))
     if candidate:
         path = Path(candidate)
         if not path.is_absolute():
             raise ValueError(f"monkeyocr_root 必须为绝对路径：{path}")
-        return path.resolve()
+        normalized = _normalize_candidate(path)
+        return normalized or path.resolve()
+
+    discovered = _discover_shared_root()
+    if discovered is not None:
+        return discovered
 
     default_root = (workspace_root / "sandbox" / "MonkeyOCR-main").resolve()
     return default_root

@@ -9,6 +9,7 @@ from __future__ import annotations
 import json
 import os
 import time
+import hashlib
 from contextlib import contextmanager
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Mapping
@@ -50,7 +51,12 @@ def _safe_stem(text: str) -> str:
     value = _stringify(text)
     value = "".join("_" if char in '\\/:*?\"<>|' else char for char in value)
     value = "_".join(value.split())
-    return value or "untitled"
+    if not value:
+        return "untitled"
+    if len(value) > 64:
+        digest = hashlib.sha1(value.encode("utf-8", errors="ignore")).hexdigest()[:10]
+        value = f"{value[:40]}_{digest}"
+    return value
 
 
 def _normalize_bool(value: Any, default: bool = False) -> bool:
@@ -123,6 +129,16 @@ def resolve_parse_runtime_settings(
     config_path = _resolve_path(merged.get("config_path"), base_dir=workspace_root) if merged.get("config_path") else ""
     models_dir = _resolve_path(merged.get("models_dir"), base_dir=workspace_root) if merged.get("models_dir") else ""
     python_executable = _resolve_path(merged.get("python_executable"), base_dir=workspace_root) if merged.get("python_executable") else ""
+    configured_venv_path = _stringify(global_cfg.get("venv_path"))
+    if python_executable and configured_venv_path:
+        venv_path = Path(configured_venv_path).resolve()
+        python_path = Path(python_executable).resolve()
+        try:
+            python_path.relative_to(venv_path)
+        except ValueError as exc:
+            raise ValueError(
+                f"pdf_parse_runtime.python_executable 必须位于 config.json 指定的 venv_path 内：{venv_path}，当前值：{python_path}"
+            ) from exc
 
     return {
         "backend": _stringify(merged.get("backend")) or "monkeyocr_windows",
@@ -366,7 +382,8 @@ def _run_single_manifest_item(
         if existing is not None:
             return "skipped", dict(existing), True
     pdf_path = _resolve_pdf_path(content_db, literature_row)
-    output_name = _safe_stem(cite_key or uid_literature or pdf_path.stem)
+    # 优先使用 uid_literature，避免由长 cite_key 导致 Windows 路径超长。
+    output_name = _safe_stem(uid_literature or cite_key or pdf_path.stem)
     parse_result = parse_pdf_with_monkeyocr_windows(
         pdf_path=pdf_path,
         output_root=output_root,

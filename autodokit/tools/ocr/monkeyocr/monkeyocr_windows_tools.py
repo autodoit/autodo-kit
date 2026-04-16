@@ -32,11 +32,22 @@ from autodokit.tools.atomic.path.windows_long_filename_tools import materialize_
 
 
 DEFAULT_MODEL_NAME = "MonkeyOCR-pro-1.2B"
+HUGGINGFACE_HUB_REQUIREMENT = "huggingface_hub>=0.30.0,<1.0"
 
 
 def _resolve_path(path: str | Path) -> Path:
     resolved = Path(path).expanduser().resolve()
     return resolved
+
+
+def _resolve_monkeyocr_root_dir(monkeyocr_root: str | Path) -> Path:
+    root = _resolve_path(monkeyocr_root)
+    if (root / "parse.py").exists():
+        return root
+    nested = (root / "MonkeyOCR-main").resolve()
+    if (nested / "parse.py").exists():
+        return nested
+    raise FileNotFoundError(f"MonkeyOCR 根目录不存在或缺少 parse.py：{root}")
 
 
 def _run_command(
@@ -148,7 +159,7 @@ def prepare_monkeyocr_windows_runtime(
         dict[str, Any]: 包含安装命令与模型下载状态的摘要。
     """
 
-    root = _resolve_path(monkeyocr_root)
+    root = _resolve_monkeyocr_root_dir(monkeyocr_root)
     python = str(python_executable or sys.executable)
     results: dict[str, Any] = {
         "monkeyocr_root": str(root),
@@ -166,8 +177,8 @@ def prepare_monkeyocr_windows_runtime(
     if pip_index_url:
         pip_cmd.extend(["-i", pip_index_url])
 
-    _run_command(pip_cmd + ["huggingface_hub"], cwd=root)
-    results["steps"].append({"action": "pip_install", "package": "huggingface_hub"})
+    _run_command(pip_cmd + [HUGGINGFACE_HUB_REQUIREMENT], cwd=root)
+    results["steps"].append({"action": "pip_install", "package": HUGGINGFACE_HUB_REQUIREMENT})
 
     if download_source.lower() == "modelscope":
         _run_command(pip_cmd + ["modelscope"], cwd=root)
@@ -245,11 +256,9 @@ def run_monkeyocr_windows_single_pdf(
     python = str(python_executable or sys.executable)
     pdf_path = _resolve_path(input_pdf)
     out_dir = _resolve_path(output_dir)
-    root = _resolve_path(monkeyocr_root)
+    root = _resolve_monkeyocr_root_dir(monkeyocr_root)
     if not pdf_path.is_file():
         raise FileNotFoundError(f"输入 PDF 不存在：{pdf_path}")
-    if not root.exists():
-        raise FileNotFoundError(f"MonkeyOCR 根目录不存在：{root}")
     out_dir.mkdir(parents=True, exist_ok=True)
 
     target_models_dir = _resolve_path(models_dir or (root / "model_weight"))
@@ -1055,8 +1064,6 @@ def parse_pdf_with_monkeyocr_windows(
     """运行 MonkeyOCR Windows 单篇 PDF 解析并输出 AOK 兼容结果。"""
 
     resolved_output_root = _resolve_path(output_root)
-    if output_name:
-        resolved_output_root = (resolved_output_root / str(output_name)).resolve()
 
     raw_result = run_monkeyocr_windows_single_pdf(
         input_pdf=pdf_path,
@@ -1132,7 +1139,7 @@ def parse_pdf_with_monkeyocr_windows(
     quality_report_path.write_text(json.dumps(quality_report, ensure_ascii=False, indent=2), encoding="utf-8")
 
     return {
-        "output_name": str(output_name or Path(pdf_path).stem),
+        "output_name": str(Path(pdf_path).stem),
         "output_dir": str(result_output_dir),
         "structured_tree_path": str(middle_json_path) if middle_json_path.exists() else "",
         "elements_path": str(content_list_path) if content_list_path.exists() else "",
