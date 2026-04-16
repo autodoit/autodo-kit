@@ -9,6 +9,8 @@ A080 仅消费 literature_reading_state.pending_preprocess=1 当前态，完成�
 from __future__ import annotations
 
 import json
+import sqlite3
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Tuple
 
@@ -17,10 +19,6 @@ import pandas as pd
 from autodokit.tools import (
     append_aok_log_event,
     build_gate_review,
-    knowledge_bind_literature_standard_note,
-    knowledge_index_sync_from_note,
-    knowledge_note_register,
-    literature_bind_standard_note,
     load_json_or_py,
 )
 from autodokit.tools.atomic.task_aok.post_affair_git_commit import affair_auto_git_commit
@@ -40,11 +38,8 @@ from autodokit.tools.ocr.runtime.monkeyocr_manifest_runtime import (
     resolve_postprocess_settings,
     run_parse_manifest,
 )
-from autodokit.tools.reading_state_tools import build_standard_note_body
 from autodokit.tools.storage_backend import (
-    load_knowledge_tables,
     load_reference_tables,
-    persist_knowledge_tables,
     persist_reference_tables,
 )
 
@@ -124,88 +119,44 @@ def _seed_state_from_legacy_queue(content_db: Path) -> int:
     return len(rows)
 
 
-def _match_literature_row(literatures_df: pd.DataFrame, *, uid_literature: str, cite_key: str) -> Dict[str, Any]:
-    if literatures_df is None or literatures_df.empty:
-        return {}
-    if uid_literature and "uid_literature" in literatures_df.columns:
-        matched = literatures_df[literatures_df["uid_literature"].astype(str) == uid_literature]
-        if not matched.empty:
-            return dict(matched.iloc[0].to_dict())
-    if cite_key and "cite_key" in literatures_df.columns:
-        matched = literatures_df[literatures_df["cite_key"].astype(str) == cite_key]
-        if not matched.empty:
-            return dict(matched.iloc[0].to_dict())
-    return {}
+def _consume_current_stage_queue_rows(content_db: Path, *, stage: str, ready_df: pd.DataFrame) -> int:
+    """消费已成功推进的兼容队列 current 行，避免后续重复命中。"""
 
+    if ready_df is None or ready_df.empty:
+        return 0
 
-def _build_standard_note_summary_lines(
-    *,
-    recommended_reason: str,
-    reading_objective: str,
-    manual_guidance: str,
-) -> List[str]:
-    lines = ["- 已完成 A080 预处理。"]
-    if recommended_reason:
-        lines.append(f"- 推荐原因：{recommended_reason}")
-    if reading_objective:
-        lines.append(f"- 阅读目标：{reading_objective}")
-    if manual_guidance:
-        lines.append(f"- 人工提示：{manual_guidance}")
-    return lines
+    identities: List[Tuple[str, str]] = []
+    for _, row in ready_df.fillna("").iterrows():
+        uid_literature = _stringify(row.get("uid_literature"))
+        cite_key = _stringify(row.get("cite_key"))
+        if not uid_literature and not cite_key:
+            continue
+        identities.append((uid_literature, cite_key))
 
+    if not identities:
+        return 0
 
-def _ensure_standard_note_skeleton(
-    *,
-    workspace_root: Path,
-    task_uid: str,
-    knowledge_index_df: pd.DataFrame,
-    knowledge_attachments_df: pd.DataFrame,
-    literatures_df: pd.DataFrame,
-    uid_literature: str,
-    cite_key: str,
-    title: str,
-    recommended_reason: str,
-    reading_objective: str,
-    manual_guidance: str,
-) -> Tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame, Path, str]:
-    del knowledge_attachments_df
-    note_name = _safe_file_stem(cite_key or uid_literature)
-    note_path = workspace_root / "knowledge" / "standard_notes" / f"{note_name}.md"
-    literature_row = _match_literature_row(literatures_df, uid_literature=uid_literature, cite_key=cite_key)
-    standard_note_uid = _stringify(literature_row.get("standard_note_uid"))
-
-    if not note_path.exists():
-        register_result = knowledge_note_register(
-            note_path=note_path,
-            title=title or cite_key or uid_literature,
-            uid_knowledge=standard_note_uid,
-            note_type="literature_standard_note",
-            status="draft",
-            source_task_uid=task_uid,
-            uid_literature=uid_literature,
-            cite_key=cite_key,
-            body=build_standard_note_body(
-                title=title or cite_key or uid_literature,
-                cite_key=cite_key or uid_literature,
-                summary_lines=_build_standard_note_summary_lines(
-                    recommended_reason=recommended_reason,
-                    reading_objective=reading_objective,
-                    manual_guidance=manual_guidance,
-                ),
-            ),
-        )
-        standard_note_uid = _stringify(register_result.get("uid_knowledge"))
-
-    knowledge_bind_literature_standard_note(note_path, uid_literature, cite_key)
-    knowledge_index_df, index_row = knowledge_index_sync_from_note(
-        knowledge_index_df,
-        note_path,
-        workspace_root=workspace_root,
-    )
-    standard_note_uid = _stringify(index_row.get("uid_knowledge")) or standard_note_uid
-    if standard_note_uid:
-        literatures_df, _ = literature_bind_standard_note(literatures_df, uid_literature, standard_note_uid)
-    return literatures_df, knowledge_index_df, knowledge_attachments_df, note_path, standard_note_uid
+    now_iso = datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+    affected = 0
+    with sqlite3.connect(content_db) as conn:
+        for uid_literature, cite_key in identities:
+            cursor = conn.execute(
+                """
+                UPDATE literature_reading_queue
+                   SET is_current = 0,
+                       queue_status = 'completed',
+                       updated_at = ?
+                 WHERE stage = ?
+                   AND is_current = 1
+                   AND COALESCE(uid_literature, '') = ?
+                   AND COALESCE(cite_key, '') = ?
+                """,
+                (now_iso, stage, uid_literature, cite_key),
+            )
+            if cursor.rowcount and cursor.rowcount > 0:
+                affected += int(cursor.rowcount)
+        conn.commit()
+    return affected
 
 
 @affair_auto_git_commit("A080")
@@ -237,6 +188,11 @@ def execute(config_path: Path) -> List[Path]:
         legacy_seeded_count = _seed_state_from_legacy_queue(content_db)
         if legacy_seeded_count > 0:
             state_df = load_reading_state_df(content_db, flag_filters={"pending_preprocess": 1})
+    failed_preprocess_statuses = {"missing_attachment", "parse_failed", "note_skeleton_failed"}
+    if not state_df.empty and "preprocess_status" in state_df.columns:
+        state_df = state_df.loc[
+            ~state_df["preprocess_status"].fillna("").astype(str).str.lower().isin(failed_preprocess_statuses)
+        ].copy()
 
     max_items = int(raw_cfg.get("max_items") or 0)
     if max_items > 0:
@@ -266,7 +222,6 @@ def execute(config_path: Path) -> List[Path]:
 
     manifest_df = manifest_result["manifest_df"].fillna("")
     literatures_df, attachments_df, _ = load_reference_tables(db_path=content_db)
-    knowledge_index_df, knowledge_attachments_df, _ = load_knowledge_tables(db_path=content_db)
     existing_state_df = load_reading_state_df(content_db)
     existing_state_by_uid = {
         _stringify(row.get("uid_literature")): row.to_dict()
@@ -279,7 +234,7 @@ def execute(config_path: Path) -> List[Path]:
     failures: List[str] = list(manifest_result.get("failures") or [])
     ready_count = 0
     failed_count = 0
-    note_ready_count = 0
+    postprocess_success_count = 0
 
     for _, row in manifest_df.iterrows():
         row_dict = dict(row.to_dict())
@@ -287,6 +242,8 @@ def execute(config_path: Path) -> List[Path]:
         cite_key = _stringify(row_dict.get("cite_key")) or uid_literature
         title = _stringify(row_dict.get("title")) or cite_key
         manifest_status = _stringify(row_dict.get("manifest_status")) or "failed"
+        if int(row_dict.get("postprocess_ok") or 0):
+            postprocess_success_count += 1
         failure_reason = _stringify(row_dict.get("failure_reason"))
         existing = existing_state_by_uid.get(uid_literature, {})
         recommended_reason = _stringify(row_dict.get("recommended_reason") or existing.get("recommended_reason"))
@@ -294,31 +251,11 @@ def execute(config_path: Path) -> List[Path]:
         source_origin = _stringify(row_dict.get("source_origin") or existing.get("source_origin")) or "auto"
         reading_objective = _stringify(row_dict.get("reading_objective") or existing.get("reading_objective"))
         manual_guidance = _stringify(row_dict.get("manual_guidance") or existing.get("manual_guidance"))
-        note_path_text = ""
-        standard_note_uid = _stringify(existing.get("standard_note_uid"))
-        note_issue = ""
+        preprocess_status = ""
 
         if manifest_status in {"succeeded", "skipped"}:
             ready_count += 1
-            try:
-                literatures_df, knowledge_index_df, knowledge_attachments_df, note_path, standard_note_uid = _ensure_standard_note_skeleton(
-                    workspace_root=workspace_root,
-                    task_uid=task_uid,
-                    knowledge_index_df=knowledge_index_df,
-                    knowledge_attachments_df=knowledge_attachments_df,
-                    literatures_df=literatures_df,
-                    uid_literature=uid_literature,
-                    cite_key=cite_key,
-                    title=title,
-                    recommended_reason=recommended_reason,
-                    reading_objective=reading_objective,
-                    manual_guidance=manual_guidance,
-                )
-                note_path_text = str(note_path)
-                note_ready_count += 1
-            except Exception as exc:
-                note_issue = str(exc)
-                failures.append(f"{cite_key}: 标准笔记骨架生成失败: {note_issue}")
+            preprocess_status = "ready"
 
             state_row = {
                 "uid_literature": uid_literature,
@@ -331,6 +268,8 @@ def execute(config_path: Path) -> List[Path]:
                 "manual_guidance": manual_guidance,
                 "pending_preprocess": 0,
                 "preprocessed": 1,
+                "preprocess_status": preprocess_status,
+                "preprocess_note_path": "",
                 "pending_rough_read": 1 if int(existing.get("rough_read_done") or 0) == 0 else int(existing.get("pending_rough_read") or 0),
                 "in_rough_read": int(existing.get("in_rough_read") or 0),
                 "rough_read_done": int(existing.get("rough_read_done") or 0),
@@ -342,6 +281,7 @@ def execute(config_path: Path) -> List[Path]:
             existing_state_by_uid[uid_literature] = state_row
         else:
             failed_count += 1
+            preprocess_status = "missing_attachment" if "未找到可用 PDF 附件" in failure_reason else "parse_failed"
             state_updates.append(
                 {
                     "uid_literature": uid_literature,
@@ -352,8 +292,10 @@ def execute(config_path: Path) -> List[Path]:
                     "source_origin": source_origin,
                     "reading_objective": reading_objective,
                     "manual_guidance": manual_guidance,
-                    "pending_preprocess": 1,
+                    "pending_preprocess": 0,
                     "preprocessed": int(existing.get("preprocessed") or 0),
+                    "preprocess_status": preprocess_status,
+                    "preprocess_note_path": _stringify(existing.get("preprocess_note_path")),
                     "pending_rough_read": int(existing.get("pending_rough_read") or 0),
                     "in_rough_read": int(existing.get("in_rough_read") or 0),
                     "rough_read_done": int(existing.get("rough_read_done") or 0),
@@ -377,9 +319,6 @@ def execute(config_path: Path) -> List[Path]:
                 "source_origin": source_origin,
                 "reading_objective": reading_objective,
                 "manual_guidance": manual_guidance,
-                "standard_note_path": note_path_text,
-                "standard_note_uid": standard_note_uid,
-                "note_issue": note_issue,
                 "failure_reason": failure_reason,
             }
         )
@@ -387,15 +326,15 @@ def execute(config_path: Path) -> List[Path]:
     if state_updates:
         upsert_reading_state_rows(content_db, state_updates)
 
+    ready_df = manifest_df.loc[
+        manifest_df["manifest_status"].astype(str).str.lower().isin(["succeeded", "skipped"])
+    ].copy() if not manifest_df.empty and "manifest_status" in manifest_df.columns else pd.DataFrame()
+    consumed_a080_queue_count = _consume_current_stage_queue_rows(content_db, stage="A080", ready_df=ready_df)
+
     if ready_count > 0:
         persist_reference_tables(
             literatures_df=literatures_df,
             attachments_df=attachments_df,
-            db_path=content_db,
-        )
-        persist_knowledge_tables(
-            index_df=knowledge_index_df,
-            attachments_df=knowledge_attachments_df,
             db_path=content_db,
         )
 
@@ -411,14 +350,16 @@ def execute(config_path: Path) -> List[Path]:
             f"legacy queue 补种 {legacy_seeded_count} 条；"
             f"解析就绪 {ready_count} 条；"
             f"失败 {failed_count} 条；"
-            f"标准笔记骨架 {note_ready_count} 条。"
+            f"后处理成功 {postprocess_success_count} 条；"
+            f"消费 A080 兼容队列 {consumed_a080_queue_count} 条。"
         ),
         checks=[
             {"name": "pending_preprocess_input_count", "value": len(state_df)},
             {"name": "legacy_queue_seeded_count", "value": legacy_seeded_count},
             {"name": "preprocess_ready_count", "value": ready_count},
             {"name": "preprocess_failed_count", "value": failed_count},
-            {"name": "standard_note_count", "value": note_ready_count},
+            {"name": "postprocess_success_count", "value": postprocess_success_count},
+            {"name": "consumed_a080_queue_count", "value": consumed_a080_queue_count},
         ],
         artifacts=[
             str(index_path),
@@ -463,8 +404,8 @@ def execute(config_path: Path) -> List[Path]:
             affair_code="A080",
             handler_name="非综述文献预处理",
             agent_names=["ar_A080_非综述文献预处理事务智能体_v6"],
-            skill_names=["ar_A080_非综述候选文献视图构建_v6"],
-            reasoning_summary="仅消费 pending_preprocess 当前态，完成 MonkeyOCR 解析、标准笔记骨架与 pending_rough_read 推进。",
+            skill_names=["a080-nonreview-preprocess-v6"],
+            reasoning_summary="仅消费 pending_preprocess 当前态，完成 MonkeyOCR 解析与 pending_rough_read 推进。",
             gate_review=gate_review,
             gate_review_path=gate_path,
             artifact_paths=artifact_paths,
@@ -473,7 +414,8 @@ def execute(config_path: Path) -> List[Path]:
                 "legacy_queue_seeded_count": legacy_seeded_count,
                 "ready_count": ready_count,
                 "failed_count": failed_count,
-                "standard_note_count": note_ready_count,
+                "postprocess_success_count": postprocess_success_count,
+                "consumed_a080_queue_count": consumed_a080_queue_count,
             },
         )
     except Exception:
