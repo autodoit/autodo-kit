@@ -551,6 +551,11 @@ from autodokit.tools.tex_dag_tools import (
     set_tex_root,
 )
 
+from autodokit.tools.math_delimiter_converter import (
+    convert_text as convert_math_delimiters,
+    process_file as process_math_file,
+    collect_unescaped_dollar_lines as collect_unescaped_dollar_lines,
+)
 def run_online_retrieval_router(payload: dict[str, Any]) -> dict[str, Any]:
     """延迟加载在线检索路由器并执行路由调用。
 
