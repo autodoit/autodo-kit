@@ -205,6 +205,14 @@ def incremental_import_bib_into_content_db(*args: Any, **kwargs: Any) -> dict[st
     return impl(*args, **kwargs)
 
 
+def convert_zotero_rdf_to_a020_incremental_package(*args: Any, **kwargs: Any) -> dict[str, Any]:
+    """延迟加载 Zotero RDF 转 A020 增量输入包工具。"""
+
+    module = importlib.import_module("autodokit.tools.zotero_rdf_to_a020_incremental_import_tools")
+    impl = getattr(module, "convert_zotero_rdf_to_a020_incremental_package")
+    return impl(*args, **kwargs)
+
+
 def normalize_primary_fulltext_attachment_names(payload: dict[str, Any]) -> dict[str, Any]:
     """延迟加载主附件规范化命名工具。"""
 
@@ -592,6 +600,7 @@ _用户公开工具 = [
     "build_online_lookup_placeholder_fields",
     "local_reference_lookup_and_materialize",
     "incremental_import_bib_into_content_db",
+    "convert_zotero_rdf_to_a020_incremental_package",
     "generate_knowledge_uid",
     "init_empty_knowledge_index_table",
     "init_empty_knowledge_attachments_table",
@@ -788,6 +797,7 @@ _开发者工具 = [
     "process_reference_citation",
     "local_reference_lookup_and_materialize",
     "incremental_import_bib_into_content_db",
+    "convert_zotero_rdf_to_a020_incremental_package",
     "normalize_primary_fulltext_attachment_names",
     "resolve_primary_attachment_normalization_settings",
     "refresh_author_entities",
