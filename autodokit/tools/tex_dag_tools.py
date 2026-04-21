@@ -14,6 +14,7 @@ import sys
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Iterable, Optional, Sequence
+import subprocess
 
 
 INCLUDE_PATTERN = re.compile(r"\\(?P<kind>subfile|input|include)\{(?P<target>[^}]+)\}")
@@ -212,30 +213,49 @@ def update_parent_edge(parent_file: Path, old_target: Path, new_target: Path, dr
     return changed, previews
 
 
-def update_subfiles_root(file_path: Path, new_root: Path, dry_run: bool = False) -> tuple[bool, Optional[str]]:
+def update_subfiles_root(file_path: Path, new_root: Path, dry_run: bool = False) -> tuple[bool, list[str]]:
     lines = file_path.read_text(encoding="utf-8").splitlines(keepends=True)
     changed = False
-    preview: Optional[str] = None
+    previews: list[str] = []
+    replacement = relative_tex_reference(file_path, new_root, keep_extension=True)
     new_lines: list[str] = []
     for line_no, original_line in enumerate(lines, start=1):
-        active_line = strip_line_comment(original_line)
-        match = DOCCLASS_PATTERN.search(active_line)
-        if not match:
-            new_lines.append(original_line)
-            continue
-        replacement = relative_tex_reference(file_path, new_root, keep_extension=True)
-        current_root = match.group("root").strip()
-        if current_root == replacement:
-            new_lines.append(original_line)
-            continue
-        start, end = match.span("root")
-        preview = f"{file_path}:{line_no}: {current_root} -> {replacement}"
-        original_line = original_line[:start] + replacement + original_line[end:]
-        new_lines.append(original_line)
-        changed = True
+        updated_line = original_line
+        active_line = strip_line_comment(updated_line)
+
+        docclass_match = DOCCLASS_PATTERN.search(active_line)
+        if docclass_match:
+            current_root = docclass_match.group("root").strip()
+            if current_root != replacement:
+                start, end = docclass_match.span("root")
+                updated_line = updated_line[:start] + replacement + updated_line[end:]
+                previews.append(f"{file_path}:{line_no}: subfiles-root {current_root} -> {replacement}")
+                changed = True
+
+        magic_source = updated_line.rstrip("\r\n")
+        bom_prefix = ""
+        if magic_source.startswith("\ufeff"):
+            bom_prefix = "\ufeff"
+            magic_source = magic_source[1:]
+        magic_match = TEX_ROOT_MAGIC_PATTERN.match(magic_source)
+        if magic_match:
+            current_root = magic_match.group("root").strip()
+            if current_root != replacement:
+                line_ending = ""
+                if updated_line.endswith("\r\n"):
+                    line_ending = "\r\n"
+                elif updated_line.endswith("\n"):
+                    line_ending = "\n"
+                updated_line = (
+                    f"{bom_prefix}{magic_match.group('prefix')}{replacement}{magic_match.group('suffix')}{line_ending}"
+                )
+                previews.append(f"{file_path}:{line_no}: tex-root {current_root} -> {replacement}")
+                changed = True
+
+        new_lines.append(updated_line)
     if changed and not dry_run:
         file_path.write_text("".join(new_lines), encoding="utf-8")
-    return changed, preview
+    return changed, previews
 
 
 def graph_payload(graph: TexGraph) -> dict[str, Any]:
@@ -383,9 +403,15 @@ def _resolve_clone_map(
     return clone_map
 
 
-def _rewrite_cloned_file_links(file_path: Path, clone_map: dict[Path, Path], dry_run: bool) -> list[str]:
+def _rewrite_cloned_file_links(
+    file_path: Path,
+    clone_map: dict[Path, Path],
+    dry_run: bool,
+    source_file_for_dry_run: Path | None = None,
+) -> list[str]:
     previews: list[str] = []
-    lines = file_path.read_text(encoding="utf-8").splitlines(keepends=True)
+    read_from = source_file_for_dry_run if dry_run and source_file_for_dry_run is not None else file_path
+    lines = read_from.read_text(encoding="utf-8").splitlines(keepends=True)
     new_lines: list[str] = []
 
     for line_no, original_line in enumerate(lines, start=1):
@@ -418,7 +444,12 @@ def _rewrite_cloned_file_links(file_path: Path, clone_map: dict[Path, Path], dry
                     updated_line = updated_line[:start] + replacement_root + updated_line[end:]
                     previews.append(f"{file_path}:{line_no}: subfiles-root {raw_root} -> {replacement_root}")
 
-        magic_match = TEX_ROOT_MAGIC_PATTERN.match(updated_line.rstrip("\r\n"))
+        magic_source = updated_line.rstrip("\r\n")
+        bom_prefix = ""
+        if magic_source.startswith("\ufeff"):
+            bom_prefix = "\ufeff"
+            magic_source = magic_source[1:]
+        magic_match = TEX_ROOT_MAGIC_PATTERN.match(magic_source)
         if magic_match:
             raw_root = magic_match.group("root").strip()
             resolved_root = resolve_reference(file_path, raw_root)
@@ -431,7 +462,7 @@ def _rewrite_cloned_file_links(file_path: Path, clone_map: dict[Path, Path], dry
                     elif updated_line.endswith("\n"):
                         line_ending = "\n"
                     updated_line = (
-                        f"{magic_match.group('prefix')}{replacement_root}{magic_match.group('suffix')}{line_ending}"
+                        f"{bom_prefix}{magic_match.group('prefix')}{replacement_root}{magic_match.group('suffix')}{line_ending}"
                     )
                     previews.append(f"{file_path}:{line_no}: tex-root {raw_root} -> {replacement_root}")
 
@@ -440,6 +471,19 @@ def _rewrite_cloned_file_links(file_path: Path, clone_map: dict[Path, Path], dry
     if previews and not dry_run:
         file_path.write_text("".join(new_lines), encoding="utf-8")
     return previews
+
+
+def compile_tex(tex_path: Path, timeout_seconds: int = 120) -> dict[str, Any]:
+    """Run xelatex on the given tex file in its directory and return result.
+
+    Returns dict with keys: returncode, stdout, stderr.
+    """
+    cmd = ["xelatex", "-interaction=nonstopmode", "-halt-on-error", str(tex_path.name)]
+    try:
+        proc = subprocess.run(cmd, cwd=str(tex_path.parent), capture_output=True, text=True, timeout=timeout_seconds)
+        return {"returncode": proc.returncode, "stdout": proc.stdout, "stderr": proc.stderr}
+    except subprocess.TimeoutExpired as exc:
+        return {"returncode": -1, "stdout": getattr(exc, "stdout", ""), "stderr": "timeout"}
 
 
 def clone_tex_version(
@@ -451,6 +495,9 @@ def clone_tex_version(
     target_files: Sequence[str | Path] | None = None,
     overwrite: bool = False,
     dry_run: bool = False,
+    compile: bool = False,
+    compile_target: str | Path | None = None,
+    compile_timeout: int = 120,
 ) -> dict[str, Any]:
     root = Path(root_dir).resolve()
     clone_map = _resolve_clone_map(
@@ -480,17 +527,39 @@ def clone_tex_version(
         shutil.copyfile(source_file, target_file)
 
     rewrite_previews: list[str] = []
-    for _, target_file in copied_pairs:
-        file_previews = _rewrite_cloned_file_links(target_file, clone_map=clone_map, dry_run=dry_run)
+    for source_file, target_file in copied_pairs:
+        file_previews = _rewrite_cloned_file_links(
+            target_file,
+            clone_map=clone_map,
+            dry_run=dry_run,
+            source_file_for_dry_run=source_file,
+        )
         rewrite_previews.extend(file_previews)
 
-    return {
+    result: dict[str, Any] = {
         "status": "PASS",
         "dry_run": dry_run,
         "overwrite": overwrite,
         "copied": [{"source": str(src), "target": str(dst)} for src, dst in copied_pairs],
         "rewrites": rewrite_previews,
     }
+
+    # optional compile step
+    if compile:
+        if dry_run:
+            # preview compile command
+            cmd_preview = ["xelatex", "-interaction=nonstopmode", "-halt-on-error", str(Path(compile_target).name if compile_target else next(iter(clone_map.values())).name)]
+            result["compile_preview"] = {"cmd": cmd_preview, "cwd": str(Path(root_dir))}
+        else:
+            if compile_target:
+                compile_path = Path(root_dir) / Path(compile_target)
+            else:
+                # pick first target that is likely a root
+                compile_path = Path(root_dir) / next(iter(clone_map.values()))
+            compile_res = compile_tex(compile_path, timeout_seconds=compile_timeout)
+            result["compile"] = {"target": str(compile_path), **compile_res}
+
+    return result
 
 
 def scan_tex_graph(root_dir: str | Path = ".", exclude_glob: Sequence[str] | None = None) -> TexGraph:
@@ -548,19 +617,17 @@ def rewire_tex_reference(
     root_previews: list[str] = []
     if sync_root:
         new_root = infer_root_for_parent(parent_file, graph.root_refs)
-        changed, preview = update_subfiles_root(new_path, new_root, dry_run=dry_run)
+        changed, previews_for_file = update_subfiles_root(new_path, new_root, dry_run=dry_run)
         if changed:
             changed_files.append(new_path)
-            if preview:
-                root_previews.append(preview)
+            root_previews.extend(previews_for_file)
 
         if recursive:
             for descendant_file in descendants(new_path, graph.children_map):
-                changed, preview = update_subfiles_root(descendant_file, new_root, dry_run=dry_run)
+                changed, previews_for_file = update_subfiles_root(descendant_file, new_root, dry_run=dry_run)
                 if changed:
                     changed_files.append(descendant_file)
-                    if preview:
-                        root_previews.append(preview)
+                    root_previews.extend(previews_for_file)
 
     return {
         "status": "PASS",
@@ -597,19 +664,17 @@ def set_tex_root(
     changed_files: list[Path] = []
     previews: list[str] = []
 
-    changed, preview = update_subfiles_root(target_file, new_root, dry_run=dry_run)
+    changed, previews_for_file = update_subfiles_root(target_file, new_root, dry_run=dry_run)
     if changed:
         changed_files.append(target_file)
-        if preview:
-            previews.append(preview)
+        previews.extend(previews_for_file)
 
     if recursive:
         for descendant_file in descendants(target_file, graph.children_map):
-            changed, preview = update_subfiles_root(descendant_file, new_root, dry_run=dry_run)
+            changed, previews_for_file = update_subfiles_root(descendant_file, new_root, dry_run=dry_run)
             if changed:
                 changed_files.append(descendant_file)
-                if preview:
-                    previews.append(preview)
+                previews.extend(previews_for_file)
 
     if not changed_files:
         return {"status": "EMPTY", "changed_files": [], "previews": [], "dry_run": dry_run}
@@ -701,6 +766,9 @@ def cmd_clone_version(args: argparse.Namespace) -> int:
         target_files=args.target,
         overwrite=args.overwrite,
         dry_run=args.dry_run,
+        compile=args.compile if hasattr(args, "compile") else False,
+        compile_target=args.compile_target if hasattr(args, "compile_target") else None,
+        compile_timeout=args.compile_timeout if hasattr(args, "compile_timeout") else 120,
     )
     if args.dry_run:
         print("预演：将复制以下文件:")
@@ -720,6 +788,32 @@ def cmd_clone_version(args: argparse.Namespace) -> int:
             print(f"  {preview}")
     else:
         print("未检测到需要重写的内部引用。")
+    # compile feedback
+    if "compile_preview" in result:
+        print("预演：如果执行，将运行以下编译命令:")
+        preview = result["compile_preview"]
+        print(f"  cwd: {preview.get('cwd')}")
+        print(f"  cmd: {' '.join(preview.get('cmd', []))}")
+    if "compile" in result:
+        comp = result["compile"]
+        status = comp.get("returncode")
+        print(f"编译目标: {comp.get('target')}")
+        if status == 0:
+            print("编译成功 (returncode=0)")
+        elif status == -1:
+            print("编译超时或被中止")
+        else:
+            print(f"编译失败 (returncode={status})")
+        stdout = comp.get("stdout", "")
+        stderr = comp.get("stderr", "")
+        if stdout:
+            print("编译 stdout 摘要:")
+            for line in stdout.splitlines()[-10:]:
+                print(f"  {line}")
+        if stderr:
+            print("编译 stderr 摘要:")
+            for line in stderr.splitlines()[-10:]:
+                print(f"  {line}")
     return 0
 
 
@@ -773,6 +867,13 @@ def build_parser() -> argparse.ArgumentParser:
     clone_parser.add_argument("--to-tag", required=True, help="新版本标记，用于目标文件名推导")
     clone_parser.add_argument("--overwrite", action="store_true", help="允许覆盖已存在的目标文件")
     clone_parser.add_argument("--dry-run", action="store_true", help="只预演，不写回文件")
+    clone_parser.add_argument("--compile", action="store_true", help="复制后编译主文件（仅在非 dry-run 时执行）")
+    clone_parser.add_argument(
+        "--compile-target",
+        default=None,
+        help="要编译的主文件（相对 root-dir 或绝对路径），若未提供将使用推导的第一个目标",
+    )
+    clone_parser.add_argument("--compile-timeout", type=int, default=120, help="编译超时秒数")
     clone_parser.set_defaults(func=cmd_clone_version)
 
     return parser
@@ -806,3 +907,7 @@ __all__ = [
     "build_parser",
     "main",
 ]
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

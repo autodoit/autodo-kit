@@ -15,7 +15,8 @@ from pathlib import Path
 from typing import Any, Dict, List
 
 from autodokit.tools import load_json_or_py
-from autodokit.tools.pandoc_tex_word_converter import PandocResult, convert_word_to_latex
+from autodokit.tools.pandoc_runner import PandocResult
+from autodokit.tools.word_to_latex import convert_word_to_latex
 
 
 @dataclass

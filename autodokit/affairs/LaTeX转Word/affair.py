@@ -16,13 +16,9 @@ from pathlib import Path
 from typing import Any, Dict, List
 
 from autodokit.tools import load_json_or_py
-from autodokit.tools.pandoc_tex_word_converter import (
-    PandocResult,
-    add_heading_numbering,
-    convert_latex_to_word,
-    highlight_tokens_in_docx,
-    merge_latex_subfiles,
-)
+from autodokit.tools.pandoc_to_docx import PandocResult, convert_latex_to_word
+from autodokit.tools.docx_postprocess import add_heading_numbering, highlight_tokens_in_docx
+from autodokit.tools.latex_subfile_merger import merge_latex_subfiles
 
 
 @dataclass

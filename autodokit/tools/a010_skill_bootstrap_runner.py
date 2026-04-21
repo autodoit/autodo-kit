@@ -6,6 +6,7 @@ import json
 from pathlib import Path
 import subprocess
 import sys
+import warnings
 from typing import Any
 
 
@@ -80,16 +81,37 @@ def _resolve_python_executable(raw_venv_path: str) -> Path:
     return Path(sys.executable).resolve()
 
 
-def _resolve_script_path(local_cfg: dict[str, Any], global_cfg: dict[str, Any]) -> Path:
+def _resolve_template_workspace_root(local_cfg: dict[str, Any], global_cfg: dict[str, Any]) -> Path:
     template_root = _to_text(local_cfg.get("template_root")) or _to_text((global_cfg.get("bootstrap") or {}).get("template_root"))
-    if template_root:
-        candidate = Path(template_root).expanduser().resolve().parents[2] / "scripts" / "generate_config.py"
-        if candidate.exists():
-            return candidate.resolve()
-    fallback = Path.home() / ".copilot" / "skills" / "A010_项目初始化_v6" / "scripts" / "generate_config.py"
-    if fallback.exists():
-        return fallback.resolve()
-    raise FileNotFoundError("未找到 A010 初始化脚本 generate_config.py")
+    if not template_root:
+        warnings.warn(
+            "A010 需要显式配置 bootstrap.template_root 指向外部 skill 模板目录。",
+            RuntimeWarning,
+            stacklevel=3,
+        )
+        raise FileNotFoundError("未配置 A010 初始化模板根目录 template_root")
+    template_workspace_root = Path(template_root).expanduser().resolve()
+    if not template_workspace_root.exists():
+        warnings.warn(
+            f"A010 模板根目录不存在: {template_workspace_root}",
+            RuntimeWarning,
+            stacklevel=3,
+        )
+        raise FileNotFoundError(f"未找到 A010 模板根目录: {template_workspace_root}")
+    return template_workspace_root
+
+
+def _resolve_script_path(local_cfg: dict[str, Any], global_cfg: dict[str, Any]) -> Path:
+    template_workspace_root = _resolve_template_workspace_root(local_cfg, global_cfg)
+    candidate = template_workspace_root.parents[2] / "scripts" / "generate_config.py"
+    if candidate.exists():
+        return candidate.resolve()
+    warnings.warn(
+        f"A010 初始化脚本不存在: {candidate}",
+        RuntimeWarning,
+        stacklevel=3,
+    )
+    raise FileNotFoundError(f"未找到 A010 初始化脚本 generate_config.py: {candidate}")
 
 
 def _load_a020_seed(global_cfg: dict[str, Any]) -> tuple[list[str], list[str], str]:
@@ -124,7 +146,8 @@ def _build_command(config_path: Path, local_cfg: dict[str, Any], global_cfg: dic
     llm_cfg = global_cfg.get("llm") or {}
     llm_api_key_file = _to_text(llm_cfg.get("aliyun_api_key_file"))
     venv_path = _to_text(global_cfg.get("venv_path"))
-    template_root = _to_text(local_cfg.get("template_root")) or _to_text((global_cfg.get("bootstrap") or {}).get("template_root"))
+    template_workspace_root = _resolve_template_workspace_root(local_cfg, global_cfg)
+    template_root = str(template_workspace_root)
     origin_bib_paths, origin_attachments_roots, origin_attachments_root = _load_a020_seed(global_cfg)
 
     local_auto = _extract_commit_value(local_cfg, "is_auto_git_commit")

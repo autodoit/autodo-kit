@@ -1009,6 +1009,50 @@ def _call_llm_domain_two_stage(cfg: KeywordSetConfig) -> Tuple[Dict[str, List[st
     return domains_map, [], debug
 
 
+def _build_domains_map_fallback(cfg: KeywordSetConfig) -> Tuple[Dict[str, List[str]], List[str], Dict[str, Any]]:
+    """在 LLM 不可用时构建可运行的降级 domains_map。
+
+    Args:
+        cfg: 关键词集合配置。
+
+    Returns:
+        domains_map、cross_phrases、debug。
+
+    Raises:
+        ValueError: 当无法构造至少两个领域时。
+
+    Examples:
+        >>> _build_domains_map_fallback(cfg)
+    """
+
+    debug: Dict[str, Any] = {"fallback": True, "reason": "llm_unavailable"}
+    domains_map: Dict[str, List[str]] = {}
+
+    if cfg.research_domains:
+        for domain_name, seeds in cfg.research_domains.items():
+            domains_map[str(domain_name)] = _normalize_keywords([str(x) for x in (seeds or [])])
+    else:
+        base = _normalize_keywords(cfg.initial_keywords)
+        if len(base) < 2:
+            raise ValueError("initial_keywords 数量不足，无法在降级模式构造 >=2 领域")
+        mid = max(1, len(base) // 2)
+        domains_map = {
+            "领域A": _normalize_keywords(base[:mid]),
+            "领域B": _normalize_keywords(base[mid:]),
+        }
+
+    if len(domains_map) < 2:
+        raise ValueError("降级模式下领域数量不足，至少需要 2 个领域")
+
+    # 保底：若某个领域为空，则回填 initial_keywords，避免后续组合为空。
+    fallback_terms = _normalize_keywords(cfg.initial_keywords)
+    for name, kws in list(domains_map.items()):
+        if not kws:
+            domains_map[name] = list(fallback_terms)
+
+    return domains_map, [], debug
+
+
 def _domains_map_to_legacy_domains_list(domains_map: Dict[str, List[str]]) -> List[Dict[str, Any]]:
     """把 domains_map 转为旧版 domains(list[dict]) 结构。
 
@@ -1150,7 +1194,24 @@ def execute(config_path: Path) -> List[Path]:
         domains_map = {d.get("domain_name"): _domain_keywords_flat(d) for d in domains_list if d.get("domain_name")}
         debug = {"dry_run": True, **reference_debug}
     else:
-        domains_map, cross_phrases, debug = _call_llm_domain_two_stage(cfg)
+        try:
+            domains_map, cross_phrases, debug = _call_llm_domain_two_stage(cfg)
+        except ValueError as exc:
+            err_text = str(exc)
+            degraded = (
+                "未找到阿里百炼 API Key" in err_text
+                or "all_models_failed" in err_text
+                or "LLM 路由调用失败" in err_text
+            )
+            if not degraded:
+                raise
+            domains_map, cross_phrases, debug = _build_domains_map_fallback(cfg)
+            debug = {
+                **debug,
+                "fallback_trigger": "llm_call_failed",
+                "fallback_error": err_text,
+            }
+
         if cfg.domain_purify_enable:
             domains_map, purify_debug = _purify_domains_keywords(
                 domains_map=domains_map,

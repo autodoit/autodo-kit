@@ -198,6 +198,9 @@ acs-*.bib
 *.end
 *.?end
 *.[1-9]
+
+# Ignore local third-party tylax installation
+third_party/tylax/
 *.[1-9][0-9]
 *.[1-9][0-9][0-9]
 *.[1-9]R
@@ -641,7 +644,7 @@ dist
 
 ### Obsidian ###
 # config dir
-.obsidian/
+.obsidian/workspace.json
 
 ### Octave ###
 # Windows default autosave extension
@@ -1752,6 +1755,10 @@ FodyWeavers.xsd
 # End of https://www.toptal.com/developers/gitignore/api/r,c++,lyx,tex,java,node,rust,julia,latex,linux,macos,spark,stata,vcpkg,matlab,octave,python,pycharm,windows,obsidian,sublimetext,visualstudio,jupyternotebooks,visualstudiocode,venv
 
 
+### SQLite ###
+*.db-shm
+*.db-wal
+
 
 ### 当前项目自定义规则
 
@@ -1781,3 +1788,5 @@ output/logs/
 /temp/**
 /temps/**
 /sandbox
+
+

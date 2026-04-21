@@ -114,8 +114,12 @@ class ProjectInitializationEngine:
         return existing
 
     def _sync_json_template_file(self, template_path: Path, target_path: Path, replacements: Mapping[str, str]) -> bool:
-        rendered_text = self._render_template_text(template_path.read_text(encoding="utf-8"), replacements)
-        template_payload = json.loads(rendered_text)
+        rendered_text = template_path.read_text(encoding="utf-8")
+        for placeholder, value in replacements.items():
+            # JSON 模板中的占位符通常位于字符串值内，这里对替换值做 JSON 转义，避免 Windows 路径触发 Invalid \escape。
+            escaped_value = json.dumps(str(value), ensure_ascii=False)[1:-1]
+            rendered_text = rendered_text.replace(placeholder, escaped_value)
+        template_payload = json.loads(rendered_text.lstrip("\ufeff"))
         if target_path.exists():
             try:
                 existing_payload = json.loads(target_path.read_text(encoding="utf-8-sig"))
@@ -166,15 +170,37 @@ class ProjectInitializationEngine:
 
         created_files: list[str] = []
         updated_files: list[str] = []
+
+        def _has_file_conflict(path: Path) -> bool:
+            for parent in [path, *path.parents]:
+                if parent == workspace_root.parent:
+                    break
+                if parent.exists() and parent.is_file():
+                    return True
+                if parent == workspace_root:
+                    break
+            return False
+
         for template_path in sorted(template_root.rglob("*")):
             if template_path.name in self._SKIPPED_TEMPLATE_FILE_NAMES:
                 continue
             relative_path = template_path.relative_to(template_root)
             target_path = workspace_root / relative_path
             if template_path.is_dir():
-                target_path.mkdir(parents=True, exist_ok=True)
+                if _has_file_conflict(target_path):
+                    continue
+                try:
+                    if target_path.exists() and target_path.is_file():
+                        # 模板期望目录但目标是同名文件时，保留现有文件，避免初始化阶段崩溃。
+                        continue
+                    target_path.mkdir(parents=True, exist_ok=True)
+                except (FileExistsError, FileNotFoundError):
+                    # 祖先路径存在同名文件时会触发；此处跳过该目录节点，继续同步其他模板文件。
+                    continue
                 continue
 
+            if _has_file_conflict(target_path.parent):
+                continue
             target_path.parent.mkdir(parents=True, exist_ok=True)
             existed_before = target_path.exists()
             if template_path.suffix.lower() == ".json":
@@ -390,32 +416,54 @@ class ProjectInitializationEngine:
                 );
                 """
             )
+            existing_columns = {
+                str(row[1])
+                for row in connection.execute("PRAGMA table_info(task_runs)").fetchall()
+                if len(row) > 1
+            }
+            required_columns: dict[str, str] = {
+                "task_status": "TEXT NOT NULL DEFAULT ''",
+                "workspace_root": "TEXT NOT NULL DEFAULT ''",
+                "started_at": "TEXT NOT NULL DEFAULT ''",
+                "ended_at": "TEXT NOT NULL DEFAULT ''",
+                "note": "TEXT NOT NULL DEFAULT ''",
+            }
+            for column_name, column_def in required_columns.items():
+                if column_name in existing_columns:
+                    continue
+                connection.execute(f"ALTER TABLE task_runs ADD COLUMN {column_name} {column_def}")
+
+            row_values: dict[str, Any] = {
+                "task_uid": "task-a010-project-bootstrap",
+                "workflow_uid": "wf-a010-bootstrap",
+                "node_code": "A010",
+                "gate_code": "G010",
+                "decision": "auto",
+                "status": "initialized",
+                "task_status": "initialized",
+                "workspace_root": str(project_root),
+                "input_summary_json": "{}",
+                "output_summary_json": "{}",
+                "started_at": "",
+                "ended_at": "",
+                "operator_name": "",
+                "note": "project initialization task",
+            }
+            insert_columns = [col for col in existing_columns if col in row_values]
+            if "task_uid" not in insert_columns:
+                insert_columns.append("task_uid")
+            insert_values = [row_values.get(col, "") for col in insert_columns]
+            update_columns = [col for col in insert_columns if col != "task_uid"]
+            placeholders = ", ".join("?" for _ in insert_columns)
+            update_clause = ", ".join(f"{col}=excluded.{col}" for col in update_columns)
             connection.execute(
-                """
-                INSERT INTO task_runs (
-                    task_uid, workflow_uid, node_code, gate_code, task_status,
-                    workspace_root, started_at, ended_at, note
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                f"""
+                INSERT INTO task_runs ({", ".join(insert_columns)})
+                VALUES ({placeholders})
                 ON CONFLICT(task_uid) DO UPDATE SET
-                    workflow_uid=excluded.workflow_uid,
-                    node_code=excluded.node_code,
-                    gate_code=excluded.gate_code,
-                    task_status=excluded.task_status,
-                    workspace_root=excluded.workspace_root,
-                    ended_at=excluded.ended_at,
-                    note=excluded.note
+                    {update_clause}
                 """,
-                (
-                    "task-a010-project-bootstrap",
-                    "wf-a010-bootstrap",
-                    "A010",
-                    "G010",
-                    "initialized",
-                    str(project_root),
-                    "",
-                    "",
-                    "project initialization task",
-                ),
+                insert_values,
             )
 
     def _bootstrap_task_database(self, project_root: Path) -> None:

@@ -2,6 +2,24 @@
 
 autodo-kit 对外公开的是“事务内容 + 事务工具 + 本地运行时 API”。默认由 autodo-kit 内置运行时执行事务；如安装 autodo-engine，可继续接入其高级调度能力。
 
+## 0. 全量索引与文档边界
+
+为避免“能力存在但手册里不容易定位”，本手册采用如下检索边界：
+
+1. 事务逐项详解（全量索引 + 每事务字段表 + 示例）以 `docs/AOK预置事务手册.md` 为准。
+2. 本文档聚焦“公开 API 契约与高频能力”，并补充关键模块的调用示例。
+3. 用户公开工具清单以 `autodokit.tools.list_user_tools()` 为真相源。
+4. 开发者工具清单以 `autodokit.tools.list_developer_tools()` 为真相源。
+
+推荐先执行：
+
+```powershell
+python scripts/generate_affair_manual.py
+python -c "import autodokit.tools as t; print('user_tools=', len(t.list_user_tools())); print('developer_tools=', len(t.list_developer_tools()))"
+```
+
+说明：`autodokit/affairs` 中若仅有 `affair.py` 而缺少 `affair.json`，默认不纳入正式可配置事务索引。
+
 ## 0. A080-A105 普通文献阅读状态契约
 
 当前普通文献阅读主链的正式节点顺序是：A080 -> A090 -> A095 -> A100 -> A105。
@@ -280,7 +298,7 @@ A040 的正式事务入口是 `autodokit.affairs.检索治理.affair.execute(...
 4. A040 事务智能体应直接调用 A040 affair 程序，由事务程序根据参数走常规流程或特殊流程。
 5. `executors/content_portal_cnki.py`、`executors/content_portal_spis.py`、`executors/open_platform.py`、`executors/navigation_portal.py`：执行层内部实现。
 
-如果你在写开发说明或排障记录，建议优先引用 `docs/在线检索文献模块专题.md`，再补具体文件名，避免只说“在线检索模块”而不说清楚层级边界。
+开发说明或排障记录中，建议优先引用 `docs/在线检索文献模块专题.md`，再补具体文件名，避免只说“在线检索模块”而不说清楚层级边界。
 
 ## 2. autodokit.tools 导出
 
@@ -293,13 +311,98 @@ A040 的正式事务入口是 `autodokit.affairs.检索治理.affair.execute(...
 推荐入口：
 
 - `from autodokit.tools import <tool_name>`
-- `list_user_tools() -> list[str]`：列出用户公开工具。
+- `list_user_tools() -> list[str]`：用户公开工具清单。
 
 当前典型工具：
 
 - `parse_reference_text(reference_text)`
 - `insert_placeholder_from_reference(table, reference_text, ...)`
 - `task_create_or_update(tasks, task, ...)`
+
+建议先用以下函数做“可用能力发现”：
+
+- `list_user_tools() -> list[str]`
+- `list_developer_tools() -> list[str]`
+- `get_tool(tool_name, scope='user'|'developer'|'all')`
+
+### 2.1.1 LaTeX 子文件合并与 Word 转换能力
+
+能力位置（5 个原子模块）：
+
+- `autodokit.tools.latex_subfile_merger`
+- `autodokit.tools.pandoc_runner`
+- `autodokit.tools.latex_to_word`
+- `autodokit.tools.word_to_latex`
+- `autodokit.tools.docx_postprocess`
+
+兼容入口（保留历史导入路径）：`autodokit.tools.pandoc_tex_word_converter`
+
+#### 2.1.1.1 `autodokit.tools.latex_subfile_merger`
+
+用途：递归展开 `\subfile{...}` 并合并为单个 tex 文件。
+
+公开函数：
+
+- `merge_latex_subfiles(main_tex_path, output_tex_path)`：读取主 tex，递归展开子文件，返回合并输出路径与日志列表。
+
+#### 2.1.1.2 `autodokit.tools.pandoc_runner`
+
+用途：统一封装 Pandoc 子进程执行与结果回传。
+
+公开函数：
+
+- `run_pandoc(command)`：执行 Pandoc 命令并返回 `PandocResult`，包含命令、返回码、标准输出与标准错误。
+
+#### 2.1.1.3 `autodokit.tools.latex_to_word`
+
+用途：将 tex 文档转换为 docx 文档。
+
+公开函数：
+
+- `convert_latex_to_word(input_tex_path, output_docx_path, ...)`：支持 `resource_path`、`resource_paths`、`include_in_header`、`reference_doc` 与 `toc`。
+
+#### 2.1.1.4 `autodokit.tools.word_to_latex`
+
+用途：将 doc/docx 文档转换为 tex 文档。
+
+公开函数：
+
+- `convert_word_to_latex(input_word_path, output_tex_path, ...)`：支持 `include_in_header` 与 `latex_template`。
+- `DEFAULT_XELATEX_LATEX_TEMPLATE`：内置 XeLaTeX 默认模板。
+- `PANDOC_TABLE_SUPPORT_MARKER` 与 `PANDOC_TABLE_SUPPORT_BLOCK`：Pandoc 表格补丁标记与补丁块。
+
+内部辅助：
+
+- `_needs_pandoc_table_support(tex_text)`：判断输出 tex 是否需要补表格支持。
+- `_ensure_pandoc_latex_table_support(output_tex_path)`：在必要时把表格支持块插入到 tex 中。
+
+#### 2.1.1.5 `autodokit.tools.docx_postprocess`
+
+用途：对 docx 做标题编号与内容高亮后处理。
+
+公开函数：
+
+- `add_heading_numbering(input_docx_path, output_docx_path)`：为 Heading 1-9 添加文本编号。
+- `highlight_tokens_in_docx(input_docx_path, output_docx_path)`：对 `【TODO】`、`【NOTE】`、`【文献】` 片段做标色。
+
+事务入口：
+
+- `autodokit.affairs.LaTeX转Word.affair.execute(config_path)`
+- 若配置 `merge_subfiles=true`，事务会先调用 `merge_latex_subfiles(...)` 再做 Pandoc 转换。
+
+最小示例（仅合并 subfiles）：
+
+```python
+from pathlib import Path
+from autodokit.tools.pandoc_tex_word_converter import merge_latex_subfiles
+
+out_tex, logs = merge_latex_subfiles(
+  Path(r"D:/workspace/paper/main.tex"),
+  Path(r"D:/workspace/paper/main_merged.tex"),
+)
+print(out_tex)
+print("log_count=", len(logs))
+```
 
 ### 2.2 MonkeyOCR Windows GPU 解析工具
 
@@ -391,7 +494,7 @@ MonkeyOCR 单篇解析的输出契约建议统一如下：
 - `model_configs.local.yaml`：本次运行的配置快照。
 - `parse_direct_run.log`：实时日志文件。
 
-如果你在别的 Windows 11 设备上复现，建议优先复用这套参数组合：`device=cuda`、`gpu_visible_devices=0`、`triton-windows<3.4`、`MonkeyOCR-pro-1.2B`，并把 `models_dir` 指到本机权重目录。
+在其他 Windows 11 设备上复现时，建议优先复用这套参数组合：`device=cuda`、`gpu_visible_devices=0`、`triton-windows<3.4`、`MonkeyOCR-pro-1.2B`，并把 `models_dir` 指向本机权重目录。
 
 ### 2.4 TeX DAG 管理工具
 
@@ -599,7 +702,7 @@ python scripts/manage_tex_dag.py --help
 
 入口：
 
-- `list_developer_tools() -> list[str]`：列出开发者工具。
+- `list_developer_tools() -> list[str]`：开发者工具清单。
 - `get_tool(tool_name, scope='user'|'developer'|'all')`：按名称获取可调用对象。
 
 开发侧常用能力示例：

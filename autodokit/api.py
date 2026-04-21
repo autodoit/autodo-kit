@@ -9,6 +9,7 @@ import importlib
 import importlib.util
 import json
 import re
+from contextlib import contextmanager
 from datetime import datetime
 from pathlib import Path
 import shutil
@@ -19,6 +20,50 @@ from typing import Any
 from autodokit.tools import load_json_or_py, resolve_paths_to_absolute
 from autodokit.tools.atomic.task_aok.postprocess_runtime import run_unified_postprocess
 from autodokit.tools.time_utils import now_iso
+
+
+def _get_runtime_context_module() -> Any:
+    """按需加载运行时上下文模块。
+
+    Returns:
+        运行时上下文模块；若不可用则返回 None。
+    """
+
+    try:
+        from autodoengine.utils import runtime_context as runtime_context_module
+    except Exception:
+        return None
+    return runtime_context_module
+
+
+@contextmanager
+def _set_runtime_context(
+    *,
+    global_config_path: Path | None,
+    current_affair_uid: str,
+    current_affair_config_path: Path,
+):
+    """临时注入运行时上下文并在退出时恢复。"""
+
+    runtime_context_module = _get_runtime_context_module()
+    if runtime_context_module is None:
+        yield
+        return
+
+    previous_context = runtime_context_module.get_runtime_context()
+    runtime_context_module.set_runtime_context(
+        global_config_path=global_config_path,
+        current_affair_uid=current_affair_uid,
+        current_affair_config_path=current_affair_config_path,
+    )
+    try:
+        yield
+    finally:
+        runtime_context_module.set_runtime_context(
+            global_config_path=previous_context.global_config_path,
+            current_affair_uid=previous_context.current_affair_uid,
+            current_affair_config_path=previous_context.current_affair_config_path,
+        )
 
 
 def _runtime_root(workspace_root: str | Path | None) -> Path:
@@ -138,6 +183,9 @@ def run_affair(
         raise AttributeError(f"事务模块缺少 execute(config_path) 入口: {module.__name__}")
 
     root = _resolve_workspace_root(workspace_root)
+    global_config_path = root / "config" / "config.json"
+    if not global_config_path.exists():
+        global_config_path = None
     temp_file_path: Path | None = None
 
     if config_path is not None:
@@ -153,10 +201,15 @@ def run_affair(
     execute_error: BaseException | None = None
     outputs: Any = []
     try:
-        try:
-            outputs = execute(resolved_config_path, workspace_root=root)
-        except TypeError:
-            outputs = execute(resolved_config_path)
+        with _set_runtime_context(
+            global_config_path=global_config_path,
+            current_affair_uid=affair_uid,
+            current_affair_config_path=resolved_config_path,
+        ):
+            try:
+                outputs = execute(resolved_config_path, workspace_root=root)
+            except TypeError:
+                outputs = execute(resolved_config_path)
     except BaseException as exc:  # noqa: BLE001
         execute_error = exc
         raise

@@ -19,6 +19,7 @@
 from __future__ import annotations
 
 import base64
+import importlib
 import json
 import mimetypes
 import os
@@ -27,7 +28,19 @@ from pathlib import Path
 from typing import Any, Dict, List, Literal, Optional
 
 def get_global_config_path() -> Optional[Path]:
-    """读取全局配置路径（本地实现）。"""
+    """读取全局配置路径。
+
+    优先使用运行时上下文注入的全局 config.json；若未注入，则回退到当前工作目录下的
+    `.autodokit/config.json`。
+    """
+
+    try:
+        runtime_context_module = importlib.import_module("autodoengine.utils.runtime_context")
+        ctx_path = runtime_context_module.get_global_config_path()
+        if ctx_path is not None:
+            return Path(ctx_path).resolve()
+    except Exception:
+        pass
 
     candidate = Path.cwd() / ".autodokit" / "config.json"
     return candidate if candidate.exists() else None
