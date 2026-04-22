@@ -944,6 +944,153 @@ def _ensure_cite_key(
     return updated_table, updated_record, cite_key
 
 
+def generate_reference_cite_key(
+    *,
+    first_author: str,
+    year: str,
+    title_raw: str,
+    clean_title: str = "",
+) -> str:
+    """生成参考文献的 cite_key。
+
+    Args:
+        first_author: 第一作者。
+        year: 年份字符串。
+        title_raw: 原始标题。
+        clean_title: 可选的清洗后标题；为空时自动清洗。
+
+    Returns:
+        生成后的 cite_key。
+    """
+
+    normalized_clean_title = _stringify(clean_title) or clean_title_text(_stringify(title_raw))
+    return build_cite_key(_stringify(first_author), _stringify(year), normalized_clean_title)
+
+
+def match_reference_citation_record(
+    table: pd.DataFrame,
+    *,
+    first_author: str,
+    year: str,
+    title_raw: str,
+    top_n: int = 5,
+) -> Dict[str, Any]:
+    """原子能力：按作者-年份-标题匹配参考文献记录。
+
+    Args:
+        table: 文献主表。
+        first_author: 第一作者。
+        year: 年份字符串。
+        title_raw: 原始标题。
+        top_n: 匹配候选上限。
+
+    Returns:
+        匹配结果字典。
+    """
+
+    working = table.copy()
+    matches = literature_match(
+        working,
+        first_author=_stringify(first_author),
+        year=int(year) if _stringify(year).isdigit() else None,
+        title=_stringify(title_raw),
+        top_n=max(int(top_n or 0), 1),
+    )
+    if not matches:
+        return {
+            "matched": False,
+            "record": {},
+            "match_score": 0.0,
+            "suspicious_mismatch": 0,
+        }
+
+    top_match = matches[0]
+    record = dict(top_match.get("row") or {})
+    match_score = float(top_match.get("score") or 0.0)
+    suspicious_mismatch = 1 if _is_suspicious_match(
+        reference_title=_stringify(title_raw),
+        reference_first_author=_stringify(first_author),
+        reference_year=_stringify(year),
+        matched_record=record,
+        match_score=match_score,
+    ) else 0
+    return {
+        "matched": True,
+        "record": record,
+        "match_score": match_score,
+        "suspicious_mismatch": int(suspicious_mismatch),
+    }
+
+
+def upsert_reference_citation_placeholder(
+    table: pd.DataFrame,
+    *,
+    first_author: str,
+    year: str,
+    title_raw: str,
+    source: str,
+    placeholder_reason: str,
+    placeholder_status: str = "pending",
+    placeholder_run_uid: str = "",
+    extra: Dict[str, Any] | None = None,
+    top_n: int = 5,
+) -> Tuple[pd.DataFrame, Dict[str, Any], str]:
+    """原子能力：插入或复用参考文献占位记录。"""
+
+    return _upsert_reference_placeholder(
+        table,
+        first_author=_stringify(first_author),
+        year=_stringify(year),
+        title_raw=_stringify(title_raw),
+        source=_stringify(source),
+        placeholder_reason=_stringify(placeholder_reason),
+        placeholder_status=_stringify(placeholder_status) or "pending",
+        placeholder_run_uid=_stringify(placeholder_run_uid),
+        extra=extra,
+        top_n=max(int(top_n or 0), 0),
+    )
+
+
+def writeback_reference_citation_record(
+    table: pd.DataFrame,
+    *,
+    record: Dict[str, Any],
+    overwrite: bool = False,
+) -> Tuple[pd.DataFrame, Dict[str, Any], str]:
+    """原子能力：把引文记录写回文献主表。"""
+
+    return literature_upsert(table=table, literature=dict(record or {}), overwrite=bool(overwrite))
+
+
+def ensure_reference_citation_cite_key(
+    table: pd.DataFrame,
+    *,
+    record: Dict[str, Any],
+    first_author: str,
+    year: str,
+    title_raw: str,
+) -> Tuple[pd.DataFrame, Dict[str, Any], str]:
+    """原子能力：确保引文记录存在 cite_key（必要时写回）。"""
+
+    cite_key = _stringify((record or {}).get("cite_key"))
+    if cite_key:
+        return table, dict(record or {}), cite_key
+
+    payload = dict(record or {})
+    payload["cite_key"] = generate_reference_cite_key(
+        first_author=_stringify(payload.get("first_author") or first_author),
+        year=_stringify(payload.get("year") or year),
+        title_raw=_stringify(payload.get("title") or title_raw),
+        clean_title=_stringify(payload.get("clean_title")),
+    )
+    updated_table, updated_record, _action = writeback_reference_citation_record(
+        table,
+        record=payload,
+        overwrite=False,
+    )
+    return updated_table, updated_record, _stringify(payload.get("cite_key"))
+
+
 def build_online_lookup_placeholder_fields() -> Dict[str, str]:
     """构造在线检索补全占位字段。
 
@@ -1245,11 +1392,11 @@ def process_reference_citation(
         title_norm = normalize_text_for_match(title_raw)
 
         working = table.copy()
-        matches = literature_match(
+        match_result = match_reference_citation_record(
             working,
             first_author=first_author,
-            year=int(year) if year.isdigit() else None,
-            title=title_raw,
+            year=year,
+            title_raw=title_raw,
             top_n=top_n,
         )
 
@@ -1260,16 +1407,10 @@ def process_reference_citation(
         top_match_score = 0.0
         matched_title = ""
         suspicious_mismatch = 0
-        if matches:
-            top_match_score = float(matches[0].get("score") or 0.0)
-            matched_record = dict(matches[0].get("row") or {})
-            suspicious_mismatch = 1 if _is_suspicious_match(
-                reference_title=title_raw,
-                reference_first_author=first_author,
-                reference_year=year,
-                matched_record=matched_record,
-                match_score=top_match_score,
-            ) else 0
+        if bool(match_result.get("matched")):
+            top_match_score = float(match_result.get("match_score") or 0.0)
+            matched_record = dict(match_result.get("record") or {})
+            suspicious_mismatch = int(match_result.get("suspicious_mismatch") or 0)
             if suspicious_mismatch:
                 extra = {
                     "reference_text": _stringify(reference_text),
@@ -1281,7 +1422,7 @@ def process_reference_citation(
                     "parse_failure_reason": _stringify(parse_result.get("parse_failure_reason")),
                     **build_online_lookup_placeholder_fields(),
                 }
-                working, record, action = _upsert_reference_placeholder(
+                working, record, action = upsert_reference_citation_placeholder(
                     working,
                     first_author=first_author,
                     year=year,
@@ -1294,9 +1435,9 @@ def process_reference_citation(
                     top_n=0,
                 )
                 matched_uid_literature = _stringify(record.get("uid_literature"))
-                working, record, matched_cite_key = _ensure_cite_key(
+                working, record, matched_cite_key = ensure_reference_citation_cite_key(
                     working,
-                    record,
+                    record=record,
                     first_author=first_author,
                     year=year,
                     title_raw=title_raw,
@@ -1306,9 +1447,9 @@ def process_reference_citation(
                 record = matched_record
                 matched_uid_literature = _stringify(record.get("uid_literature"))
                 matched_title = _stringify(record.get("title"))
-                working, record, matched_cite_key = _ensure_cite_key(
+                working, record, matched_cite_key = ensure_reference_citation_cite_key(
                     working,
-                    record,
+                    record=record,
                     first_author=first_author or _stringify(record.get("first_author")),
                     year=year or _stringify(record.get("year")),
                     title_raw=title_raw or _stringify(record.get("title")),
@@ -1324,7 +1465,7 @@ def process_reference_citation(
                 "parse_failure_reason": _stringify(parse_result.get("parse_failure_reason")),
                 **build_online_lookup_placeholder_fields(),
             }
-            working, record, action = _upsert_reference_placeholder(
+            working, record, action = upsert_reference_citation_placeholder(
                 working,
                 first_author=first_author,
                 year=year,
@@ -1337,9 +1478,9 @@ def process_reference_citation(
                 top_n=top_n,
             )
             matched_uid_literature = _stringify(record.get("uid_literature"))
-            working, record, matched_cite_key = _ensure_cite_key(
+            working, record, matched_cite_key = ensure_reference_citation_cite_key(
                 working,
-                record,
+                record=record,
                 first_author=first_author,
                 year=year,
                 title_raw=title_raw,

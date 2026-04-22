@@ -10,8 +10,13 @@ import pandas as pd
 
 from autodokit.tools.reference_citation_tools import (
     _extract_reference_line_details_from_text,
+    ensure_reference_citation_cite_key,
     extract_reference_lines_from_attachment,
+    generate_reference_cite_key,
+    match_reference_citation_record,
     process_reference_citation,
+    upsert_reference_citation_placeholder,
+    writeback_reference_citation_record,
 )
 from autodokit.tools.storage_backend import load_reference_main_table, persist_reference_main_table
 
@@ -218,3 +223,72 @@ def test_process_reference_citation_should_accept_integer_typed_history_columns(
     assert len(updated_table) == 1
     assert result["action"] == "exists"
     assert result["matched_cite_key"] == "wang-2024-digital_finance_review"
+
+
+def test_atomic_reference_tools_should_match_placeholder_writeback_and_generate_cite_key() -> None:
+    table = pd.DataFrame(
+        [
+            {
+                "uid_literature": "lit-001",
+                "title": "Digital Finance Review",
+                "first_author": "Wang",
+                "year": "2024",
+                "clean_title": "digital_finance_review",
+                "title_norm": "digital finance review",
+            }
+        ]
+    )
+
+    matched = match_reference_citation_record(
+        table,
+        first_author="Wang",
+        year="2024",
+        title_raw="Digital Finance Review",
+        top_n=3,
+    )
+    assert matched["matched"] is True
+    assert dict(matched["record"]).get("uid_literature") == "lit-001"
+
+    cite_key = generate_reference_cite_key(
+        first_author="Wang",
+        year="2024",
+        title_raw="Digital Finance Review",
+    )
+    assert cite_key == "wang-2024-digital_finance_review"
+
+    updated_table, updated_record, ensured_cite_key = ensure_reference_citation_cite_key(
+        table,
+        record=dict(matched["record"]),
+        first_author="Wang",
+        year="2024",
+        title_raw="Digital Finance Review",
+    )
+    assert ensured_cite_key == "wang-2024-digital_finance_review"
+    assert updated_record.get("cite_key") == "wang-2024-digital_finance_review"
+    assert len(updated_table) == 1
+
+
+def test_atomic_reference_tools_should_insert_placeholder_and_writeback() -> None:
+    table = pd.DataFrame()
+    updated_table, placeholder_record, action = upsert_reference_citation_placeholder(
+        table,
+        first_author="Zhang",
+        year="2025",
+        title_raw="Unresolved Reference",
+        source="placeholder_from_test",
+        placeholder_reason="unmatched",
+        top_n=0,
+    )
+    assert action == "inserted"
+    assert int(placeholder_record.get("is_placeholder") or 0) == 1
+
+    payload = dict(placeholder_record)
+    payload["online_lookup_status"] = "done"
+    written_table, written_record, write_action = writeback_reference_citation_record(
+        updated_table,
+        record=payload,
+        overwrite=True,
+    )
+    assert write_action in {"inserted", "updated", "exists"}
+    assert dict(written_record).get("online_lookup_status") == "done"
+    assert len(written_table) == 1

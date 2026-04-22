@@ -339,7 +339,7 @@ def local_reference_lookup_and_materialize(
     append_aok_log_event(
         event_type="REFERENCE_LIST_LOCAL_LOOKUP",
         project_root=resolved_workspace_root,
-        log_db_path=resolve_aok_log_db_path(project_root=resolved_workspace_root),
+            log_db_path=resolve_aok_log_db_path(workspace_root=resolved_workspace_root),
         enabled=True,
         handler_kind="local_script",
         handler_name="local_reference_lookup_and_materialize",

@@ -583,6 +583,12 @@ python scripts/manage_tex_dag.py --help
 - `batch_rewrite_obsidian_note_timestamps(note_paths=None, note_dir=None, target_timezone='Asia/Shanghai', ...)`
  - `build_cnki_result(...)`
  - `local_reference_lookup_and_materialize(...)`：本地参考文献清单检索与占位补录工具。
+- `match_reference_citation_record(...)`：原子能力，按作者/年份/标题在文献主表中匹配候选记录。
+- `upsert_reference_citation_placeholder(...)`：原子能力，插入或复用占位引文记录。
+- `writeback_reference_citation_record(...)`：原子能力，把单条引文记录写回文献主表。
+- `generate_reference_cite_key(...)`：原子能力，生成稳定 `cite_key`。
+- `ensure_reference_citation_cite_key(...)`：原子能力，确保记录具备 `cite_key`（必要时写回）。
+- `process_reference_citation(...)`：组合能力，内部串联“解析/匹配/占位/写回/生成引文”。
 - `run_online_retrieval_from_bib(...)`：按 Bib 批量触发在线检索四项任务的通用工具。
   用途：把一段参考文献清单文本解析为单条引文，逐条在本地 `content.db` 的 `literatures` 表中做匹配；未命中时插入占位条目并写回数据库。
 
@@ -616,7 +622,7 @@ python scripts/manage_tex_dag.py --help
   - `all_rows`：每条输入条目的处理详情数组（包含识别字段、匹配 UID、动作等）。
   - `summary`：质量汇总统计（命中数、占位数、写回行数等）。
 
-  说明：该工具复用 `autodokit.tools.reference_citation_tools` 的本地解析与匹配逻辑，默认不会调用在线检索；占位条目会带有 `online_lookup_status: pending` 以便后续在线补全。
+  说明：该工具复用 `autodokit.tools.reference_citation_tools` 的原子链路（匹配/占位/写回/生成引文）；默认不会调用在线检索；占位条目会带有 `online_lookup_status: pending` 以便后续在线补全。
 - `build_candidate_view_index(records, source_round=..., source_affair=...)`
 - `build_candidate_readable_view(index_table, literature_table, ...)`
 - `extract_review_candidates(readable_table)`
