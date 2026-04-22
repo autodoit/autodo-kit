@@ -262,6 +262,7 @@ def _build_discovered_rows_from_mappings(
 def execute(config_path: Path) -> List[Path]:
     raw_cfg = load_json_or_py(config_path)
     workspace_root = _resolve_workspace_root(config_path, raw_cfg)
+        # process_reference_citation 内部已按原子链路执行：匹配 -> 占位 -> 写回 -> cite_key 生成。
     legacy_output_dir = _resolve_output_dir(config_path, raw_cfg)
     output_dir = _build_task_instance_dir(workspace_root, "A090")
     content_db, db_input_key = resolve_content_db_config(

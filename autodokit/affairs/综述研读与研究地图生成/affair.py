@@ -1716,6 +1716,7 @@ def execute(config_path: Path) -> List[Path]:
                     "suspicious_mismatch": 0,
                 }
                 try:
+                    # process_reference_citation 内部已按原子链路执行：匹配 -> 占位 -> 写回 -> cite_key 生成。
                     literature_table, process_result = process_reference_citation(
                         literature_table,
                         line,

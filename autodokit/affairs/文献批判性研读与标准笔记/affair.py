@@ -196,6 +196,7 @@ def execute(config_path: Path) -> List[Path]:
         )
 
         try:
+                # process_reference_citation 内部已按原子链路执行：匹配 -> 占位 -> 写回 -> cite_key 生成。
             if deep_read_decision == "pdf_fallback_ready":
                 parse_asset = ensure_pdf_text_fallback_asset(
                     content_db=content_db,

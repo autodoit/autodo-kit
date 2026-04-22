@@ -1232,6 +1232,7 @@ def _prepare_review_assets(
                 "suspicious_mismatch": 0,
             }
             try:
+                # process_reference_citation 内部已按原子链路执行：匹配 -> 占位 -> 写回 -> cite_key 生成。
                 working_literature, process_result = process_reference_citation(
                     working_literature,
                     line,
