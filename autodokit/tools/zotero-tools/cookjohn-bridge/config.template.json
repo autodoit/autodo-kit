@@ -1,0 +1,7 @@
+{
+  "endpoint": "http://127.0.0.1:23120/mcp",
+  "timeout_seconds": 30,
+  "headers": {
+    "Content-Type": "application/json"
+  }
+}
