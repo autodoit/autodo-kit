@@ -1,15 +1,8 @@
 ﻿# API手册
 
-autodo-kit 对外公开的是“事务内容 + 事务工具 + 本地运行时 API”。默认由 autodo-kit 内置运行时执行事务；如安装 autodo-engine，可继续接入其高级调度能力。
+autodo-kit 对外公开的是“事务 API + 工具 API + 本地运行时 API”。默认由 autodo-kit 内置运行时执行事务；如安装 autodo-engine，可继续接入其高级调度能力。
 
-## 0. 全量索引与文档边界
-
-为避免“能力存在但手册里不容易定位”，本手册采用如下检索边界：
-
-1. 事务逐项详解（全量索引 + 每事务字段表 + 示例）以 `docs/AOK预置事务手册.md` 为准。
-2. 本文档聚焦“公开 API 契约与高频能力”，并补充关键模块的调用示例。
-3. 用户公开工具清单以 `autodokit.tools.list_user_tools()` 为真相源。
-4. 开发者工具清单以 `autodokit.tools.list_developer_tools()` 为真相源。
+本手册只收录可调用契约与高频入口，不承担用户手册式分类导航职责。逐项事务详解见 [AOK预置事务手册](AOK预置事务手册.md)，逐项工具清单以 `autodokit.tools.list_user_tools()` 与 `autodokit.tools.list_developer_tools()` 为准。
 
 推荐先执行：
 
