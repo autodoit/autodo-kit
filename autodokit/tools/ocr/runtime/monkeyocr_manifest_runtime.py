@@ -29,8 +29,7 @@ from autodokit.tools.ocr.classic.pdf_parse_asset_manager import (
     _select_existing_asset,
     build_normalized_structured_from_multimodal_result,
 )
-from autodokit.tools.ocr.monkeyocr.monkeyocr_windows_tools import parse_pdf_with_monkeyocr_windows, run_monkeyocr_windows_single_pdf
-from autodokit.tools.remote_monkeyocr import run_monkeyocr_remote
+from autodokit.tools.ocr.monkeyocr import run_monkeyocr_single_pdf
 
 
 MANIFEST_CSV_NAME = "parse_manifest.csv"
@@ -386,32 +385,16 @@ def _run_single_manifest_item(
     pdf_path = _resolve_pdf_path(content_db, literature_row)
     # 优先使用 uid_literature，避免由长 cite_key 导致 Windows 路径超长。
     output_name = _safe_stem(uid_literature or cite_key or pdf_path.stem)
-    # 如果配置了 remote_processing，则使用远程包装器
-    if isinstance(runtime_settings, dict) and runtime_settings.get("remote_processing") and runtime_settings.get("remote_processing").get("enabled"):
-        parse_result = run_monkeyocr_remote(
-            input_pdf=pdf_path,
-            output_dir=output_root,
-            runtime_settings=runtime_settings,
-            timeout=int(runtime_settings.get("remote_processing", {}).get("timeout", 3600)),
-            poll_interval=int(runtime_settings.get("remote_processing", {}).get("poll_interval", 10)),
-        )
-    else:
-        parse_result = parse_pdf_with_monkeyocr_windows(
-            pdf_path=pdf_path,
-            output_root=output_root,
-            output_name=output_name,
-            monkeyocr_root=str(runtime_settings.get("monkeyocr_root") or ""),
-            models_dir=str(runtime_settings.get("models_dir") or "") or None,
-            config_path=str(runtime_settings.get("config_path") or "") or None,
-            model_name=_stringify(runtime_settings.get("model_name")) or "MonkeyOCR-pro-1.2B",
-            device=_stringify(runtime_settings.get("device")) or "cuda",
-            gpu_visible_devices=_stringify(runtime_settings.get("gpu_visible_devices")) or "0",
-            ensure_runtime=_normalize_bool(runtime_settings.get("ensure_runtime"), True),
-            download_source=_stringify(runtime_settings.get("download_source")) or "huggingface",
-            pip_index_url=_stringify(runtime_settings.get("pip_index_url")) or None,
-            python_executable=str(runtime_settings.get("python_executable") or "") or None,
-            stream_output=False,
-        )
+    execution_mode = "remote" if (isinstance(runtime_settings, dict) and runtime_settings.get("remote_processing") and runtime_settings.get("remote_processing").get("enabled")) else "local"
+    parse_result = run_monkeyocr_single_pdf(
+        input_pdf=pdf_path,
+        output_dir=output_root,
+        runtime_settings=runtime_settings,
+        execution_mode=execution_mode,
+        timeout=int(runtime_settings.get("remote_processing", {}).get("timeout", 3600)),
+        poll_interval=int(runtime_settings.get("remote_processing", {}).get("poll_interval", 10)),
+        allow_local_fallback=True,
+    )
     asset_row = _register_parse_asset(
         content_db=content_db,
         parse_level=parse_level,

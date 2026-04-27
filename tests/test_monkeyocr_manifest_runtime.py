@@ -135,19 +135,9 @@ def test_run_parse_manifest_should_register_assets_without_gpu(monkeypatch, tmp_
 
     monkeypatch.setattr(
         module,
-        "parse_pdf_with_monkeyocr_windows",
-        lambda **kwargs: _fake_parse_result(Path(str(kwargs["output_root"])), str(kwargs["output_name"])),
+        "run_monkeyocr_single_pdf",
+        lambda **kwargs: _fake_parse_result(Path(str(kwargs["output_dir"])), Path(str(kwargs["input_pdf"])).stem),
     )
-    monkeypatch.setattr(
-        module,
-        "postprocess_aliyun_multimodal_parse_outputs",
-        lambda **kwargs: {
-            "llm_basic_cleanup_status": "ok",
-            "llm_structure_resolution_status": "ok",
-            "contamination_removed_block_count": 0,
-        },
-    )
-
     result = module.run_parse_manifest(
         content_db=content_db,
         source_df=pd.DataFrame([
@@ -206,8 +196,8 @@ def test_run_parse_manifest_should_report_gpu_lock_conflict_without_running(monk
     called = {"parse": 0}
     monkeypatch.setattr(
         module,
-        "parse_pdf_with_monkeyocr_windows",
-        lambda **kwargs: called.__setitem__("parse", called["parse"] + 1) or _fake_parse_result(Path(str(kwargs["output_root"])), str(kwargs["output_name"])),
+        "run_monkeyocr_single_pdf",
+        lambda **kwargs: called.__setitem__("parse", called["parse"] + 1) or _fake_parse_result(Path(str(kwargs["output_dir"])), Path(str(kwargs["input_pdf"])).stem),
     )
 
     result = module.run_parse_manifest(
