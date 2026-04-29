@@ -34,8 +34,8 @@ convert_zotero_rdf_to_a020_incremental_package(payload)
 测试说明
 - 推荐在项目虚拟环境下运行回归测试：
 ```
-cd C:\Users\Ethan\CoreFiles\ProjectsFile\AcademicResearch-auto-workflow
-.\.venv\Scripts\python.exe -m pytest tests/test_zotero_rdf_to_a020_incremental_import_tools.py -q
+cd /home/ethan/CoreFiles/ProjectsFile/AcademicResearch-auto-workflow
+python3 -m pytest tests/test_zotero_rdf_to_a020_incremental_import_tools.py -q
 ```
 
 注意事项

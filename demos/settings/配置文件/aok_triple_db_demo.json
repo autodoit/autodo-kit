@@ -1,8 +1,8 @@
 {
-  "project_root": "C:\\Users\\Ethan\\CoreFiles\\ProjectsFile\\autodo-kit\\demos\\output\\aok_triple_db_demo_workspace",
-  "bib_path": "C:\\Users\\Ethan\\CoreFiles\\ProjectsFile\\autodo-kit\\demos\\data\\题录元数据\\测试用文献.bib",
-  "rdf_files_root": "C:\\Users\\Ethan\\CoreFiles\\ProjectsFile\\autodo-kit\\demos\\data\\文献原文数据\\测试用文献\\files",
+  "project_root": "/home/ethan/CoreFiles/ProjectsFile/autodo-kit/demos/output/aok_triple_db_demo_workspace",
+  "bib_path": "/home/ethan/CoreFiles/ProjectsFile/autodo-kit/demos/data/题录元数据/测试用文献.bib",
+  "rdf_files_root": "/home/ethan/CoreFiles/ProjectsFile/autodo-kit/demos/data/文献原文数据/测试用文献/files",
   "max_bib_records": 3,
   "max_attachments": 6,
-  "output_dir": "C:\\Users\\Ethan\\CoreFiles\\ProjectsFile\\autodo-kit\\demos\\output\\aok_triple_db_demo_workspace\\outputs"
+  "output_dir": "/home/ethan/CoreFiles/ProjectsFile/autodo-kit/demos/output/aok_triple_db_demo_workspace/outputs"
 }

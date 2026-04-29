@@ -5,6 +5,8 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any, Dict, List
 
+from autodokit.path_compat import resolve_portable_path
+
 
 ANALYSIS_NOTE_SPECS: Dict[str, Dict[str, str]] = {
     "trajectory": {"title": "领域研究脉络", "relative_path": "knowledge/trajectories/领域研究脉络.md"},
@@ -34,16 +36,13 @@ def _coerce_bool(value: Any) -> bool:
 
 
 def resolve_analysis_note_paths(workspace_root: str | Path, raw_cfg: Dict[str, Any] | None = None) -> Dict[str, Path]:
-    workspace = Path(workspace_root).resolve()
+    workspace = resolve_portable_path(workspace_root, base=Path.cwd())
     configured = raw_cfg.get("analysis_note_paths") if isinstance(raw_cfg, dict) else {}
     results: Dict[str, Path] = {}
     for key, spec in ANALYSIS_NOTE_SPECS.items():
         raw_value = _stringify((configured or {}).get(key))
         if raw_value:
-            path = Path(raw_value)
-            if not path.is_absolute():
-                raise ValueError(f"analysis_note_paths.{key} 必须为绝对路径：{path}")
-            results[key] = path
+            results[key] = resolve_portable_path(raw_value, base=workspace)
         else:
             results[key] = workspace / spec["relative_path"]
     return results

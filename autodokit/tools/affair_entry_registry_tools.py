@@ -6,6 +6,7 @@ import json
 from pathlib import Path
 from typing import Any
 
+from autodokit.path_compat import resolve_portable_path
 from autodokit.tools.obsidian_note_timezone_tools import get_current_time_iso
 
 
@@ -40,14 +41,14 @@ def build_mainline_affair_entry_registry(
 ) -> dict[str, Any]:
     """构建主链事务入口注册表。"""
 
-    resolved_root = Path(workspace_root).expanduser().resolve()
+    resolved_root = resolve_portable_path(workspace_root, base=Path.cwd())
     records: list[dict[str, Any]] = []
     for node_code, base in MAINLINE_AFFAIR_ENTRY_MAP.items():
         record = dict(base)
         if node_inputs and node_code in node_inputs:
-            config_path = str(Path(str(node_inputs[node_code])).expanduser().resolve())
+            config_path = str(resolve_portable_path(str(node_inputs[node_code]), base=resolved_root))
         else:
-            config_path = str((resolved_root / "config" / "affairs_config" / f"{node_code}.json").resolve())
+            config_path = str(resolved_root / "config" / "affairs_config" / f"{node_code}.json")
         record.update({"node_code": node_code, "config_path": config_path})
         records.append(record)
 
@@ -69,7 +70,7 @@ def write_mainline_affair_entry_registry(
 ) -> Path:
     """写出主链事务入口注册表 JSON。"""
 
-    target = Path(output_path).expanduser().resolve()
+    target = resolve_portable_path(output_path, base=Path.cwd())
     payload = build_mainline_affair_entry_registry(
         workspace_root=workspace_root,
         node_inputs=node_inputs,
@@ -84,7 +85,8 @@ def resolve_mainline_affair_entry(node_code: str, registry: dict[str, Any] | str
     """从主链事务入口注册表中解析单个节点。"""
 
     if isinstance(registry, (str, Path)):
-        payload = json.loads(Path(registry).expanduser().resolve().read_text(encoding="utf-8-sig"))
+        registry_path = resolve_portable_path(registry, base=Path.cwd())
+        payload = json.loads(registry_path.read_text(encoding="utf-8-sig"))
     else:
         payload = dict(registry)
     for record in payload.get("records", []):

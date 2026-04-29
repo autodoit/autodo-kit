@@ -9,6 +9,8 @@ import sys
 import warnings
 from typing import Any
 
+from autodokit.path_compat import resolve_portable_path
+
 
 _TRUE_VALUES = {"1", "true", "yes", "y", "on", "是"}
 _FALSE_VALUES = {"0", "false", "no", "n", "off", "否"}
@@ -64,7 +66,7 @@ def _extract_commit_value(cfg: dict[str, Any], key: str) -> Any:
 def _resolve_workspace_root(config_path: Path, local_cfg: dict[str, Any]) -> Path:
     workspace_root = _to_text(local_cfg.get("workspace_root") or local_cfg.get("project_root"))
     if workspace_root:
-        return Path(workspace_root).expanduser().resolve()
+        return resolve_portable_path(workspace_root, base=config_path.parent)
     if len(config_path.parents) >= 3 and config_path.parent.name == "affairs_config":
         return config_path.parents[2].resolve()
     return config_path.parent.resolve()
@@ -72,7 +74,7 @@ def _resolve_workspace_root(config_path: Path, local_cfg: dict[str, Any]) -> Pat
 
 def _resolve_python_executable(raw_venv_path: str) -> Path:
     if raw_venv_path:
-        venv_path = Path(raw_venv_path).expanduser().resolve()
+        venv_path = resolve_portable_path(raw_venv_path, base=Path.cwd())
         if venv_path.is_file():
             return venv_path
         for candidate in (venv_path / "Scripts" / "python.exe", venv_path / "bin" / "python"):
@@ -90,7 +92,7 @@ def _resolve_template_workspace_root(local_cfg: dict[str, Any], global_cfg: dict
             stacklevel=3,
         )
         raise FileNotFoundError("未配置 A010 初始化模板根目录 template_root")
-    template_workspace_root = Path(template_root).expanduser().resolve()
+    template_workspace_root = resolve_portable_path(template_root, base=Path.cwd())
     if not template_workspace_root.exists():
         warnings.warn(
             f"A010 模板根目录不存在: {template_workspace_root}",
@@ -119,33 +121,36 @@ def _load_a020_seed(global_cfg: dict[str, Any]) -> tuple[list[str], list[str], s
     a020_config_path = _to_text(node_inputs.get("A020"))
     if not a020_config_path:
         return [], [], ""
-    payload = _read_json(Path(a020_config_path).expanduser().resolve())
+    payload = _read_json(resolve_portable_path(a020_config_path, base=Path.cwd()))
     raw_paths = payload.get("origin_bib_paths") or []
-    origin_bib_paths = [str(Path(str(item)).expanduser().resolve()).replace("\\", "/") for item in raw_paths if str(item).strip()]
+    origin_bib_paths = [str(resolve_portable_path(str(item), base=Path.cwd())).replace("\\", "/") for item in raw_paths if str(item).strip()]
     raw_roots = payload.get("origin_attachments_roots") or []
     if isinstance(raw_roots, str):
         raw_roots = [raw_roots]
     origin_attachments_roots = [
-        str(Path(str(item)).expanduser().resolve()).replace("\\", "/")
+        str(resolve_portable_path(str(item), base=Path.cwd())).replace("\\", "/")
         for item in raw_roots
         if str(item).strip()
     ]
     origin_attachments_root = _to_text(payload.get("origin_attachments_root"))
     if origin_attachments_root:
-        origin_attachments_root = str(Path(origin_attachments_root).expanduser().resolve()).replace("\\", "/")
+        origin_attachments_root = str(resolve_portable_path(origin_attachments_root, base=Path.cwd())).replace("\\", "/")
     return origin_bib_paths, origin_attachments_roots, origin_attachments_root
 
 
 def _build_command(config_path: Path, local_cfg: dict[str, Any], global_cfg: dict[str, Any]) -> list[str]:
     workspace_root = _resolve_workspace_root(config_path, local_cfg)
-    root_path = _to_text(global_cfg.get("root_path")) or str(workspace_root.parent)
+    raw_root_path = _to_text(global_cfg.get("root_path"))
+    root_path = str(resolve_portable_path(raw_root_path, base=workspace_root.parent)) if raw_root_path else str(workspace_root.parent)
     project_cfg = global_cfg.get("project") or {}
     project_name = _to_text(project_cfg.get("project_name")) or "示例项目"
     project_goal = _to_text(project_cfg.get("project_goal")) or "完成文献工程化主链运行与审计"
     workflow_name = _to_text(global_cfg.get("workflow_name"))
     llm_cfg = global_cfg.get("llm") or {}
-    llm_api_key_file = _to_text(llm_cfg.get("aliyun_api_key_file"))
-    venv_path = _to_text(global_cfg.get("venv_path"))
+    raw_llm_api_key_file = _to_text(llm_cfg.get("aliyun_api_key_file"))
+    llm_api_key_file = str(resolve_portable_path(raw_llm_api_key_file, base=workspace_root.parent)) if raw_llm_api_key_file else ""
+    raw_venv_path = _to_text(global_cfg.get("venv_path"))
+    venv_path = str(resolve_portable_path(raw_venv_path, base=workspace_root.parent)) if raw_venv_path else ""
     template_workspace_root = _resolve_template_workspace_root(local_cfg, global_cfg)
     template_root = str(template_workspace_root)
     origin_bib_paths, origin_attachments_roots, origin_attachments_root = _load_a020_seed(global_cfg)
@@ -192,7 +197,7 @@ def _collect_outputs(workspace_root: Path) -> list[Path]:
         global_cfg = _read_json(config_path)
         self_check_path = _to_text((global_cfg.get("bootstrap") or {}).get("self_check_report_path"))
         if self_check_path:
-            candidate = Path(self_check_path).expanduser().resolve()
+            candidate = resolve_portable_path(self_check_path, base=workspace_root)
             if candidate.exists():
                 outputs.append(candidate)
                 result_path = candidate.parent / "project_initialization_result.json"
@@ -206,7 +211,7 @@ def _collect_outputs(workspace_root: Path) -> list[Path]:
 def execute(config_path: Path) -> list[Path]:
     """执行 A010 技能脚本作为唯一初始化入口。"""
 
-    resolved_config_path = Path(config_path).expanduser().resolve()
+    resolved_config_path = resolve_portable_path(config_path, base=Path.cwd())
     local_cfg = _read_json(resolved_config_path)
     workspace_root = _resolve_workspace_root(resolved_config_path, local_cfg)
     global_cfg = _read_json(workspace_root / "config" / "config.json")

@@ -50,7 +50,7 @@ def render_skill(skill_path: str | Path, params: dict[str, Any]) -> dict[str, An
         FileNotFoundError: `skill_path` 指向的文件不存在时抛出。
 
     Examples:
-        >>> render_skill(r"D:/workspace/skills/demo/SKILL.md", {"topic": "测试"})
+        >>> render_skill("/home/ethan/workspace/skills/demo/SKILL.md", {"topic": "测试"})
         {"status": "PASS", ...}
     """
 
@@ -96,8 +96,8 @@ def execute(config_path: Path) -> list[Path]:
         FileNotFoundError: Skill 文件不存在时抛出。
 
     Examples:
-        >>> execute(Path(r"D:/workspace/configs/skill_render.json"))
-        [Path(r"D:/workspace/output/skill_render_result.json")]
+        >>> execute(Path("/home/ethan/workspace/configs/skill_render.json"))
+        [Path("/home/ethan/workspace/output/skill_render_result.json")]
     """
 
     raw_cfg = load_json_or_py(config_path)

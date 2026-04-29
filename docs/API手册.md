@@ -207,7 +207,7 @@ python -c "import autodokit.tools as t; print('user_tools=', len(t.list_user_too
 行为说明：
 
 - `inventory_only=True` 时只输出命中路径清单，不做写入。
-- 默认会排除 `.copilot`、`C:/Windows`、`C:/Program Files` 以及外部盘前缀，减少误改风险。
+- 默认会排除 `.copilot`；同时内置正则会自动跳过 Windows 系统目录（如 `<drive>:/Windows`、`<drive>:/Program Files`）与外部盘前缀，减少误改风险。
 - 工具会遍历 JSON、CSV、文本文件以及 SQLite 的文本列，匹配命中的旧绝对路径并按映射替换。
 - 对于不在映射前缀内的外部路径，默认保持不变。
 
@@ -217,15 +217,15 @@ python -c "import autodokit.tools as t; print('user_tools=', len(t.list_user_too
 from autodokit.tools import PathMapping, migrate_workspace_paths
 
 result = migrate_workspace_paths(
-  workspace_root=r"D:/Research/workspace",
+  workspace_root="/mnt/research/workspace",
   mappings=[
     PathMapping(
-      old_root=r"C:/Users/Ethan/CoreFiles/ProjectsFile/AcademicResearch-auto-workflow/workspace",
-      new_root=r"D:/Research/workspace",
+      old_root="/home/ethan/CoreFiles/ProjectsFile/AcademicResearch-auto-workflow/workspace",
+      new_root="/mnt/research/workspace",
     ),
     PathMapping(
-      old_root=r"C:/Users/Ethan/CoreFiles/ProjectsFile/AcademicResearch-auto-workflow",
-      new_root=r"D:/Research",
+      old_root="/home/ethan/CoreFiles/ProjectsFile/AcademicResearch-auto-workflow",
+      new_root="/mnt/research",
     ),
   ],
   inventory_only=True,
@@ -390,8 +390,8 @@ from pathlib import Path
 from autodokit.tools.pandoc_tex_word_converter import merge_latex_subfiles
 
 out_tex, logs = merge_latex_subfiles(
-  Path(r"D:/workspace/paper/main.tex"),
-  Path(r"D:/workspace/paper/main_merged.tex"),
+  Path("/home/ethan/workspace/paper/main.tex"),
+  Path("/home/ethan/workspace/paper/main_merged.tex"),
 )
 print(out_tex)
 print("log_count=", len(logs))
@@ -1232,7 +1232,7 @@ print(preview)
 from pathlib import Path
 from autodokit.affairs.Skill渲染.affair import execute
 
-outputs = execute(Path(r"D:/my_workspace/configs/skill_render.json").resolve())
+outputs = execute(Path("/home/ethan/my_workspace/configs/skill_render.json").resolve())
 print(outputs)
 ```
 
@@ -1506,7 +1506,7 @@ print(outputs)
 
 - 程序只读写物理表；SQLite 视图允许存在，但只用于人类查询、巡检与排查。
 - 任何名为 `view` 的下游产物，默认优先理解为 CSV 导出物、阶段快照或人类可读对象；若数据库内存在同名视图，也不应作为程序写入目标。
-- A010 初始化脚本 `C:\Users\Ethan\.copilot\skills\A010_项目初始化_v5\scripts\generate_config.py` 的自检重点，应改为确认“主链不向视图写入”，而不是要求 `content.db` 零视图；新版模板统一写 `workspace/tasks/`，并默认只生成 snapshot 计划等待人类确认。
+- A010 初始化脚本 `/home/ethan/.copilot/skills/A010_项目初始化_v5/scripts/generate_config.py` 的自检重点，应改为确认“主链不向视图写入”，而不是要求 `content.db` 零视图；新版模板统一写 `workspace/tasks/`，并默认只生成 snapshot 计划等待人类确认。
 - `review_read_pool_current_view`、`review_candidate_current_view`、`review_priority_current_view` 与中文阅读状态视图可继续保留为只读对象，不再视为需要从库中清除的异常残留。
 
 附件与标签关系补记：

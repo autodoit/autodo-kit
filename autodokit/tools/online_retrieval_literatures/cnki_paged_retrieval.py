@@ -115,12 +115,14 @@ def _find_edge_executable() -> str:
 
     candidates = [
         shutil.which("chrome"),
-        shutil.which("chrome.exe"),
         shutil.which("google-chrome"),
-        shutil.which("google-chrome.exe"),
-        r"C:\Program Files\Google\Chrome\Application\chrome.exe",
-        r"C:\Program Files (x86)\Google\Chrome\Application\chrome.exe",
-        str(Path.home() / "AppData" / "Local" / "Google" / "Chrome" / "Application" / "chrome.exe"),
+        shutil.which("google-chrome-stable"),
+        shutil.which("chromium"),
+        shutil.which("chromium-browser"),
+        "/usr/bin/google-chrome",
+        "/usr/bin/google-chrome-stable",
+        "/usr/bin/chromium",
+        "/usr/bin/chromium-browser",
     ]
     for candidate in candidates:
         if candidate and Path(candidate).exists():

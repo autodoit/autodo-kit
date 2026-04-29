@@ -33,10 +33,10 @@
 
 ```json
 {
-  "input_tex_file": "C:/work/paper/main.tex",
-  "output_docx_file": "C:/work/paper/output/paper.docx",
+  "input_tex_file": "/home/ethan/work/paper/main.tex",
+  "output_docx_file": "/home/ethan/work/paper/output/paper.docx",
   "merge_subfiles": true,
-  "resource_path": "C:/work/paper/templates/论文模板.dotx",
+  "resource_path": "/home/ethan/work/paper/templates/论文模板.dotx",
   "drop_tex_elements": ["封面", "致谢", "原创声明", "版权说明"],
   "toc": true
 }

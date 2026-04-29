@@ -551,7 +551,7 @@ def test_a075_human_seed_should_route_unique_cite_key() -> None:
             {
                 "uid_literature": "lit-001",
                 "cite_key": "wang-2024-a",
-                "pdf_path": "C:/tmp/a.pdf",
+                "pdf_path": "/tmp/a.pdf",
             }
         ]
     )
@@ -559,7 +559,7 @@ def test_a075_human_seed_should_route_unique_cite_key() -> None:
         [
             {
                 "uid_literature": "lit-001",
-                "storage_path": "C:/tmp/a.pdf",
+                "storage_path": "/tmp/a.pdf",
                 "is_primary": 1,
                 "attachment_name": "a.pdf",
             }
@@ -611,8 +611,8 @@ def test_a075_human_seed_should_report_ambiguous_cite_key() -> None:
     module = importlib.import_module("autodokit.affairs.非综述候选种子生成.affair")
     literatures_df = pd.DataFrame(
         [
-            {"uid_literature": "lit-001", "cite_key": "dup-key", "pdf_path": "C:/tmp/a.pdf"},
-            {"uid_literature": "lit-002", "cite_key": "dup-key", "pdf_path": "C:/tmp/b.pdf"},
+            {"uid_literature": "lit-001", "cite_key": "dup-key", "pdf_path": "/tmp/a.pdf"},
+            {"uid_literature": "lit-002", "cite_key": "dup-key", "pdf_path": "/tmp/b.pdf"},
         ]
     )
     attachments_df = pd.DataFrame()

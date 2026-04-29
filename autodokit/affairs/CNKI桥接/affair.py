@@ -24,7 +24,7 @@ def execute(config_path: Path) -> list[Path]:
         ValueError: `output_dir` 不是绝对路径。
 
     Examples:
-        >>> execute(Path("C:/work/tmp/cnki_task.json"))
+        >>> execute(Path("/home/ethan/work/tmp/cnki_task.json"))
     """
 
     raw_cfg = load_json_or_py(config_path)

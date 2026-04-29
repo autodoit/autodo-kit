@@ -9,6 +9,7 @@ import argparse
 import csv
 import json
 import sqlite3
+import re
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Sequence, Tuple
@@ -29,8 +30,8 @@ class PathMapping:
         ValueError: 当旧根或新根为空时抛出。
 
     Examples:
-        >>> PathMapping(old_root='C:/old/workspace', new_root='D:/new/workspace')
-        PathMapping(old_root='C:/old/workspace', new_root='D:/new/workspace')
+        >>> PathMapping(old_root='/old/workspace', new_root='/new/workspace')
+        PathMapping(old_root='/old/workspace', new_root='/new/workspace')
     """
 
     old_root: str
@@ -51,27 +52,30 @@ class MappingVariants:
     new_backward: str
 
 
-TEXT_EXTENSIONS = {".md", ".txt", ".jsonl", ".log"}
-DEFAULT_SCAN_DIRS = ("config", "steps", "knowledge", "views", "batches")
+TEXT_EXTENSIONS = {".md", ".txt", ".jsonl", ".log", ".py"}
+DEFAULT_SCAN_DIRS = ("config", "tasks", "steps", "knowledge", "views", "batches", "references")
 DEFAULT_SQLITE_PATHS = (
     "database/content/content.db",
+    "database/decision/decision.db",
     "database/logs/aok_log.db",
     "database/tasks/tasks.db",
 )
 DEFAULT_EXCLUDED_PREFIXES = (
-    "C:/Users/Ethan/.copilot",
-    "C:\\Users\\Ethan\\.copilot",
-    "C:/Windows",
-    "C:\\Windows",
-    "C:/Program Files",
-    "C:\\Program Files",
-    "D:/",
-    "D:\\",
+    str(Path.home() / ".copilot"),
+)
+
+DEFAULT_EXCLUDED_REGEX_PATTERNS = (
+    re.compile(r"^[A-Z]:[/\\]Windows", flags=re.IGNORECASE),
+    re.compile(r"^[A-Z]:[/\\]Program Files", flags=re.IGNORECASE),
+    re.compile(r"^[D-Z]:[/\\]", flags=re.IGNORECASE),
 )
 
 
 def _normalize_root(path_text: str) -> str:
-    return str(Path(path_text).expanduser().resolve()).rstrip("/\\")
+    raw = str(path_text).strip()
+    if re.match(r"^[A-Za-z]:[/\\]", raw) or raw.startswith("\\\\"):
+        return raw.rstrip("/\\")
+    return str(Path(raw).expanduser().resolve()).rstrip("/\\")
 
 
 def _build_variants(mapping: PathMapping) -> MappingVariants:
@@ -101,8 +105,70 @@ def _looks_like_path_text(value: str) -> bool:
     return "/" in value or "\\" in value
 
 
+def _normalize_mapped_path(path_text: str, item: MappingVariants, token: str) -> str | None:
+    normalized = path_text
+    if "\\\\" in token:
+        normalized = normalized.replace("\\\\", "/")
+    else:
+        normalized = normalized.replace("\\", "/")
+
+    if not _starts_with_ci(normalized, item.old_forward):
+        return None
+
+    suffix = normalized[len(item.old_forward) :]
+    return item.new_forward + suffix
+
+
+def _normalize_target_path(path_text: str, item: MappingVariants, token: str) -> str | None:
+    normalized = path_text
+    if "\\\\" in token:
+        normalized = normalized.replace("\\\\", "/")
+    else:
+        normalized = normalized.replace("\\", "/")
+
+    if not _starts_with_ci(normalized, item.new_forward):
+        return None
+
+    return normalized
+
+
+def _replace_embedded_paths(value: str, variants: Sequence[MappingVariants]) -> Tuple[str, int]:
+    updated = value
+    replaced = 0
+
+    for item in variants:
+        token_specs = (
+            (item.old_forward, "old"),
+            (item.old_backward, "old"),
+            (item.old_backward.replace("\\", "\\\\"), "old"),
+            (item.new_backward, "target"),
+            (item.new_backward.replace("\\", "\\\\"), "target"),
+        )
+        seen_tokens = set()
+        for token, kind in token_specs:
+            if token in seen_tokens:
+                continue
+            seen_tokens.add(token)
+            pattern = re.compile(re.escape(token) + r"[^\"'\s,\]\}\)]*")
+
+            def _repl(match: re.Match[str]) -> str:
+                nonlocal replaced
+                if kind == "target":
+                    mapped = _normalize_target_path(match.group(0), item, token)
+                else:
+                    mapped = _normalize_mapped_path(match.group(0), item, token)
+                if mapped is None:
+                    return match.group(0)
+                replaced += 1
+                return mapped
+
+            updated = pattern.sub(_repl, updated)
+
+    return updated, replaced
+
+
 def _replace_prefix(value: str, variants: Sequence[MappingVariants], excluded_prefixes: Sequence[str]) -> Tuple[str, bool, str]:
-    """按映射规则替换字符串前缀。
+    """按映射规则替换字符串中的路径。
 
     Args:
         value: 待替换字符串。
@@ -116,7 +182,7 @@ def _replace_prefix(value: str, variants: Sequence[MappingVariants], excluded_pr
         None.
 
     Examples:
-        >>> v, changed, _ = _replace_prefix('C:/old/workspace/a.txt', [MappingVariants('C:/old/workspace', 'C:\\\\old\\\\workspace', 'D:/new/workspace', 'D:\\\\new\\\\workspace')], [])
+        >>> v, changed, _ = _replace_prefix('/old/workspace/a.txt', [MappingVariants('/old/workspace', '\\\\old\\\\workspace', '/new/workspace', '\\\\new\\\\workspace')], [])
         >>> changed
         True
     """
@@ -128,13 +194,34 @@ def _replace_prefix(value: str, variants: Sequence[MappingVariants], excluded_pr
         if prefix and _starts_with_ci(value, prefix):
             return value, False, "excluded"
 
+    for pattern in DEFAULT_EXCLUDED_REGEX_PATTERNS:
+        if pattern.match(value):
+            return value, False, "excluded"
+
     for item in variants:
         if _starts_with_ci(value, item.old_forward):
-            suffix = value[len(item.old_forward) :]
+            suffix = value[len(item.old_forward) :].replace("\\", "/")
             return item.new_forward + suffix, True, "mapped"
         if _starts_with_ci(value, item.old_backward):
-            suffix = value[len(item.old_backward) :]
-            return item.new_backward + suffix, True, "mapped"
+            normalized = value.replace("\\", "/")
+            suffix = normalized[len(item.old_forward) :]
+            return item.new_forward + suffix, True, "mapped"
+        escaped_old_backward = item.old_backward.replace("\\", "\\\\")
+        if escaped_old_backward != item.old_backward and _starts_with_ci(value, escaped_old_backward):
+            normalized = value.replace("\\\\", "/")
+            suffix = normalized[len(item.old_forward) :]
+            return item.new_forward + suffix, True, "mapped"
+        if _starts_with_ci(value, item.new_backward):
+            normalized = value.replace("\\", "/")
+            return normalized, True, "normalized"
+        escaped_new_backward = item.new_backward.replace("\\", "\\\\")
+        if escaped_new_backward != item.new_backward and _starts_with_ci(value, escaped_new_backward):
+            normalized = value.replace("\\\\", "/")
+            return normalized, True, "normalized"
+
+    updated, replaced = _replace_embedded_paths(value, variants)
+    if replaced:
+        return updated, True, "mapped"
 
     return value, False, "not-mapped"
 
@@ -239,25 +326,15 @@ def _rewrite_csv_file(path: Path, variants: Sequence[MappingVariants], excluded_
     }
 
 
-def _rewrite_text_file(path: Path, variants: Sequence[MappingVariants], dry_run: bool) -> Dict[str, Any]:
+def _rewrite_text_file(path: Path, variants: Sequence[MappingVariants], excluded_prefixes: Sequence[str], dry_run: bool) -> Dict[str, Any]:
     try:
         text = path.read_text(encoding="utf-8")
     except Exception as exc:
         return {"file": str(path), "type": "text", "changed": False, "error": str(exc)}
 
-    replaced = 0
-    updated = text
-    for item in variants:
-        if item.old_forward in updated:
-            count = updated.count(item.old_forward)
-            updated = updated.replace(item.old_forward, item.new_forward)
-            replaced += count
-        if item.old_backward in updated:
-            count = updated.count(item.old_backward)
-            updated = updated.replace(item.old_backward, item.new_backward)
-            replaced += count
+    updated, changed, reason = _replace_prefix(text, variants, excluded_prefixes)
+    replaced = 1 if changed else 0
 
-    changed = updated != text
     if changed and not dry_run:
         path.write_text(updated, encoding="utf-8")
 
@@ -266,6 +343,7 @@ def _rewrite_text_file(path: Path, variants: Sequence[MappingVariants], dry_run:
         "type": "text",
         "changed": changed,
         "replaced_values": replaced,
+        "excluded_values": 1 if reason == "excluded" else 0,
         "path_hits": [line for line in text.splitlines() if _looks_like_path_text(line)],
     }
 
@@ -290,6 +368,7 @@ def _rewrite_sqlite_file(path: Path, variants: Sequence[MappingVariants], exclud
     updated_cells = 0
     touched_columns: Dict[str, int] = {}
     path_hits: List[Dict[str, Any]] = []
+    skipped_columns: List[Dict[str, str]] = []
 
     try:
         conn = sqlite3.connect(str(path))
@@ -302,19 +381,23 @@ def _rewrite_sqlite_file(path: Path, variants: Sequence[MappingVariants], exclud
         for table_name, column_name in _iter_sqlite_text_columns(conn):
             escaped_table = table_name.replace('"', '""')
             escaped_col = column_name.replace('"', '""')
-            query = f'SELECT rowid, "{escaped_col}" AS value FROM "{escaped_table}" WHERE "{escaped_col}" IS NOT NULL'
-            rows = conn.execute(query).fetchall()
+            query = f'SELECT rowid AS "__path_migration_rowid__", "{escaped_col}" AS value FROM "{escaped_table}" WHERE "{escaped_col}" IS NOT NULL'
+            try:
+                rows = conn.execute(query).fetchall()
+            except sqlite3.OperationalError as exc:
+                skipped_columns.append({"table": table_name, "column": column_name, "error": str(exc)})
+                continue
             for row in rows:
                 raw_value = row["value"]
                 if not isinstance(raw_value, str):
                     continue
                 if _looks_like_path_text(raw_value):
-                    path_hits.append({"table": table_name, "column": column_name, "rowid": row["rowid"], "value": raw_value})
+                    path_hits.append({"table": table_name, "column": column_name, "rowid": row["__path_migration_rowid__"], "value": raw_value})
                 new_value, changed, reason = _replace_prefix(raw_value, variants, excluded_prefixes)
                 if not changed:
                     continue
                 update_sql = f'UPDATE "{escaped_table}" SET "{escaped_col}" = ? WHERE rowid = ?'
-                conn.execute(update_sql, (new_value, row["rowid"]))
+                conn.execute(update_sql, (new_value, row["__path_migration_rowid__"]))
                 updated_cells += 1
                 key = f"{table_name}.{column_name}"
                 touched_columns[key] = touched_columns.get(key, 0) + 1
@@ -334,6 +417,7 @@ def _rewrite_sqlite_file(path: Path, variants: Sequence[MappingVariants], exclud
         "changed": updated_cells > 0,
         "updated_cells": updated_cells,
         "touched_columns": touched_columns,
+        "skipped_columns": skipped_columns,
         "path_hits": path_hits,
     }
 
@@ -367,8 +451,8 @@ def migrate_workspace_paths(
 
     Examples:
         >>> result = migrate_workspace_paths(
-        ...     workspace_root='C:/repo/workspace',
-        ...     mappings=[PathMapping('C:/repo/workspace', 'D:/repo/workspace')],
+        ...     workspace_root='/repo/workspace',
+        ...     mappings=[PathMapping('/repo/workspace', '/mnt/data/workspace')],
         ...     dry_run=True,
         ... )
         >>> isinstance(result, dict)
@@ -393,7 +477,7 @@ def migrate_workspace_paths(
         elif suffix == ".csv":
             file_reports.append(_rewrite_csv_file(file_path, variants, normalized_excluded, dry_run))
         elif suffix in TEXT_EXTENSIONS:
-            file_reports.append(_rewrite_text_file(file_path, variants, dry_run))
+            file_reports.append(_rewrite_text_file(file_path, variants, normalized_excluded, dry_run))
 
     db_reports: List[Dict[str, Any]] = []
     for rel_db in sqlite_rel_paths:

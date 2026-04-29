@@ -12,7 +12,7 @@ def test_extract_pdf_elements_from_structured_data_should_flatten_sections() -> 
 
     structured = {
         "schema": "aok.pdf_structured.v2",
-        "source": {"pdf_name": "sample.pdf", "pdf_abs_path": "D:/sample.pdf"},
+        "source": {"pdf_name": "sample.pdf", "pdf_abs_path": "/tmp/sample.pdf"},
         "capabilities": {"images": {"enabled": True}, "references": {"enabled": True}},
         "layout": {
             "parse_error": None,
@@ -29,7 +29,7 @@ def test_extract_pdf_elements_from_structured_data_should_flatten_sections() -> 
             {
                 "page_index": 1,
                 "page_number": 2,
-                "image_path": "D:/artifacts/p2_1.png",
+                "image_path": "/tmp/artifacts/p2_1.png",
                 "xref": 12,
             }
         ],
@@ -63,7 +63,7 @@ def test_extract_pdf_elements_from_structured_file_should_write_output(tmp_path:
         """
 {
   "schema": "aok.pdf_structured.v2",
-  "source": {"pdf_name": "sample.pdf", "pdf_abs_path": "D:/sample.pdf"},
+    "source": {"pdf_name": "sample.pdf", "pdf_abs_path": "/tmp/sample.pdf"},
   "layout": {"elements": []},
   "images": [],
   "references": [

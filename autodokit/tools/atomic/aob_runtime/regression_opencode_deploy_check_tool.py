@@ -8,7 +8,7 @@
 
 Examples:
     在仓库根目录执行：
-        python scripts/aob_tools/regression_opencode_deploy_check.py --target-root C:\\temp
+    python scripts/aob_tools/regression_opencode_deploy_check.py --target-root /tmp
 """
 
 from __future__ import annotations

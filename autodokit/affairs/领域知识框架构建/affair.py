@@ -33,7 +33,7 @@ def execute(config_path: Path) -> List[Path]:
         ValueError: 当 workspace_root 不是绝对路径时抛出。
 
     Examples:
-        >>> execute(Path("C:/repo/workspace/config/affairs_config/A130.json"))
+        >>> execute(Path("/home/ethan/repo/workspace/config/affairs_config/A130.json"))
     """
 
     raw_cfg = load_json_or_py(config_path)

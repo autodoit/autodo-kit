@@ -1,8 +1,8 @@
 {
-  "workspace_root": "C:\\Users\\Ethan\\CoreFiles\\ProjectsFile\\autodo-kit\\demos",
+  "workspace_root": "/home/ethan/CoreFiles/ProjectsFile/autodo-kit/demos",
   "run": [
     "workflows/workflow_20260306/workflow.json"
   ],
   "skip": [],
-  "secrets_file": "C:\\Users\\Ethan\\CoreFiles\\ProjectsFile\\autodo-kit\\.github\\config\\bailian-api-key.txt"
+  "secrets_file": "/home/ethan/CoreFiles/ProjectsFile/autodo-kit/.github/config/bailian-api-key.txt"
 }

@@ -24,7 +24,7 @@ Examples:
     >>> from pathlib import Path
     >>> # 说明：此处仅展示调用方式；具体配置由调度器写入 .tmp/*.json
     >>> # from autodokit.affairs.清洗bibtex文件 import execute
-    >>> # execute(Path(r"C:\\workspace\\.tmp\\affair_config.json"))
+    >>> # execute(Path("/home/ethan/workspace/.tmp/affair_config.json"))
 """
 
 from __future__ import annotations

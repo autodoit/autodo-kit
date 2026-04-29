@@ -899,17 +899,19 @@ def _find_edge_executable() -> str:
 
     candidates = [
         shutil.which("msedge"),
-        shutil.which("msedge.exe"),
-        r"C:\Program Files\Microsoft\Edge\Application\msedge.exe",
-        r"C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe",
-        str(Path.home() / "AppData" / "Local" / "Microsoft" / "Edge" / "Application" / "msedge.exe"),
+        shutil.which("microsoft-edge"),
+        shutil.which("microsoft-edge-stable"),
         shutil.which("chrome"),
-        shutil.which("chrome.exe"),
         shutil.which("google-chrome"),
-        shutil.which("google-chrome.exe"),
-        r"C:\Program Files\Google\Chrome\Application\chrome.exe",
-        r"C:\Program Files (x86)\Google\Chrome\Application\chrome.exe",
-        str(Path.home() / "AppData" / "Local" / "Google" / "Chrome" / "Application" / "chrome.exe"),
+        shutil.which("google-chrome-stable"),
+        shutil.which("chromium"),
+        shutil.which("chromium-browser"),
+        "/usr/bin/msedge",
+        "/usr/bin/microsoft-edge",
+        "/usr/bin/google-chrome",
+        "/usr/bin/google-chrome-stable",
+        "/usr/bin/chromium",
+        "/usr/bin/chromium-browser",
     ]
     for candidate in candidates:
         if candidate and Path(candidate).exists():

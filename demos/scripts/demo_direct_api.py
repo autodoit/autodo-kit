@@ -22,7 +22,7 @@ def build_demo_workspace_root() -> Path:
         'demos'
     """
 
-    workspace_root = Path(r"C:\Users\Ethan\CoreFiles\ProjectsFile\autodo-kit\demos")
+    workspace_root = Path("/home/ethan/CoreFiles/ProjectsFile/autodo-kit/demos")
     if not workspace_root.exists():
         raise FileNotFoundError(f"未找到 demos 工作区目录：{workspace_root}")
     return workspace_root

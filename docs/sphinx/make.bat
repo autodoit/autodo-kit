@@ -1,7 +1,7 @@
 @ECHO OFF
 setlocal
 
-set SPHINXBUILD=C:/Users/Ethan/CoreFiles/ProjectsFile/autodo-kit/.venv/Scripts/python.exe -m sphinx
+set SPHINXBUILD=python -m sphinx
 set SOURCEDIR=docs/sphinx
 set BUILDDIR=docs/sphinx/_build
 

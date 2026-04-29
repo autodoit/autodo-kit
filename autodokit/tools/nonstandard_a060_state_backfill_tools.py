@@ -255,7 +255,7 @@ def backfill_a060_state_from_parse_assets(payload: dict[str, Any]) -> dict[str, 
 
     Examples:
         >>> backfill_a060_state_from_parse_assets({
-        ...   "content_db": "C:/repo/workspace/database/content/content.db",
+        ...   "content_db": "/home/ethan/repo/workspace/database/content/content.db",
         ...   "mode": "preview"
         ... })
     """

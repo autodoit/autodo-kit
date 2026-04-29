@@ -9,6 +9,7 @@ from typing import Any, Dict, Iterable, List
 
 import pandas as pd
 
+from autodokit.path_compat import resolve_portable_path
 from autodokit.tools.atomic.log_aok import append_aok_log_event, resolve_aok_log_db_path
 from autodokit.tools.bibliodb import build_cite_key, clean_title_text, literature_insert_placeholder, literature_match, parse_reference_text
 from autodokit.tools.bibliodb_sqlite import load_literatures_df
@@ -182,7 +183,11 @@ def local_reference_lookup_and_materialize(
 
     resolved_content_db_path = resolve_content_db_path(content_db_path)
     init_content_db(resolved_content_db_path)
-    resolved_workspace_root = Path(workspace_root).resolve() if workspace_root else infer_workspace_root_from_content_db(resolved_content_db_path)
+    resolved_workspace_root = (
+        resolve_portable_path(workspace_root, base=Path.cwd())
+        if workspace_root
+        else infer_workspace_root_from_content_db(resolved_content_db_path)
+    )
 
     reference_rows = _split_reference_list_text(reference_list_text)
     if not reference_rows:

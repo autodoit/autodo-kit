@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import shutil
 from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any
@@ -335,12 +336,17 @@ class CnkiPlaywrightRuntime:
         if self.config.channel:
             attempts.append({"channel": self.config.channel, "executable_path": None})
         chrome_candidates = [
-            r"C:\Program Files\Google\Chrome\Application\chrome.exe",
-            r"C:\Program Files (x86)\Google\Chrome\Application\chrome.exe",
-            str(Path.home() / "AppData" / "Local" / "Google" / "Chrome" / "Application" / "chrome.exe"),
+            shutil.which("google-chrome"),
+            shutil.which("google-chrome-stable"),
+            shutil.which("chromium"),
+            shutil.which("chromium-browser"),
+            "/usr/bin/google-chrome",
+            "/usr/bin/google-chrome-stable",
+            "/usr/bin/chromium",
+            "/usr/bin/chromium-browser",
         ]
         for candidate in chrome_candidates:
-            if Path(candidate).exists():
+            if candidate and Path(candidate).exists():
                 attempts.append({"channel": None, "executable_path": candidate})
         attempts.append({"channel": None, "executable_path": None})
         unique_attempts: list[dict[str, str | None]] = []

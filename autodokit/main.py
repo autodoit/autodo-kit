@@ -9,6 +9,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
+from autodokit.path_compat import resolve_portable_path
 from autodokit.tools import load_json_file, resolve_config_path, resolve_workspace_root, summarize_workflow
 
 
@@ -28,9 +29,7 @@ def _resolve_run_items(config: dict[str, Any], workspace_root: Path) -> tuple[li
     missing_workflows: list[str] = []
 
     for item in run_items:
-        candidate = Path(item)
-        workflow_path = candidate if candidate.is_absolute() else (workspace_root / candidate)
-        workflow_path = workflow_path.resolve()
+        workflow_path = resolve_portable_path(item, base=workspace_root)
         if not workflow_path.exists():
             missing_workflows.append(str(workflow_path))
             continue
@@ -88,7 +87,7 @@ def run(
         "execution_result_count": 0,
         "parallel": parallel,
         "max_workers": max_workers,
-        "log_dir": str(Path(log_dir).resolve()) if log_dir else "",
+        "log_dir": str(resolve_portable_path(log_dir, base=workspace_root)) if log_dir else "",
         "engine": "autodokit.main.run",
     }
 

@@ -18,7 +18,7 @@ def build_demo_workspace_root() -> Path:
         FileNotFoundError: 当 demos 目录不存在时抛出。
     """
 
-    workspace_root = Path(r"C:\Users\Ethan\CoreFiles\ProjectsFile\autodo-kit\demos")
+    workspace_root = Path("/home/ethan/CoreFiles/ProjectsFile/autodo-kit/demos")
     if not workspace_root.exists():
         raise FileNotFoundError(f"未找到 demos 工作区目录：{workspace_root}")
     return workspace_root
@@ -37,7 +37,7 @@ def build_config_path(filename: str) -> Path:
         FileNotFoundError: 当配置文件不存在时抛出。
     """
 
-    config_path = Path(r"C:\Users\Ethan\CoreFiles\ProjectsFile\autodo-kit\demos\settings\配置文件") / filename
+    config_path = Path("/home/ethan/CoreFiles/ProjectsFile/autodo-kit/demos/settings/配置文件") / filename
     if not config_path.exists():
         raise FileNotFoundError(f"未找到 config_path 模式示例配置文件：{config_path}")
     return config_path

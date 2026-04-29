@@ -69,7 +69,7 @@ def test_placeholder_and_match_and_pdf_status_should_work() -> None:
     assert matches
     uid = matches[0]["uid_literature"]
 
-    table, updated = update_pdf_status(table=table, uid=uid, has_pdf=1, pdf_path="D:/pdfs/a.pdf")
+    table, updated = update_pdf_status(table=table, uid=uid, has_pdf=1, pdf_path="/tmp/pdfs/a.pdf")
     assert int(updated["has_fulltext"]) == 1
     assert str(updated["primary_attachment_name"]) == "a.pdf"
 
@@ -126,7 +126,7 @@ def test_literature_attach_file_should_sync_primary_attachment() -> None:
         literatures,
         attachments,
         uid_literature=record["uid_literature"],
-        attachment_name="D:/papers/a-paper.pdf",
+        attachment_name="/tmp/papers/a-paper.pdf",
         attachment_type="fulltext",
         is_primary=1,
     )

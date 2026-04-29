@@ -32,8 +32,8 @@ def _resolve_to_abs(root_path: Path, path_text: str | None, *, field_name: str) 
         ValueError: 路径类型非法或为空白字符串。
 
     Examples:
-        >>> _resolve_to_abs(Path("C:/repo"), "docs/a.docx", field_name="input")
-        'C:/repo/docs/a.docx'
+        >>> _resolve_to_abs(Path("/home/ethan/repo"), "docs/a.docx", field_name="input")
+        '/home/ethan/repo/docs/a.docx'
     """
 
     if path_text is None:
@@ -61,8 +61,8 @@ def _build_affair_payload(config: dict[str, Any]) -> dict[str, Any]:
         ValueError: 必填字段缺失。
 
     Examples:
-        >>> _build_affair_payload({"root_path": "C:/repo", "input_word_file": "a.docx"})
-        {'input_word_file': 'C:/repo/a.docx', ...}
+        >>> _build_affair_payload({"root_path": "/home/ethan/repo", "input_word_file": "a.docx"})
+        {'input_word_file': '/home/ethan/repo/a.docx', ...}
     """
 
     root_path = Path(config.get("root_path") or Path(__file__).resolve().parent).resolve()

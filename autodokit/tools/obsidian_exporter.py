@@ -327,9 +327,9 @@ def export_obsidian_note_with_links(
     Examples:
         >>> from pathlib import Path
         >>> result = export_obsidian_note_with_links(
-        ...     vault_root=Path("C:/Vault"),
-        ...     main_note_file=Path("C:/Vault/Projects/周会.md"),
-        ...     output_dir=Path("C:/Export/周会包"),
+        ...     vault_root=Path("/home/ethan/Vault"),
+        ...     main_note_file=Path("/home/ethan/Vault/Projects/周会.md"),
+        ...     output_dir=Path("/home/ethan/Export/周会包"),
         ...     dry_run=True,
         ...     overwrite=False,
         ...     fail_on_missing=False,

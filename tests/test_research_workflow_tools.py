@@ -116,7 +116,7 @@ def test_extract_review_state_from_attachment_should_reuse_tool_pipeline(monkeyp
     def _fake_extract_reference_lines_from_attachment(*args, **kwargs):
         _ = args, kwargs
         return {
-            "attachment_path": "C:/tmp/demo.pdf",
+            "attachment_path": "/tmp/demo.pdf",
             "attachment_type": "pdf",
             "extract_status": "ok",
             "extract_method": "pypdf",
@@ -132,8 +132,8 @@ def test_extract_review_state_from_attachment_should_reuse_tool_pipeline(monkeyp
     )
 
     state = extract_review_state_from_attachment(
-        "C:/tmp/demo.pdf",
-        workspace_root="C:/workspace",
+        "/tmp/demo.pdf",
+        workspace_root="/tmp/workspace",
         uid_literature="lit-001",
         cite_key="wang-2024-review",
         title="Digital Service Review",

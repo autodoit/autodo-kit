@@ -14,7 +14,7 @@ Returns:
 Examples:
     >>> from pathlib import Path
     >>> from autodokit.affairs.单篇粗读.affair import execute
-    >>> execute(Path(r"D:/workspace/configs/single_rough_reading.json"))
+    >>> execute(Path("/home/ethan/workspace/configs/single_rough_reading.json"))
 """
 
 from __future__ import annotations
@@ -53,7 +53,7 @@ class RoughReadingConfig:
 
     Examples:
         >>> RoughReadingConfig(
-        ...     output_dir="D:/workspace/output",
+        ...     output_dir="/home/ethan/workspace/output",
         ...     uid="A001"
         ... )
     """

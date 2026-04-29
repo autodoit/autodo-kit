@@ -106,13 +106,13 @@ Skill frontmatter 语义字段：
 python tools/aoc.py validate --input libs
 
 # 编译到 OpenCode
-python tools/aoc.py compile --input libs --engine opencode --output-dir D:\DemoProject
+python tools/aoc.py compile --input libs --engine opencode --output-dir /home/ethan/DemoProject
 
 # 编译到 Claude
-python tools/aoc.py compile --input libs --engine claude --output-dir D:\DemoProject
+python tools/aoc.py compile --input libs --engine claude --output-dir /home/ethan/DemoProject
 
 # 编译到 Copilot
-python tools/aoc.py compile --input libs --engine copilot --output-dir D:\DemoProject
+python tools/aoc.py compile --input libs --engine copilot --output-dir /home/ethan/DemoProject
 ```
 
 ## 5. 与同步/部署的关系

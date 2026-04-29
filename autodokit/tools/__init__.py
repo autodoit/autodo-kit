@@ -16,8 +16,10 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable
 
+from autodokit.path_compat import resolve_portable_path
+
 def load_json_or_py(config_path: str | Path) -> Any:
-    config_path = Path(config_path)
+    config_path = resolve_portable_path(config_path, base=Path.cwd())
     if config_path.suffix.lower() == ".json":
         return json.loads(config_path.read_text(encoding="utf-8-sig"))
     if config_path.suffix.lower() == ".py":
@@ -32,7 +34,7 @@ def load_json_or_py(config_path: str | Path) -> Any:
 
 
 def find_repo_root(path: str | Path | None = None) -> Path:
-    current = Path(path or ".").resolve()
+    current = resolve_portable_path(path or ".", base=Path.cwd())
     for candidate in [current, *current.parents]:
         if (candidate / ".git").exists() or (candidate / "pyproject.toml").exists():
             return candidate
@@ -40,8 +42,7 @@ def find_repo_root(path: str | Path | None = None) -> Path:
 
 
 def resolve_path_from_base(base: str | Path, raw_path: str | Path) -> Path:
-    raw = Path(raw_path)
-    return raw if raw.is_absolute() else (Path(base).resolve() / raw)
+    return resolve_portable_path(raw_path, base=base)
 
 
 def _looks_like_path(key: str, value: str) -> bool:
@@ -72,11 +73,12 @@ def resolve_path_with_workspace_root(workspace_root: str | Path, raw_path: str |
 
 
 def resolve_paths_to_absolute(config: dict[str, Any], workspace_root: str | Path) -> dict[str, Any]:
-    return _resolve_value_to_absolute(dict(config), Path(workspace_root).resolve())
+    resolved_workspace = resolve_portable_path(workspace_root, base=Path.cwd())
+    return _resolve_value_to_absolute(dict(config), resolved_workspace)
 
 
 def resolve_workflow_config_path(path: str | Path) -> Path:
-    return Path(path).expanduser().resolve()
+    return resolve_portable_path(path, base=Path.cwd())
 
 
 def build_adjacency_matrix_df(*args: Any, **kwargs: Any) -> Any:
@@ -153,17 +155,17 @@ def load_json_file(path: str | Path) -> Any:
 def resolve_config_path(path: str | Path | None = None) -> Path:
     if path is None:
         raise ValueError("config_path 不能为空")
-    return Path(path).expanduser().resolve()
+    return resolve_portable_path(path, base=Path.cwd())
 
 def resolve_workspace_root(config_file: str | Path | None = None, config: dict[str, Any] | None = None) -> Path:
     if config and config.get("workspace_root"):
-        return Path(str(config["workspace_root"])).expanduser().resolve()
+        return resolve_portable_path(str(config["workspace_root"]), base=Path.cwd())
     if config_file is not None:
-        return Path(config_file).expanduser().resolve().parent
+        return resolve_portable_path(config_file, base=Path.cwd()).parent
     return Path.cwd().resolve()
 
 def summarize_workflow(path: str | Path) -> dict[str, Any]:
-    workflow_path = Path(path).expanduser().resolve()
+    workflow_path = resolve_portable_path(path, base=Path.cwd())
     data = load_json_or_py(workflow_path)
     if not isinstance(data, dict):
         return {"workflow_path": str(workflow_path), "node_count": 0, "edge_count": 0, "name": workflow_path.stem}
@@ -183,7 +185,7 @@ def load_dispatch_map(path: str | Path) -> dict[str, Any]:
     return data
 
 def append_flow_trace_event(trace_file: str | Path, event: dict[str, Any]) -> Path:
-    target = Path(trace_file).expanduser().resolve()
+    target = resolve_portable_path(trace_file, base=Path.cwd())
     target.parent.mkdir(parents=True, exist_ok=True)
     with target.open("a", encoding="utf-8") as stream:
         stream.write(json.dumps(event, ensure_ascii=False) + "\n")
@@ -271,7 +273,7 @@ def backfill_a060_state_from_parse_assets(payload: dict[str, Any]) -> dict[str, 
 def scan_affairs(affairs_root: str | Path | None = None) -> list[dict[str, Any]]:
     if affairs_root is None:
         affairs_root = Path(__file__).resolve().parents[1] / "affairs"
-    root = Path(affairs_root).resolve()
+    root = resolve_portable_path(affairs_root, base=Path.cwd())
     if not root.exists():
         return []
     results: list[dict[str, Any]] = []
@@ -317,7 +319,7 @@ def resolve_runner(affair_uid: str, affairs_root: str | Path | None = None) -> t
 def get_affair_docs(affair_uid: str, affairs_root: str | Path | None = None) -> str:
     if affairs_root is None:
         affairs_root = Path(__file__).resolve().parents[1] / "affairs"
-    docs_path = Path(affairs_root).resolve() / str(affair_uid) / "affair.md"
+    docs_path = resolve_portable_path(affairs_root, base=Path.cwd()) / str(affair_uid) / "affair.md"
     if not docs_path.exists():
         return ""
     return docs_path.read_text(encoding="utf-8")

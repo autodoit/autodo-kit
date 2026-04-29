@@ -750,7 +750,7 @@ def postprocess_aliyun_multimodal_parse_outputs(
     Examples:
         >>> # doctest: +SKIP
         >>> postprocess_aliyun_multimodal_parse_outputs(
-        ...     normalized_structured_path='C:/workspace/normalized.structured.json'
+        ...     normalized_structured_path='/home/ethan/workspace/normalized.structured.json'
         ... )
     """
 

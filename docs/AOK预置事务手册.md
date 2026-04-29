@@ -223,7 +223,7 @@
 from pathlib import Path
 import autodokit as aok
 
-workspace_root = Path(r"D:/my_workspace").resolve()
+workspace_root = Path("/path/to/my_workspace").resolve()
 outputs = aok.run_affair("外审意见接收",
     config={'decision': '', 'review_comments': [], 'editor_notes': ''},
     workspace_root=workspace_root,
@@ -237,7 +237,7 @@ print(outputs)
 from pathlib import Path
 from autodokit.affairs.外审意见接收.affair import execute
 
-config_path = Path(r"D:/my_workspace/configs/affair_config.json").resolve()
+config_path = Path("/path/to/my_workspace/configs/affair_config.json").resolve()
 outputs = execute(config_path)
 print(outputs)
 ```
@@ -334,7 +334,7 @@ print(outputs)
 from pathlib import Path
 import autodokit as aok
 
-workspace_root = Path(r"D:/my_workspace").resolve()
+workspace_root = Path("/path/to/my_workspace").resolve()
 outputs = aok.run_affair("成果归档发布",
     config={'manuscript_title': '',
      'publication_status': '',
@@ -351,7 +351,7 @@ print(outputs)
 from pathlib import Path
 from autodokit.affairs.成果归档发布.affair import execute
 
-config_path = Path(r"D:/my_workspace/configs/affair_config.json").resolve()
+config_path = Path("/path/to/my_workspace/configs/affair_config.json").resolve()
 outputs = execute(config_path)
 print(outputs)
 ```
@@ -442,7 +442,7 @@ print(outputs)
 from pathlib import Path
 import autodokit as aok
 
-workspace_root = Path(r"D:/my_workspace").resolve()
+workspace_root = Path("/path/to/my_workspace").resolve()
 outputs = aok.run_affair("Obsidian关联导出",
     config={},
     workspace_root=workspace_root,
@@ -456,7 +456,7 @@ print(outputs)
 from pathlib import Path
 from autodokit.affairs.Obsidian关联导出.affair import execute
 
-config_path = Path(r"D:/my_workspace/configs/affair_config.json").resolve()
+config_path = Path("/path/to/my_workspace/configs/affair_config.json").resolve()
 outputs = execute(config_path)
 print(outputs)
 ```
@@ -611,7 +611,7 @@ Returns:
 from pathlib import Path
 import autodokit as aok
 
-workspace_root = Path(r"D:/my_workspace").resolve()
+workspace_root = Path("/path/to/my_workspace").resolve()
 outputs = aok.run_affair("单篇精读",
     config={'content_db': '',
      'input_structured_json': '',
@@ -641,7 +641,7 @@ print(outputs)
 from pathlib import Path
 from autodokit.affairs.单篇精读.affair import execute
 
-config_path = Path(r"D:/my_workspace/configs/affair_config.json").resolve()
+config_path = Path("/path/to/my_workspace/configs/affair_config.json").resolve()
 outputs = execute(config_path)
 print(outputs)
 ```
@@ -742,7 +742,7 @@ CNKI 全文下载规划事务。
 from pathlib import Path
 import autodokit as aok
 
-workspace_root = Path(r"D:/my_workspace").resolve()
+workspace_root = Path("/path/to/my_workspace").resolve()
 outputs = aok.run_affair("CNKI全文下载规划",
     config={'detail_url': '',
      'file_format': 'pdf',
@@ -760,7 +760,7 @@ print(outputs)
 from pathlib import Path
 from autodokit.affairs.CNKI全文下载规划.affair import execute
 
-config_path = Path(r"D:/my_workspace/configs/affair_config.json").resolve()
+config_path = Path("/path/to/my_workspace/configs/affair_config.json").resolve()
 outputs = execute(config_path)
 print(outputs)
 ```
@@ -862,7 +862,7 @@ CNKI 单篇详情提取事务。
 from pathlib import Path
 import autodokit as aok
 
-workspace_root = Path(r"D:/my_workspace").resolve()
+workspace_root = Path("/path/to/my_workspace").resolve()
 outputs = aok.run_affair("CNKI单篇详情提取",
     config={'detail_url': '',
      'title_hint': '',
@@ -881,7 +881,7 @@ print(outputs)
 from pathlib import Path
 from autodokit.affairs.CNKI单篇详情提取.affair import execute
 
-config_path = Path(r"D:/my_workspace/configs/affair_config.json").resolve()
+config_path = Path("/path/to/my_workspace/configs/affair_config.json").resolve()
 outputs = execute(config_path)
 print(outputs)
 ```
@@ -979,7 +979,7 @@ CNKI 期刊指标提取事务。
 from pathlib import Path
 import autodokit as aok
 
-workspace_root = Path(r"D:/my_workspace").resolve()
+workspace_root = Path("/path/to/my_workspace").resolve()
 outputs = aok.run_affair("CNKI期刊指标提取",
     config={'journal_name': '',
      'detail_url': '',
@@ -997,7 +997,7 @@ print(outputs)
 from pathlib import Path
 from autodokit.affairs.CNKI期刊指标提取.affair import execute
 
-config_path = Path(r"D:/my_workspace/configs/affair_config.json").resolve()
+config_path = Path("/path/to/my_workspace/configs/affair_config.json").resolve()
 outputs = execute(config_path)
 print(outputs)
 ```
@@ -1103,7 +1103,7 @@ CNKI 期刊目录提取事务。
 from pathlib import Path
 import autodokit as aok
 
-workspace_root = Path(r"D:/my_workspace").resolve()
+workspace_root = Path("/path/to/my_workspace").resolve()
 outputs = aok.run_affair("CNKI期刊目录提取",
     config={'journal_name': '',
      'year': '',
@@ -1123,7 +1123,7 @@ print(outputs)
 from pathlib import Path
 from autodokit.affairs.CNKI期刊目录提取.affair import execute
 
-config_path = Path(r"D:/my_workspace/configs/affair_config.json").resolve()
+config_path = Path("/path/to/my_workspace/configs/affair_config.json").resolve()
 outputs = execute(config_path)
 print(outputs)
 ```
@@ -1218,7 +1218,7 @@ CNKI 桥接事务执行入口。
 from pathlib import Path
 import autodokit as aok
 
-workspace_root = Path(r"D:/my_workspace").resolve()
+workspace_root = Path("/path/to/my_workspace").resolve()
 outputs = aok.run_affair("CNKI桥接",
     config={'mode': 'cnki-search', 'output_dir': ''},
     workspace_root=workspace_root,
@@ -1232,7 +1232,7 @@ print(outputs)
 from pathlib import Path
 from autodokit.affairs.CNKI桥接.affair import execute
 
-config_path = Path(r"D:/my_workspace/configs/affair_config.json").resolve()
+config_path = Path("/path/to/my_workspace/configs/affair_config.json").resolve()
 outputs = execute(config_path)
 print(outputs)
 ```
@@ -1330,7 +1330,7 @@ CNKI 结果解析事务。
 from pathlib import Path
 import autodokit as aok
 
-workspace_root = Path(r"D:/my_workspace").resolve()
+workspace_root = Path("/path/to/my_workspace").resolve()
 outputs = aok.run_affair("CNKI结果解析",
     config={'page_url': '',
      'current_page': 1,
@@ -1348,7 +1348,7 @@ print(outputs)
 from pathlib import Path
 from autodokit.affairs.CNKI结果解析.affair import execute
 
-config_path = Path(r"D:/my_workspace/configs/affair_config.json").resolve()
+config_path = Path("/path/to/my_workspace/configs/affair_config.json").resolve()
 outputs = execute(config_path)
 print(outputs)
 ```
@@ -1454,7 +1454,7 @@ CNKI 翻页导航事务。
 from pathlib import Path
 import autodokit as aok
 
-workspace_root = Path(r"D:/my_workspace").resolve()
+workspace_root = Path("/path/to/my_workspace").resolve()
 outputs = aok.run_affair("CNKI翻页导航",
     config={'action': 'next',
      'current_page': 1,
@@ -1474,7 +1474,7 @@ print(outputs)
 from pathlib import Path
 from autodokit.affairs.CNKI翻页导航.affair import execute
 
-config_path = Path(r"D:/my_workspace/configs/affair_config.json").resolve()
+config_path = Path("/path/to/my_workspace/configs/affair_config.json").resolve()
 outputs = execute(config_path)
 print(outputs)
 ```
@@ -1572,7 +1572,7 @@ CNKI 题录导出事务。
 from pathlib import Path
 import autodokit as aok
 
-workspace_root = Path(r"D:/my_workspace").resolve()
+workspace_root = Path("/path/to/my_workspace").resolve()
 outputs = aok.run_affair("CNKI题录导出",
     config={'detail_url': '',
      'export_mode': 'ris',
@@ -1590,7 +1590,7 @@ print(outputs)
 from pathlib import Path
 from autodokit.affairs.CNKI题录导出.affair import execute
 
-config_path = Path(r"D:/my_workspace/configs/affair_config.json").resolve()
+config_path = Path("/path/to/my_workspace/configs/affair_config.json").resolve()
 outputs = execute(config_path)
 print(outputs)
 ```
@@ -1676,7 +1676,7 @@ DiD/RDD 分析事务。
 from pathlib import Path
 import autodokit as aok
 
-workspace_root = Path(r"D:/my_workspace").resolve()
+workspace_root = Path("/path/to/my_workspace").resolve()
 outputs = aok.run_affair("DiD_RDD分析",
     config={'panel_rows': [], 'output_dir': ''},
     workspace_root=workspace_root,
@@ -1690,7 +1690,7 @@ print(outputs)
 from pathlib import Path
 from autodokit.affairs.DiD_RDD分析.affair import execute
 
-config_path = Path(r"D:/my_workspace/configs/affair_config.json").resolve()
+config_path = Path("/path/to/my_workspace/configs/affair_config.json").resolve()
 outputs = execute(config_path)
 print(outputs)
 ```
@@ -1784,7 +1784,7 @@ Node Runtime 重试探针事务。
 from pathlib import Path
 import autodokit as aok
 
-workspace_root = Path(r"D:/my_workspace").resolve()
+workspace_root = Path("/path/to/my_workspace").resolve()
 outputs = aok.run_affair("node_runtime_retry_probe",
     config={},
     workspace_root=workspace_root,
@@ -1798,7 +1798,7 @@ print(outputs)
 from pathlib import Path
 from autodokit.affairs.node_runtime_retry_probe.affair import execute
 
-config_path = Path(r"D:/my_workspace/configs/affair_config.json").resolve()
+config_path = Path("/path/to/my_workspace/configs/affair_config.json").resolve()
 outputs = execute(config_path)
 print(outputs)
 ```
@@ -1896,7 +1896,7 @@ print(outputs)
 from pathlib import Path
 import autodokit as aok
 
-workspace_root = Path(r"D:/my_workspace").resolve()
+workspace_root = Path("/path/to/my_workspace").resolve()
 outputs = aok.run_affair("中文本地资源管理",
     config={'root_dir': '',
      'bib_dir_name': 'bib',
@@ -1914,7 +1914,7 @@ print(outputs)
 from pathlib import Path
 from autodokit.affairs.中文本地资源管理.affair import execute
 
-config_path = Path(r"D:/my_workspace/configs/affair_config.json").resolve()
+config_path = Path("/path/to/my_workspace/configs/affair_config.json").resolve()
 outputs = execute(config_path)
 print(outputs)
 ```
@@ -2004,7 +2004,7 @@ print(outputs)
 from pathlib import Path
 import autodokit as aok
 
-workspace_root = Path(r"D:/my_workspace").resolve()
+workspace_root = Path("/path/to/my_workspace").resolve()
 outputs = aok.run_affair("中文网页采集",
     config={'query': '', 'seed_urls': [], 'output_dir': ''},
     workspace_root=workspace_root,
@@ -2018,7 +2018,7 @@ print(outputs)
 from pathlib import Path
 from autodokit.affairs.中文网页采集.affair import execute
 
-config_path = Path(r"D:/my_workspace/configs/affair_config.json").resolve()
+config_path = Path("/path/to/my_workspace/configs/affair_config.json").resolve()
 outputs = execute(config_path)
 print(outputs)
 ```
@@ -2104,7 +2104,7 @@ print(outputs)
 from pathlib import Path
 import autodokit as aok
 
-workspace_root = Path(r"D:/my_workspace").resolve()
+workspace_root = Path("/path/to/my_workspace").resolve()
 outputs = aok.run_affair("任务数据库初始化",
     config={'project_root': '.', 'output_dir': ''},
     workspace_root=workspace_root,
@@ -2118,7 +2118,7 @@ print(outputs)
 from pathlib import Path
 from autodokit.affairs.任务数据库初始化.affair import execute
 
-config_path = Path(r"D:/my_workspace/configs/affair_config.json").resolve()
+config_path = Path("/path/to/my_workspace/configs/affair_config.json").resolve()
 outputs = execute(config_path)
 print(outputs)
 ```
@@ -2204,7 +2204,7 @@ print(outputs)
 from pathlib import Path
 import autodokit as aok
 
-workspace_root = Path(r"D:/my_workspace").resolve()
+workspace_root = Path("/path/to/my_workspace").resolve()
 outputs = aok.run_affair("任务数据库回放",
     config={'project_root': '.', 'output_dir': ''},
     workspace_root=workspace_root,
@@ -2218,7 +2218,7 @@ print(outputs)
 from pathlib import Path
 from autodokit.affairs.任务数据库回放.affair import execute
 
-config_path = Path(r"D:/my_workspace/configs/affair_config.json").resolve()
+config_path = Path("/path/to/my_workspace/configs/affair_config.json").resolve()
 outputs = execute(config_path)
 print(outputs)
 ```
@@ -2304,7 +2304,7 @@ print(outputs)
 from pathlib import Path
 import autodokit as aok
 
-workspace_root = Path(r"D:/my_workspace").resolve()
+workspace_root = Path("/path/to/my_workspace").resolve()
 outputs = aok.run_affair("任务数据库校验",
     config={'project_root': '.', 'output_dir': ''},
     workspace_root=workspace_root,
@@ -2318,7 +2318,7 @@ print(outputs)
 from pathlib import Path
 from autodokit.affairs.任务数据库校验.affair import execute
 
-config_path = Path(r"D:/my_workspace/configs/affair_config.json").resolve()
+config_path = Path("/path/to/my_workspace/configs/affair_config.json").resolve()
 outputs = execute(config_path)
 print(outputs)
 ```
@@ -2424,7 +2424,7 @@ print(outputs)
 from pathlib import Path
 import autodokit as aok
 
-workspace_root = Path(r"D:/my_workspace").resolve()
+workspace_root = Path("/path/to/my_workspace").resolve()
 outputs = aok.run_affair("公开数据获取",
     config={'query': '',
      'object_type': 'dataset',
@@ -2444,7 +2444,7 @@ print(outputs)
 from pathlib import Path
 from autodokit.affairs.公开数据获取.affair import execute
 
-config_path = Path(r"D:/my_workspace/configs/affair_config.json").resolve()
+config_path = Path("/path/to/my_workspace/configs/affair_config.json").resolve()
 outputs = execute(config_path)
 print(outputs)
 ```
@@ -2546,7 +2546,7 @@ print(outputs)
 from pathlib import Path
 import autodokit as aok
 
-workspace_root = Path(r"D:/my_workspace").resolve()
+workspace_root = Path("/path/to/my_workspace").resolve()
 outputs = aok.run_affair("单轮调度派发",
     config={'task_uid': '',
      'goal': '',
@@ -2565,7 +2565,7 @@ print(outputs)
 from pathlib import Path
 from autodokit.affairs.单轮调度派发.affair import execute
 
-config_path = Path(r"D:/my_workspace/configs/affair_config.json").resolve()
+config_path = Path("/path/to/my_workspace/configs/affair_config.json").resolve()
 outputs = execute(config_path)
 print(outputs)
 ```
@@ -2651,7 +2651,7 @@ print(outputs)
 from pathlib import Path
 import autodokit as aok
 
-workspace_root = Path(r"D:/my_workspace").resolve()
+workspace_root = Path("/path/to/my_workspace").resolve()
 outputs = aok.run_affair("变量操作化",
     config={'concepts': [], 'output_dir': ''},
     workspace_root=workspace_root,
@@ -2665,7 +2665,7 @@ print(outputs)
 from pathlib import Path
 from autodokit.affairs.变量操作化.affair import execute
 
-config_path = Path(r"D:/my_workspace/configs/affair_config.json").resolve()
+config_path = Path("/path/to/my_workspace/configs/affair_config.json").resolve()
 outputs = execute(config_path)
 print(outputs)
 ```
@@ -2763,7 +2763,7 @@ print(outputs)
 from pathlib import Path
 import autodokit as aok
 
-workspace_root = Path(r"D:/my_workspace").resolve()
+workspace_root = Path("/path/to/my_workspace").resolve()
 outputs = aok.run_affair("合并去重bibtex",
     config={},
     workspace_root=workspace_root,
@@ -2777,7 +2777,7 @@ print(outputs)
 from pathlib import Path
 from autodokit.affairs.合并去重bibtex.affair import execute
 
-config_path = Path(r"D:/my_workspace/configs/affair_config.json").resolve()
+config_path = Path("/path/to/my_workspace/configs/affair_config.json").resolve()
 outputs = execute(config_path)
 print(outputs)
 ```
@@ -2875,7 +2875,7 @@ print(outputs)
 from pathlib import Path
 import autodokit as aok
 
-workspace_root = Path(r"D:/my_workspace").resolve()
+workspace_root = Path("/path/to/my_workspace").resolve()
 outputs = aok.run_affair("实证四件套",
     config={'baseline_summary': '',
      'mechanism_points': [],
@@ -2893,7 +2893,7 @@ print(outputs)
 from pathlib import Path
 from autodokit.affairs.实证四件套.affair import execute
 
-config_path = Path(r"D:/my_workspace/configs/affair_config.json").resolve()
+config_path = Path("/path/to/my_workspace/configs/affair_config.json").resolve()
 outputs = execute(config_path)
 print(outputs)
 ```
@@ -2983,7 +2983,7 @@ print(outputs)
 from pathlib import Path
 import autodokit as aok
 
-workspace_root = Path(r"D:/my_workspace").resolve()
+workspace_root = Path("/path/to/my_workspace").resolve()
 outputs = aok.run_affair("审稿回复",
     config={'comments': [], 'manuscript_title': '', 'output_dir': ''},
     workspace_root=workspace_root,
@@ -2997,7 +2997,7 @@ print(outputs)
 from pathlib import Path
 from autodokit.affairs.审稿回复.affair import execute
 
-config_path = Path(r"D:/my_workspace/configs/affair_config.json").resolve()
+config_path = Path("/path/to/my_workspace/configs/affair_config.json").resolve()
 outputs = execute(config_path)
 print(outputs)
 ```
@@ -3087,7 +3087,7 @@ print(outputs)
 from pathlib import Path
 import autodokit as aok
 
-workspace_root = Path(r"D:/my_workspace").resolve()
+workspace_root = Path("/path/to/my_workspace").resolve()
 outputs = aok.run_affair("审稿意见拆解",
     config={'comments': [], 'manuscript_title': '', 'output_dir': ''},
     workspace_root=workspace_root,
@@ -3101,7 +3101,7 @@ print(outputs)
 from pathlib import Path
 from autodokit.affairs.审稿意见拆解.affair import execute
 
-config_path = Path(r"D:/my_workspace/configs/affair_config.json").resolve()
+config_path = Path("/path/to/my_workspace/configs/affair_config.json").resolve()
 outputs = execute(config_path)
 print(outputs)
 ```
@@ -3203,7 +3203,7 @@ print(outputs)
 from pathlib import Path
 import autodokit as aok
 
-workspace_root = Path(r"D:/my_workspace").resolve()
+workspace_root = Path("/path/to/my_workspace").resolve()
 outputs = aok.run_affair("工作区自检",
     config={'project_root': '',
      'mode': 'full',
@@ -3222,7 +3222,7 @@ print(outputs)
 from pathlib import Path
 from autodokit.affairs.工作区自检.affair import execute
 
-config_path = Path(r"D:/my_workspace/configs/affair_config.json").resolve()
+config_path = Path("/path/to/my_workspace/configs/affair_config.json").resolve()
 outputs = execute(config_path)
 print(outputs)
 ```
@@ -3312,7 +3312,7 @@ print(outputs)
 from pathlib import Path
 import autodokit as aok
 
-workspace_root = Path(r"D:/my_workspace").resolve()
+workspace_root = Path("/path/to/my_workspace").resolve()
 outputs = aok.run_affair("工作流执行",
     config={'workflow_path': '', 'dry_run': False, 'output_dir': ''},
     workspace_root=workspace_root,
@@ -3326,7 +3326,7 @@ print(outputs)
 from pathlib import Path
 from autodokit.affairs.工作流执行.affair import execute
 
-config_path = Path(r"D:/my_workspace/configs/affair_config.json").resolve()
+config_path = Path("/path/to/my_workspace/configs/affair_config.json").resolve()
 outputs = execute(config_path)
 print(outputs)
 ```
@@ -3416,7 +3416,7 @@ print(outputs)
 from pathlib import Path
 import autodokit as aok
 
-workspace_root = Path(r"D:/my_workspace").resolve()
+workspace_root = Path("/path/to/my_workspace").resolve()
 outputs = aok.run_affair("引文核验",
     config={'citations': [], 'references': [], 'output_dir': ''},
     workspace_root=workspace_root,
@@ -3430,7 +3430,7 @@ print(outputs)
 from pathlib import Path
 from autodokit.affairs.引文核验.affair import execute
 
-config_path = Path(r"D:/my_workspace/configs/affair_config.json").resolve()
+config_path = Path("/path/to/my_workspace/configs/affair_config.json").resolve()
 outputs = execute(config_path)
 print(outputs)
 ```
@@ -3524,7 +3524,7 @@ print(outputs)
 from pathlib import Path
 import autodokit as aok
 
-workspace_root = Path(r"D:/my_workspace").resolve()
+workspace_root = Path("/path/to/my_workspace").resolve()
 outputs = aok.run_affair("数据工程样本构建",
     config={'dataset_sources': [], 'join_keys': [], 'variable_specs': [], 'output_table': ''},
     workspace_root=workspace_root,
@@ -3538,7 +3538,7 @@ print(outputs)
 from pathlib import Path
 from autodokit.affairs.数据工程样本构建.affair import execute
 
-config_path = Path(r"D:/my_workspace/configs/affair_config.json").resolve()
+config_path = Path("/path/to/my_workspace/configs/affair_config.json").resolve()
 outputs = execute(config_path)
 print(outputs)
 ```
@@ -3635,7 +3635,7 @@ print(outputs)
 from pathlib import Path
 import autodokit as aok
 
-workspace_root = Path(r"D:/my_workspace").resolve()
+workspace_root = Path("/path/to/my_workspace").resolve()
 outputs = aok.run_affair("方法白名单选择",
     config={'candidate_methods': [], 'whitelist': [], 'top_k': 3, 'output_dir': ''},
     workspace_root=workspace_root,
@@ -3649,7 +3649,7 @@ print(outputs)
 from pathlib import Path
 from autodokit.affairs.方法白名单选择.affair import execute
 
-config_path = Path(r"D:/my_workspace/configs/affair_config.json").resolve()
+config_path = Path("/path/to/my_workspace/configs/affair_config.json").resolve()
 outputs = execute(config_path)
 print(outputs)
 ```
@@ -3743,7 +3743,7 @@ print(outputs)
 from pathlib import Path
 import autodokit as aok
 
-workspace_root = Path(r"D:/my_workspace").resolve()
+workspace_root = Path("/path/to/my_workspace").resolve()
 outputs = aok.run_affair("期刊投稿",
     config={'manuscript_title': '', 'target_journal': '', 'package_files': [], 'version_tag': 'v1'},
     workspace_root=workspace_root,
@@ -3757,7 +3757,7 @@ print(outputs)
 from pathlib import Path
 from autodokit.affairs.期刊投稿.affair import execute
 
-config_path = Path(r"D:/my_workspace/configs/affair_config.json").resolve()
+config_path = Path("/path/to/my_workspace/configs/affair_config.json").resolve()
 outputs = execute(config_path)
 print(outputs)
 ```
@@ -3889,7 +3889,7 @@ print(outputs)
 from pathlib import Path
 import autodokit as aok
 
-workspace_root = Path(r"D:/my_workspace").resolve()
+workspace_root = Path("/path/to/my_workspace").resolve()
 outputs = aok.run_affair("模型路由派发",
     config={'task_type': 'general',
      'quality_tier': 'standard',
@@ -3921,7 +3921,7 @@ print(outputs)
 from pathlib import Path
 from autodokit.affairs.模型路由派发.affair import execute
 
-config_path = Path(r"D:/my_workspace/configs/affair_config.json").resolve()
+config_path = Path("/path/to/my_workspace/configs/affair_config.json").resolve()
 outputs = execute(config_path)
 print(outputs)
 ```
@@ -4036,7 +4036,7 @@ Examples:
 from pathlib import Path
 import autodokit as aok
 
-workspace_root = Path(r"D:/my_workspace").resolve()
+workspace_root = Path("/path/to/my_workspace").resolve()
 outputs = aok.run_affair("清洗bibtex文件",
     config={},
     workspace_root=workspace_root,
@@ -4050,7 +4050,7 @@ print(outputs)
 from pathlib import Path
 from autodokit.affairs.清洗bibtex文件.affair import execute
 
-config_path = Path(r"D:/my_workspace/configs/affair_config.json").resolve()
+config_path = Path("/path/to/my_workspace/configs/affair_config.json").resolve()
 outputs = execute(config_path)
 print(outputs)
 ```
@@ -4148,7 +4148,7 @@ print(outputs)
 from pathlib import Path
 import autodokit as aok
 
-workspace_root = Path(r"D:/my_workspace").resolve()
+workspace_root = Path("/path/to/my_workspace").resolve()
 outputs = aok.run_affair("白名单治理检查",
     config={'requested_scopes': [],
      'approved_scopes': [],
@@ -4166,7 +4166,7 @@ print(outputs)
 from pathlib import Path
 from autodokit.affairs.白名单治理检查.affair import execute
 
-config_path = Path(r"D:/my_workspace/configs/affair_config.json").resolve()
+config_path = Path("/path/to/my_workspace/configs/affair_config.json").resolve()
 outputs = execute(config_path)
 print(outputs)
 ```
@@ -4264,7 +4264,7 @@ print(outputs)
 from pathlib import Path
 import autodokit as aok
 
-workspace_root = Path(r"D:/my_workspace").resolve()
+workspace_root = Path("/path/to/my_workspace").resolve()
 outputs = aok.run_affair("百炼SDK接入检查",
     config={'key_file': '',
      'model': 'auto',
@@ -4282,7 +4282,7 @@ print(outputs)
 from pathlib import Path
 from autodokit.affairs.百炼SDK接入检查.affair import execute
 
-config_path = Path(r"D:/my_workspace/configs/affair_config.json").resolve()
+config_path = Path("/path/to/my_workspace/configs/affair_config.json").resolve()
 outputs = execute(config_path)
 print(outputs)
 ```
@@ -4380,7 +4380,7 @@ print(outputs)
 from pathlib import Path
 import autodokit as aok
 
-workspace_root = Path(r"D:/my_workspace").resolve()
+workspace_root = Path("/path/to/my_workspace").resolve()
 outputs = aok.run_affair("研究构思",
     config={'topic': '',
      'literature_gaps': [],
@@ -4398,7 +4398,7 @@ print(outputs)
 from pathlib import Path
 from autodokit.affairs.研究构思.affair import execute
 
-config_path = Path(r"D:/my_workspace/configs/affair_config.json").resolve()
+config_path = Path("/path/to/my_workspace/configs/affair_config.json").resolve()
 outputs = execute(config_path)
 print(outputs)
 ```
@@ -4510,7 +4510,7 @@ print(outputs)
 from pathlib import Path
 import autodokit as aok
 
-workspace_root = Path(r"D:/my_workspace").resolve()
+workspace_root = Path("/path/to/my_workspace").resolve()
 outputs = aok.run_affair("研究诚信检查",
     config={'project_root': '',
      'strict': False,
@@ -4527,7 +4527,7 @@ print(outputs)
 from pathlib import Path
 from autodokit.affairs.研究诚信检查.affair import execute
 
-config_path = Path(r"D:/my_workspace/configs/affair_config.json").resolve()
+config_path = Path("/path/to/my_workspace/configs/affair_config.json").resolve()
 outputs = execute(config_path)
 print(outputs)
 ```
@@ -4719,7 +4719,7 @@ Returns:
 from pathlib import Path
 import autodokit as aok
 
-workspace_root = Path(r"D:/my_workspace").resolve()
+workspace_root = Path("/path/to/my_workspace").resolve()
 outputs = aok.run_affair("管理文档单元数据库",
     config={'input_documents_dir': 'data/文献原文数据',
      'unit_db_dir': 'data/文档单元数据库',
@@ -4735,7 +4735,7 @@ print(outputs)
 from pathlib import Path
 from autodokit.affairs.管理文档单元数据库.affair import execute
 
-config_path = Path(r"D:/my_workspace/configs/affair_config.json").resolve()
+config_path = Path("/path/to/my_workspace/configs/affair_config.json").resolve()
 outputs = execute(config_path)
 print(outputs)
 ```
@@ -4829,7 +4829,7 @@ print(outputs)
 from pathlib import Path
 import autodokit as aok
 
-workspace_root = Path(r"D:/my_workspace").resolve()
+workspace_root = Path("/path/to/my_workspace").resolve()
 outputs = aok.run_affair("结果分析解读",
     config={'statistical_summary': '',
      'mechanism_points': [],
@@ -4846,7 +4846,7 @@ print(outputs)
 from pathlib import Path
 from autodokit.affairs.结果分析解读.affair import execute
 
-config_path = Path(r"D:/my_workspace/configs/affair_config.json").resolve()
+config_path = Path("/path/to/my_workspace/configs/affair_config.json").resolve()
 outputs = execute(config_path)
 print(outputs)
 ```
@@ -4944,7 +4944,7 @@ print(outputs)
 from pathlib import Path
 import autodokit as aok
 
-workspace_root = Path(r"D:/my_workspace").resolve()
+workspace_root = Path("/path/to/my_workspace").resolve()
 outputs = aok.run_affair("计量环境配置",
     config={'project_root': '',
      'require_r': True,
@@ -4962,7 +4962,7 @@ print(outputs)
 from pathlib import Path
 from autodokit.affairs.计量环境配置.affair import execute
 
-config_path = Path(r"D:/my_workspace/configs/affair_config.json").resolve()
+config_path = Path("/path/to/my_workspace/configs/affair_config.json").resolve()
 outputs = execute(config_path)
 print(outputs)
 ```
@@ -5056,7 +5056,7 @@ print(outputs)
 from pathlib import Path
 import autodokit as aok
 
-workspace_root = Path(r"D:/my_workspace").resolve()
+workspace_root = Path("/path/to/my_workspace").resolve()
 outputs = aok.run_affair("论文整编写作",
     config={'section_materials': {},
      'evidence_points': [],
@@ -5073,7 +5073,7 @@ print(outputs)
 from pathlib import Path
 from autodokit.affairs.论文整编写作.affair import execute
 
-config_path = Path(r"D:/my_workspace/configs/affair_config.json").resolve()
+config_path = Path("/path/to/my_workspace/configs/affair_config.json").resolve()
 outputs = execute(config_path)
 print(outputs)
 ```
@@ -5167,7 +5167,7 @@ print(outputs)
 from pathlib import Path
 import autodokit as aok
 
-workspace_root = Path(r"D:/my_workspace").resolve()
+workspace_root = Path("/path/to/my_workspace").resolve()
 outputs = aok.run_affair("论文自审",
     config={'manuscript_title': '', 'sections': {}, 'figures': [], 'output_dir': ''},
     workspace_root=workspace_root,
@@ -5181,7 +5181,7 @@ print(outputs)
 from pathlib import Path
 from autodokit.affairs.论文自审.affair import execute
 
-config_path = Path(r"D:/my_workspace/configs/affair_config.json").resolve()
+config_path = Path("/path/to/my_workspace/configs/affair_config.json").resolve()
 outputs = execute(config_path)
 print(outputs)
 ```
@@ -5275,7 +5275,7 @@ print(outputs)
 from pathlib import Path
 import autodokit as aok
 
-workspace_root = Path(r"D:/my_workspace").resolve()
+workspace_root = Path("/path/to/my_workspace").resolve()
 outputs = aok.run_affair("论文草稿",
     config={'topic': '', 'contributions': [], 'limitations': [], 'output_dir': ''},
     workspace_root=workspace_root,
@@ -5289,7 +5289,7 @@ print(outputs)
 from pathlib import Path
 from autodokit.affairs.论文草稿.affair import execute
 
-config_path = Path(r"D:/my_workspace/configs/affair_config.json").resolve()
+config_path = Path("/path/to/my_workspace/configs/affair_config.json").resolve()
 outputs = execute(config_path)
 print(outputs)
 ```
@@ -5385,7 +5385,7 @@ print(outputs)
 from pathlib import Path
 import autodokit as aok
 
-workspace_root = Path(r"D:/my_workspace").resolve()
+workspace_root = Path("/path/to/my_workspace").resolve()
 outputs = aok.run_affair("证据综合",
     config={'question': '', 'passages': [], 'top_k': 3, 'output_dir': ''},
     workspace_root=workspace_root,
@@ -5399,7 +5399,7 @@ print(outputs)
 from pathlib import Path
 from autodokit.affairs.证据综合.affair import execute
 
-config_path = Path(r"D:/my_workspace/configs/affair_config.json").resolve()
+config_path = Path("/path/to/my_workspace/configs/affair_config.json").resolve()
 outputs = execute(config_path)
 print(outputs)
 ```
@@ -5494,7 +5494,7 @@ print(outputs)
 from pathlib import Path
 import autodokit as aok
 
-workspace_root = Path(r"D:/my_workspace").resolve()
+workspace_root = Path("/path/to/my_workspace").resolve()
 outputs = aok.run_affair("项目初始化",
     config={'project_root': '', 'output_dir': ''},
     workspace_root=workspace_root,
@@ -5508,7 +5508,7 @@ print(outputs)
 from pathlib import Path
 from autodokit.affairs.项目初始化.affair import execute
 
-config_path = Path(r"D:/my_workspace/configs/affair_config.json").resolve()
+config_path = Path("/path/to/my_workspace/configs/affair_config.json").resolve()
 outputs = execute(config_path)
 print(outputs)
 ```
@@ -5605,7 +5605,7 @@ AOB 一键办公区转换事务。
 from pathlib import Path
 import autodokit as aok
 
-workspace_root = Path(r"D:/my_workspace").resolve()
+workspace_root = Path("/path/to/my_workspace").resolve()
 outputs = aok.run_affair("AOB一键办公区转换",
     config={'project_dir': '',
      'source_engine': 'opencode',
@@ -5625,7 +5625,7 @@ print(outputs)
 from pathlib import Path
 from  import execute
 
-config_path = Path(r"D:/my_workspace/configs/affair_config.json").resolve()
+config_path = Path("/path/to/my_workspace/configs/affair_config.json").resolve()
 outputs = execute(config_path)
 print(outputs)
 ```
@@ -5731,7 +5731,7 @@ AOB 一键安装部署事务。
 from pathlib import Path
 import autodokit as aok
 
-workspace_root = Path(r"D:/my_workspace").resolve()
+workspace_root = Path("/path/to/my_workspace").resolve()
 outputs = aok.run_affair("AOB一键安装部署",
     config={'workflow': 'academic',
      'engine_ids': ['opencode'],
@@ -5756,7 +5756,7 @@ print(outputs)
 from pathlib import Path
 from  import execute
 
-config_path = Path(r"D:/my_workspace/configs/affair_config.json").resolve()
+config_path = Path("/path/to/my_workspace/configs/affair_config.json").resolve()
 outputs = execute(config_path)
 print(outputs)
 ```
@@ -5862,7 +5862,7 @@ AOK 三库联动示例事务。
 from pathlib import Path
 import autodokit as aok
 
-workspace_root = Path(r"D:/my_workspace").resolve()
+workspace_root = Path("/path/to/my_workspace").resolve()
 outputs = aok.run_affair("AOK三库联动示例",
     config={'project_root': '',
      'bib_path': '',
@@ -5881,7 +5881,7 @@ print(outputs)
 from pathlib import Path
 from  import execute
 
-config_path = Path(r"D:/my_workspace/configs/affair_config.json").resolve()
+config_path = Path("/path/to/my_workspace/configs/affair_config.json").resolve()
 outputs = execute(config_path)
 print(outputs)
 ```
@@ -5970,7 +5970,7 @@ AOK 旧任务数据库初始化事务。
 from pathlib import Path
 import autodokit as aok
 
-workspace_root = Path(r"D:/my_workspace").resolve()
+workspace_root = Path("/path/to/my_workspace").resolve()
 outputs = aok.run_affair("AOK任务数据库初始化",
     config={'project_root': '.', 'output_dir': ''},
     workspace_root=workspace_root,
@@ -5984,7 +5984,7 @@ print(outputs)
 from pathlib import Path
 from  import execute
 
-config_path = Path(r"D:/my_workspace/configs/affair_config.json").resolve()
+config_path = Path("/path/to/my_workspace/configs/affair_config.json").resolve()
 outputs = execute(config_path)
 print(outputs)
 ```
@@ -6075,7 +6075,7 @@ AOK 旧任务数据库校验事务。
 from pathlib import Path
 import autodokit as aok
 
-workspace_root = Path(r"D:/my_workspace").resolve()
+workspace_root = Path("/path/to/my_workspace").resolve()
 outputs = aok.run_affair("AOK任务数据库校验",
     config={'project_root': '.', 'output_dir': ''},
     workspace_root=workspace_root,
@@ -6089,7 +6089,7 @@ print(outputs)
 from pathlib import Path
 from  import execute
 
-config_path = Path(r"D:/my_workspace/configs/affair_config.json").resolve()
+config_path = Path("/path/to/my_workspace/configs/affair_config.json").resolve()
 outputs = execute(config_path)
 print(outputs)
 ```
@@ -6179,7 +6179,7 @@ Skill 渲染事务。
 from pathlib import Path
 import autodokit as aok
 
-workspace_root = Path(r"D:/my_workspace").resolve()
+workspace_root = Path("/path/to/my_workspace").resolve()
 outputs = aok.run_affair("Skill渲染",
     config={'skill_path': '', 'params': {}, 'output_dir': ''},
     workspace_root=workspace_root,
@@ -6193,7 +6193,7 @@ print(outputs)
 from pathlib import Path
 from  import execute
 
-config_path = Path(r"D:/my_workspace/configs/affair_config.json").resolve()
+config_path = Path("/path/to/my_workspace/configs/affair_config.json").resolve()
 outputs = execute(config_path)
 print(outputs)
 ```
@@ -6277,7 +6277,7 @@ print(outputs)
 from pathlib import Path
 import autodokit as aok
 
-workspace_root = Path(r"D:/my_workspace").resolve()
+workspace_root = Path("/path/to/my_workspace").resolve()
 outputs = aok.run_affair("创新点可行性验证",
     config={'innovation_pool_csv': '', 'innovations': [], 'output_dir': ''},
     workspace_root=workspace_root,
@@ -6291,7 +6291,7 @@ print(outputs)
 from pathlib import Path
 from  import execute
 
-config_path = Path(r"D:/my_workspace/configs/affair_config.json").resolve()
+config_path = Path("/path/to/my_workspace/configs/affair_config.json").resolve()
 outputs = execute(config_path)
 print(outputs)
 ```
@@ -6383,7 +6383,7 @@ print(outputs)
 from pathlib import Path
 import autodokit as aok
 
-workspace_root = Path(r"D:/my_workspace").resolve()
+workspace_root = Path("/path/to/my_workspace").resolve()
 outputs = aok.run_affair("创新点池构建",
     config={'topic': '',
      'gaps': [],
@@ -6403,7 +6403,7 @@ print(outputs)
 from pathlib import Path
 from  import execute
 
-config_path = Path(r"D:/my_workspace/configs/affair_config.json").resolve()
+config_path = Path("/path/to/my_workspace/configs/affair_config.json").resolve()
 outputs = execute(config_path)
 print(outputs)
 ```
@@ -6443,7 +6443,7 @@ Returns:
 Examples:
     >>> from pathlib import Path
     >>> from autodokit.affairs.单篇粗读.affair import execute
-    >>> execute(Path(r"D:/workspace/configs/single_rough_reading.json"))
+    >>> execute(Path("/path/to/workspace/configs/single_rough_reading.json"))
 
 #### 事务 Markdown 说明摘录
 
@@ -6522,7 +6522,7 @@ Examples:
 from pathlib import Path
 import autodokit as aok
 
-workspace_root = Path(r"D:/my_workspace").resolve()
+workspace_root = Path("/path/to/my_workspace").resolve()
 outputs = aok.run_affair("单篇粗读",
     config={'content_db': '',
      'input_structured_json': '',
@@ -6544,7 +6544,7 @@ print(outputs)
 from pathlib import Path
 from  import execute
 
-config_path = Path(r"D:/my_workspace/configs/affair_config.json").resolve()
+config_path = Path("/path/to/my_workspace/configs/affair_config.json").resolve()
 outputs = execute(config_path)
 print(outputs)
 ```
@@ -6630,7 +6630,7 @@ print(outputs)
 from pathlib import Path
 import autodokit as aok
 
-workspace_root = Path(r"D:/my_workspace").resolve()
+workspace_root = Path("/path/to/my_workspace").resolve()
 outputs = aok.run_affair("研究脉络梳理",
     config={'topic': '', 'input_csv': '', 'items': [], 'output_dir': ''},
     workspace_root=workspace_root,
@@ -6644,7 +6644,7 @@ print(outputs)
 from pathlib import Path
 from  import execute
 
-config_path = Path(r"D:/my_workspace/configs/affair_config.json").resolve()
+config_path = Path("/path/to/my_workspace/configs/affair_config.json").resolve()
 outputs = execute(config_path)
 print(outputs)
 ```
@@ -6756,7 +6756,7 @@ Returns:
 from pathlib import Path
 import autodokit as aok
 
-workspace_root = Path(r"D:/my_workspace").resolve()
+workspace_root = Path("/path/to/my_workspace").resolve()
 outputs = aok.run_affair("task_docs_aggregate",
     config={},
     workspace_root=workspace_root,
@@ -6770,7 +6770,7 @@ print(outputs)
 from pathlib import Path
 from autodokit.affairs.task_docs_aggregate.affair import execute
 
-config_path = Path(r"D:/my_workspace/configs/affair_config.json").resolve()
+config_path = Path("/path/to/my_workspace/configs/affair_config.json").resolve()
 outputs = execute(config_path)
 print(outputs)
 ```
@@ -6872,7 +6872,7 @@ Returns:
 from pathlib import Path
 import autodokit as aok
 
-workspace_root = Path(r"D:/my_workspace").resolve()
+workspace_root = Path("/path/to/my_workspace").resolve()
 outputs = aok.run_affair("task_docs_archive",
     config={},
     workspace_root=workspace_root,
@@ -6886,7 +6886,7 @@ print(outputs)
 from pathlib import Path
 from autodokit.affairs.task_docs_archive.affair import execute
 
-config_path = Path(r"D:/my_workspace/configs/affair_config.json").resolve()
+config_path = Path("/path/to/my_workspace/configs/affair_config.json").resolve()
 outputs = execute(config_path)
 print(outputs)
 ```
@@ -6991,7 +6991,7 @@ Returns:
 from pathlib import Path
 import autodokit as aok
 
-workspace_root = Path(r"D:/my_workspace").resolve()
+workspace_root = Path("/path/to/my_workspace").resolve()
 outputs = aok.run_affair("task_docs_create_latest",
     config={},
     workspace_root=workspace_root,
@@ -7005,7 +7005,7 @@ print(outputs)
 from pathlib import Path
 from autodokit.affairs.task_docs_create_latest.affair import execute
 
-config_path = Path(r"D:/my_workspace/configs/affair_config.json").resolve()
+config_path = Path("/path/to/my_workspace/configs/affair_config.json").resolve()
 outputs = execute(config_path)
 print(outputs)
 ```
@@ -7114,7 +7114,7 @@ Returns:
 from pathlib import Path
 import autodokit as aok
 
-workspace_root = Path(r"D:/my_workspace").resolve()
+workspace_root = Path("/path/to/my_workspace").resolve()
 outputs = aok.run_affair("task_docs_finalize_latest",
     config={},
     workspace_root=workspace_root,
@@ -7128,7 +7128,7 @@ print(outputs)
 from pathlib import Path
 from autodokit.affairs.task_docs_finalize_latest.affair import execute
 
-config_path = Path(r"D:/my_workspace/configs/affair_config.json").resolve()
+config_path = Path("/path/to/my_workspace/configs/affair_config.json").resolve()
 outputs = execute(config_path)
 print(outputs)
 ```
@@ -7244,7 +7244,7 @@ P1 阶段使用受限表达式执行器实现最小可运行能力。
 from pathlib import Path
 import autodokit as aok
 
-workspace_root = Path(r"D:/my_workspace").resolve()
+workspace_root = Path("/path/to/my_workspace").resolve()
 outputs = aok.run_affair("图节点_calc",
     config={'expression': '',
      'expression_mode': 'safe',
@@ -7261,7 +7261,7 @@ print(outputs)
 from pathlib import Path
 from autodokit.affairs.图节点_calc.affair import execute
 
-config_path = Path(r"D:/my_workspace/configs/affair_config.json").resolve()
+config_path = Path("/path/to/my_workspace/configs/affair_config.json").resolve()
 outputs = execute(config_path)
 print(outputs)
 ```
@@ -7377,7 +7377,7 @@ P1 阶段提供最小比较能力并输出分支方向。
 from pathlib import Path
 import autodokit as aok
 
-workspace_root = Path(r"D:/my_workspace").resolve()
+workspace_root = Path("/path/to/my_workspace").resolve()
 outputs = aok.run_affair("图节点_compare",
     config={'left': None, 'operator': '!=', 'right': None},
     workspace_root=workspace_root,
@@ -7391,7 +7391,7 @@ print(outputs)
 from pathlib import Path
 from autodokit.affairs.图节点_compare.affair import execute
 
-config_path = Path(r"D:/my_workspace/configs/affair_config.json").resolve()
+config_path = Path("/path/to/my_workspace/configs/affair_config.json").resolve()
 outputs = execute(config_path)
 print(outputs)
 ```
@@ -7519,7 +7519,7 @@ P1 阶段仅解析并回显容器循环参数。
 from pathlib import Path
 import autodokit as aok
 
-workspace_root = Path(r"D:/my_workspace").resolve()
+workspace_root = Path("/path/to/my_workspace").resolve()
 outputs = aok.run_affair("图节点_container",
     config={'container_name': 'container',
      'expression_mode': 'safe',
@@ -7537,7 +7537,7 @@ print(outputs)
 from pathlib import Path
 from autodokit.affairs.图节点_container.affair import execute
 
-config_path = Path(r"D:/my_workspace/configs/affair_config.json").resolve()
+config_path = Path("/path/to/my_workspace/configs/affair_config.json").resolve()
 outputs = execute(config_path)
 print(outputs)
 ```
@@ -7637,7 +7637,7 @@ P1 阶段仅提供可调度与可观测占位实现。
 from pathlib import Path
 import autodokit as aok
 
-workspace_root = Path(r"D:/my_workspace").resolve()
+workspace_root = Path("/path/to/my_workspace").resolve()
 outputs = aok.run_affair("图节点_end",
     config={'node_role': 'end'},
     workspace_root=workspace_root,
@@ -7651,7 +7651,7 @@ print(outputs)
 from pathlib import Path
 from autodokit.affairs.图节点_end.affair import execute
 
-config_path = Path(r"D:/my_workspace/configs/affair_config.json").resolve()
+config_path = Path("/path/to/my_workspace/configs/affair_config.json").resolve()
 outputs = execute(config_path)
 print(outputs)
 ```
@@ -7763,7 +7763,7 @@ P1 阶段仅输出分支规划信息，不直接调度并发执行。
 from pathlib import Path
 import autodokit as aok
 
-workspace_root = Path(r"D:/my_workspace").resolve()
+workspace_root = Path("/path/to/my_workspace").resolve()
 outputs = aok.run_affair("图节点_fork",
     config={'branches': ['branch_1', 'branch_2']},
     workspace_root=workspace_root,
@@ -7777,7 +7777,7 @@ print(outputs)
 from pathlib import Path
 from autodokit.affairs.图节点_fork.affair import execute
 
-config_path = Path(r"D:/my_workspace/configs/affair_config.json").resolve()
+config_path = Path("/path/to/my_workspace/configs/affair_config.json").resolve()
 outputs = execute(config_path)
 print(outputs)
 ```
@@ -7887,7 +7887,7 @@ P1 阶段仅提供最小可运行判断能力。
 from pathlib import Path
 import autodokit as aok
 
-workspace_root = Path(r"D:/my_workspace").resolve()
+workspace_root = Path("/path/to/my_workspace").resolve()
 outputs = aok.run_affair("图节点_if",
     config={'condition': False, 'default': False},
     workspace_root=workspace_root,
@@ -7901,7 +7901,7 @@ print(outputs)
 from pathlib import Path
 from autodokit.affairs.图节点_if.affair import execute
 
-config_path = Path(r"D:/my_workspace/configs/affair_config.json").resolve()
+config_path = Path("/path/to/my_workspace/configs/affair_config.json").resolve()
 outputs = execute(config_path)
 print(outputs)
 ```
@@ -8005,7 +8005,7 @@ P1 阶段仅回显输入元信息。
 from pathlib import Path
 import autodokit as aok
 
-workspace_root = Path(r"D:/my_workspace").resolve()
+workspace_root = Path("/path/to/my_workspace").resolve()
 outputs = aok.run_affair("图节点_input",
     config={'input_name': 'input', 'input_source': ''},
     workspace_root=workspace_root,
@@ -8019,7 +8019,7 @@ print(outputs)
 from pathlib import Path
 from autodokit.affairs.图节点_input.affair import execute
 
-config_path = Path(r"D:/my_workspace/configs/affair_config.json").resolve()
+config_path = Path("/path/to/my_workspace/configs/affair_config.json").resolve()
 outputs = execute(config_path)
 print(outputs)
 ```
@@ -8135,7 +8135,7 @@ P5 阶段由控制流引擎负责“等待所有已激活上游”语义，本�
 from pathlib import Path
 import autodokit as aok
 
-workspace_root = Path(r"D:/my_workspace").resolve()
+workspace_root = Path("/path/to/my_workspace").resolve()
 outputs = aok.run_affair("图节点_merge",
     config={'merge_strategy': 'wait_all_activated',
      'quorum': 1,
@@ -8152,7 +8152,7 @@ print(outputs)
 from pathlib import Path
 from autodokit.affairs.图节点_merge.affair import execute
 
-config_path = Path(r"D:/my_workspace/configs/affair_config.json").resolve()
+config_path = Path("/path/to/my_workspace/configs/affair_config.json").resolve()
 outputs = execute(config_path)
 print(outputs)
 ```
@@ -8256,7 +8256,7 @@ P1 阶段仅回显导出元信息。
 from pathlib import Path
 import autodokit as aok
 
-workspace_root = Path(r"D:/my_workspace").resolve()
+workspace_root = Path("/path/to/my_workspace").resolve()
 outputs = aok.run_affair("图节点_output",
     config={'output_name': 'output', 'output_target': ''},
     workspace_root=workspace_root,
@@ -8270,7 +8270,7 @@ print(outputs)
 from pathlib import Path
 from autodokit.affairs.图节点_output.affair import execute
 
-config_path = Path(r"D:/my_workspace/configs/affair_config.json").resolve()
+config_path = Path("/path/to/my_workspace/configs/affair_config.json").resolve()
 outputs = execute(config_path)
 print(outputs)
 ```
@@ -8370,7 +8370,7 @@ P1 阶段仅提供可调度与可观测占位实现。
 from pathlib import Path
 import autodokit as aok
 
-workspace_root = Path(r"D:/my_workspace").resolve()
+workspace_root = Path("/path/to/my_workspace").resolve()
 outputs = aok.run_affair("图节点_start",
     config={'node_role': 'start'},
     workspace_root=workspace_root,
@@ -8384,7 +8384,7 @@ print(outputs)
 from pathlib import Path
 from autodokit.affairs.图节点_start.affair import execute
 
-config_path = Path(r"D:/my_workspace/configs/affair_config.json").resolve()
+config_path = Path("/path/to/my_workspace/configs/affair_config.json").resolve()
 outputs = execute(config_path)
 print(outputs)
 ```
@@ -8530,7 +8530,7 @@ P5 阶段提供最小可运行实现。
 from pathlib import Path
 import autodokit as aok
 
-workspace_root = Path(r"D:/my_workspace").resolve()
+workspace_root = Path("/path/to/my_workspace").resolve()
 outputs = aok.run_affair("图节点_switch",
     config={'switch_value': 'A',
      'route_expression': '',
@@ -8550,7 +8550,7 @@ print(outputs)
 from pathlib import Path
 from autodokit.affairs.图节点_switch.affair import execute
 
-config_path = Path(r"D:/my_workspace/configs/affair_config.json").resolve()
+config_path = Path("/path/to/my_workspace/configs/affair_config.json").resolve()
 outputs = execute(config_path)
 print(outputs)
 ```
@@ -8655,7 +8655,7 @@ CNKI 基础检索事务。
 from pathlib import Path
 import autodokit as aok
 
-workspace_root = Path(r"D:/my_workspace").resolve()
+workspace_root = Path("/path/to/my_workspace").resolve()
 outputs = aok.run_affair("CNKI基础检索",
     config={'query': '',
      'page': 1,
@@ -8674,7 +8674,7 @@ print(outputs)
 from pathlib import Path
 from autodokit.affairs.CNKI基础检索.affair import execute
 
-config_path = Path(r"D:/my_workspace/configs/affair_config.json").resolve()
+config_path = Path("/path/to/my_workspace/configs/affair_config.json").resolve()
 outputs = execute(config_path)
 print(outputs)
 ```
@@ -8768,7 +8768,7 @@ CNKI 期刊检索事务。
 from pathlib import Path
 import autodokit as aok
 
-workspace_root = Path(r"D:/my_workspace").resolve()
+workspace_root = Path("/path/to/my_workspace").resolve()
 outputs = aok.run_affair("CNKI期刊检索",
     config={'journal_query': '', 'access_type': 'closed', 'metadata': {}, 'output_dir': ''},
     workspace_root=workspace_root,
@@ -8782,7 +8782,7 @@ print(outputs)
 from pathlib import Path
 from autodokit.affairs.CNKI期刊检索.affair import execute
 
-config_path = Path(r"D:/my_workspace/configs/affair_config.json").resolve()
+config_path = Path("/path/to/my_workspace/configs/affair_config.json").resolve()
 outputs = execute(config_path)
 print(outputs)
 ```
@@ -8900,7 +8900,7 @@ CNKI 高级检索事务。
 from pathlib import Path
 import autodokit as aok
 
-workspace_root = Path(r"D:/my_workspace").resolve()
+workspace_root = Path("/path/to/my_workspace").resolve()
 outputs = aok.run_affair("CNKI高级检索",
     config={'query': '',
      'author': '',
@@ -8923,7 +8923,7 @@ print(outputs)
 from pathlib import Path
 from autodokit.affairs.CNKI高级检索.affair import execute
 
-config_path = Path(r"D:/my_workspace/configs/affair_config.json").resolve()
+config_path = Path("/path/to/my_workspace/configs/affair_config.json").resolve()
 outputs = execute(config_path)
 print(outputs)
 ```
@@ -9065,7 +9065,7 @@ print(outputs)
 from pathlib import Path
 import autodokit as aok
 
-workspace_root = Path(r"D:/my_workspace").resolve()
+workspace_root = Path("/path/to/my_workspace").resolve()
 outputs = aok.run_affair("候选文献视图构建",
     config={'input_csv': '',
      'content_db': '',
@@ -9102,7 +9102,7 @@ print(outputs)
 from pathlib import Path
 from  import execute
 
-config_path = Path(r"D:/my_workspace/configs/affair_config.json").resolve()
+config_path = Path("/path/to/my_workspace/configs/affair_config.json").resolve()
 outputs = execute(config_path)
 print(outputs)
 ```
@@ -9218,7 +9218,7 @@ print(outputs)
 from pathlib import Path
 import autodokit as aok
 
-workspace_root = Path(r"D:/my_workspace").resolve()
+workspace_root = Path("/path/to/my_workspace").resolve()
 outputs = aok.run_affair("合并去重文献元数据",
     config={'input_table_path': '', 'output_table_path': '', 'dry_run': False, 'backup': True},
     workspace_root=workspace_root,
@@ -9232,7 +9232,7 @@ print(outputs)
 from pathlib import Path
 from autodokit.affairs.合并去重文献元数据.affair import execute
 
-config_path = Path(r"D:/my_workspace/configs/affair_config.json").resolve()
+config_path = Path("/path/to/my_workspace/configs/affair_config.json").resolve()
 outputs = execute(config_path)
 print(outputs)
 ```
@@ -9374,7 +9374,7 @@ Examples:
 from pathlib import Path
 import autodokit as aok
 
-workspace_root = Path(r"D:/my_workspace").resolve()
+workspace_root = Path("/path/to/my_workspace").resolve()
 outputs = aok.run_affair("向量化与索引构建",
     config={'input_chunk_manifest_json': 'workflows/workflow_解析与分块/output/03_chunk/chunk_manifest.json',
      'output_dir': 'workflows/workflow_向量化与索引构建/output/04_vector_index',
@@ -9392,7 +9392,7 @@ print(outputs)
 from pathlib import Path
 from autodokit.affairs.向量化与索引构建.affair import execute
 
-config_path = Path(r"D:/my_workspace/configs/affair_config.json").resolve()
+config_path = Path("/path/to/my_workspace/configs/affair_config.json").resolve()
 outputs = execute(config_path)
 print(outputs)
 ```
@@ -9562,7 +9562,7 @@ print(outputs)
 from pathlib import Path
 import autodokit as aok
 
-workspace_root = Path(r"D:/my_workspace").resolve()
+workspace_root = Path("/path/to/my_workspace").resolve()
 outputs = aok.run_affair("导入和预处理文献元数据",
     config={'bibtex_path': 'workspace/references/bib/library.bib',
      'pdf_dir': 'workspace/references/attachments',
@@ -9598,7 +9598,7 @@ print(outputs)
 from pathlib import Path
 from autodokit.affairs.导入和预处理文献元数据.affair import execute
 
-config_path = Path(r"D:/my_workspace/configs/affair_config.json").resolve()
+config_path = Path("/path/to/my_workspace/configs/affair_config.json").resolve()
 outputs = execute(config_path)
 print(outputs)
 ```
@@ -9738,7 +9738,7 @@ Returns:
 from pathlib import Path
 import autodokit as aok
 
-workspace_root = Path(r"D:/my_workspace").resolve()
+workspace_root = Path("/path/to/my_workspace").resolve()
 outputs = aok.run_affair("文献矩阵",
     config={'input_structured_dir': '',
      'content_db': '',
@@ -9762,7 +9762,7 @@ print(outputs)
 from pathlib import Path
 from autodokit.affairs.文献矩阵.affair import execute
 
-config_path = Path(r"D:/my_workspace/configs/affair_config.json").resolve()
+config_path = Path("/path/to/my_workspace/configs/affair_config.json").resolve()
 outputs = execute(config_path)
 print(outputs)
 ```
@@ -9859,7 +9859,7 @@ print(outputs)
 from pathlib import Path
 import autodokit as aok
 
-workspace_root = Path(r"D:/my_workspace").resolve()
+workspace_root = Path("/path/to/my_workspace").resolve()
 outputs = aok.run_affair("文献阅读规划",
     config={'focus': '', 'candidates': [], 'max_items': 12, 'output_dir': ''},
     workspace_root=workspace_root,
@@ -9873,7 +9873,7 @@ print(outputs)
 from pathlib import Path
 from autodokit.affairs.文献阅读规划.affair import execute
 
-config_path = Path(r"D:/my_workspace/configs/affair_config.json").resolve()
+config_path = Path("/path/to/my_workspace/configs/affair_config.json").resolve()
 outputs = execute(config_path)
 print(outputs)
 ```
@@ -9970,7 +9970,7 @@ print(outputs)
 from pathlib import Path
 import autodokit as aok
 
-workspace_root = Path(r"D:/my_workspace").resolve()
+workspace_root = Path("/path/to/my_workspace").resolve()
 outputs = aok.run_affair("本地文献导入",
     config={'project_root': '', 'source_paths': [], 'persist': False, 'output_dir': ''},
     workspace_root=workspace_root,
@@ -9984,7 +9984,7 @@ print(outputs)
 from pathlib import Path
 from autodokit.affairs.本地文献导入.affair import execute
 
-config_path = Path(r"D:/my_workspace/configs/affair_config.json").resolve()
+config_path = Path("/path/to/my_workspace/configs/affair_config.json").resolve()
 outputs = execute(config_path)
 print(outputs)
 ```
@@ -10146,7 +10146,7 @@ print(outputs)
 from pathlib import Path
 import autodokit as aok
 
-workspace_root = Path(r"D:/my_workspace").resolve()
+workspace_root = Path("/path/to/my_workspace").resolve()
 outputs = aok.run_affair("检索治理",
     config={'request_uid': '',
      'query': '',
@@ -10186,7 +10186,7 @@ print(outputs)
 from pathlib import Path
 from autodokit.affairs.检索治理.affair import execute
 
-config_path = Path(r"D:/my_workspace/configs/affair_config.json").resolve()
+config_path = Path("/path/to/my_workspace/configs/affair_config.json").resolve()
 outputs = execute(config_path)
 print(outputs)
 ```
@@ -10431,7 +10431,7 @@ Examples:
 from pathlib import Path
 import autodokit as aok
 
-workspace_root = Path(r"D:/my_workspace").resolve()
+workspace_root = Path("/path/to/my_workspace").resolve()
 outputs = aok.run_affair("生成关键词集合",
     config={'description': '研究主题：房地产市场与银行系统性风险的交叉研究，关注房价波动、抵押品渠道、银行风险传导与宏观审慎监管。',
      'research_domains': {'房地产': ['房地产', '房价', '住房市场', '房地产价格波动', '抵押品', '房地产周期'],
@@ -10475,7 +10475,7 @@ print(outputs)
 from pathlib import Path
 from autodokit.affairs.生成关键词集合.affair import execute
 
-config_path = Path(r"D:/my_workspace/configs/affair_config.json").resolve()
+config_path = Path("/path/to/my_workspace/configs/affair_config.json").resolve()
 outputs = execute(config_path)
 print(outputs)
 ```
@@ -10593,7 +10593,7 @@ print(outputs)
 from pathlib import Path
 import autodokit as aok
 
-workspace_root = Path(r"D:/my_workspace").resolve()
+workspace_root = Path("/path/to/my_workspace").resolve()
 outputs = aok.run_affair("生成文献元数据关系图",
     config={'content_db': '',
      'output_dir': '',
@@ -10610,7 +10610,7 @@ print(outputs)
 from pathlib import Path
 from autodokit.affairs.生成文献元数据关系图.affair import execute
 
-config_path = Path(r"D:/my_workspace/configs/affair_config.json").resolve()
+config_path = Path("/path/to/my_workspace/configs/affair_config.json").resolve()
 outputs = execute(config_path)
 print(outputs)
 ```
@@ -10721,7 +10721,7 @@ print(outputs)
 from pathlib import Path
 import autodokit as aok
 
-workspace_root = Path(r"D:/my_workspace").resolve()
+workspace_root = Path("/path/to/my_workspace").resolve()
 outputs = aok.run_affair("知识预筛选",
     config={'focus': '',
      'items': [],
@@ -10741,7 +10741,7 @@ print(outputs)
 from pathlib import Path
 from autodokit.affairs.知识预筛选.affair import execute
 
-config_path = Path(r"D:/my_workspace/configs/affair_config.json").resolve()
+config_path = Path("/path/to/my_workspace/configs/affair_config.json").resolve()
 outputs = execute(config_path)
 print(outputs)
 ```
@@ -10868,7 +10868,7 @@ A065 承接 A060 已就绪的综述解析资产，执行参考文献扫描、cit
 from pathlib import Path
 import autodokit as aok
 
-workspace_root = Path(r"D:/my_workspace").resolve()
+workspace_root = Path("/path/to/my_workspace").resolve()
 outputs = aok.run_affair("综述参考文献预处理与笔记骨架",
     config={'workspace_root': '',
      'content_db': '',
@@ -10900,7 +10900,7 @@ print(outputs)
 from pathlib import Path
 from  import execute
 
-config_path = Path(r"D:/my_workspace/configs/affair_config.json").resolve()
+config_path = Path("/path/to/my_workspace/configs/affair_config.json").resolve()
 outputs = execute(config_path)
 print(outputs)
 ```
@@ -11009,7 +11009,7 @@ print(outputs)
 from pathlib import Path
 import autodokit as aok
 
-workspace_root = Path(r"D:/my_workspace").resolve()
+workspace_root = Path("/path/to/my_workspace").resolve()
 outputs = aok.run_affair("综述研读与研究地图生成",
     config={'topic': '',
      'readable_view_csv': '',
@@ -11029,7 +11029,7 @@ print(outputs)
 from pathlib import Path
 from  import execute
 
-config_path = Path(r"D:/my_workspace/configs/affair_config.json").resolve()
+config_path = Path("/path/to/my_workspace/configs/affair_config.json").resolve()
 outputs = execute(config_path)
 print(outputs)
 ```
@@ -11172,7 +11172,7 @@ Returns:
 from pathlib import Path
 import autodokit as aok
 
-workspace_root = Path(r"D:/my_workspace").resolve()
+workspace_root = Path("/path/to/my_workspace").resolve()
 outputs = aok.run_affair("综述草稿生成",
     config={'input_matrix_jsonl': 'output/matrix/matrix.jsonl',
      'input_structured_dir': None,
@@ -11197,7 +11197,7 @@ print(outputs)
 from pathlib import Path
 from autodokit.affairs.综述草稿生成.affair import execute
 
-config_path = Path(r"D:/my_workspace/configs/affair_config.json").resolve()
+config_path = Path("/path/to/my_workspace/configs/affair_config.json").resolve()
 outputs = execute(config_path)
 print(outputs)
 ```
@@ -11308,7 +11308,7 @@ A060 综述预处理事务。仅承接 A050 已产出的阅读池，执行 parse
 from pathlib import Path
 import autodokit as aok
 
-workspace_root = Path(r"D:/my_workspace").resolve()
+workspace_root = Path("/path/to/my_workspace").resolve()
 outputs = aok.run_affair("综述预处理",
     config={'workspace_root': '',
      'content_db': '',
@@ -11332,7 +11332,7 @@ print(outputs)
 from pathlib import Path
 from  import execute
 
-config_path = Path(r"D:/my_workspace/configs/affair_config.json").resolve()
+config_path = Path("/path/to/my_workspace/configs/affair_config.json").resolve()
 outputs = execute(config_path)
 print(outputs)
 ```
@@ -11488,7 +11488,7 @@ python .utodo-kitffairs\自动化导入知网研学专题.py
 from pathlib import Path
 import autodokit as aok
 
-workspace_root = Path(r"D:/my_workspace").resolve()
+workspace_root = Path("/path/to/my_workspace").resolve()
 outputs = aok.run_affair("自动化导入知网研学专题",
     config={},
     workspace_root=workspace_root,
@@ -11502,7 +11502,7 @@ print(outputs)
 from pathlib import Path
 from autodokit.affairs.自动化导入知网研学专题.affair import execute
 
-config_path = Path(r"D:/my_workspace/configs/affair_config.json").resolve()
+config_path = Path("/path/to/my_workspace/configs/affair_config.json").resolve()
 outputs = execute(config_path)
 print(outputs)
 ```
@@ -11619,7 +11619,7 @@ print(outputs)
 from pathlib import Path
 import autodokit as aok
 
-workspace_root = Path(r"D:/my_workspace").resolve()
+workspace_root = Path("/path/to/my_workspace").resolve()
 outputs = aok.run_affair("解析与分块",
     config={'content_db': 'workflows/workspace/database/content/content.db',
      'output_dir': 'workflows/workflow_解析与分块/output/03_chunk',
@@ -11637,7 +11637,7 @@ print(outputs)
 from pathlib import Path
 from autodokit.affairs.解析与分块.affair import execute
 
-config_path = Path(r"D:/my_workspace/configs/affair_config.json").resolve()
+config_path = Path("/path/to/my_workspace/configs/affair_config.json").resolve()
 outputs = execute(config_path)
 print(outputs)
 ```
@@ -11731,7 +11731,7 @@ print(outputs)
 from pathlib import Path
 import autodokit as aok
 
-workspace_root = Path(r"D:/my_workspace").resolve()
+workspace_root = Path("/path/to/my_workspace").resolve()
 outputs = aok.run_affair("订阅文献访问治理",
     config={'target_records': [],
      'access_scope': 'campus',
@@ -11748,7 +11748,7 @@ print(outputs)
 from pathlib import Path
 from autodokit.affairs.订阅文献访问治理.affair import execute
 
-config_path = Path(r"D:/my_workspace/configs/affair_config.json").resolve()
+config_path = Path("/path/to/my_workspace/configs/affair_config.json").resolve()
 outputs = execute(config_path)
 print(outputs)
 ```
@@ -11941,7 +11941,7 @@ Examples:
 from pathlib import Path
 import autodokit as aok
 
-workspace_root = Path(r"D:/my_workspace").resolve()
+workspace_root = Path("/path/to/my_workspace").resolve()
 outputs = aok.run_affair("语义预筛选",
     config={'content_db': '',
      'input_keywords': 'workflows/workflow_生成关键词集合/data/01_keyword_set',
@@ -11964,7 +11964,7 @@ print(outputs)
 from pathlib import Path
 from autodokit.affairs.语义预筛选.affair import execute
 
-config_path = Path(r"D:/my_workspace/configs/affair_config.json").resolve()
+config_path = Path("/path/to/my_workspace/configs/affair_config.json").resolve()
 outputs = execute(config_path)
 print(outputs)
 ```
@@ -12068,7 +12068,7 @@ Raises:
 from pathlib import Path
 import autodokit as aok
 
-workspace_root = Path(r"D:/my_workspace").resolve()
+workspace_root = Path("/path/to/my_workspace").resolve()
 outputs = aok.run_affair("CAJ文件转PDF",
     config={},
     workspace_root=workspace_root,
@@ -12082,7 +12082,7 @@ print(outputs)
 from pathlib import Path
 from autodokit.affairs.CAJ文件转PDF.affair import execute
 
-config_path = Path(r"D:/my_workspace/configs/affair_config.json").resolve()
+config_path = Path("/path/to/my_workspace/configs/affair_config.json").resolve()
 outputs = execute(config_path)
 print(outputs)
 ```
@@ -12178,7 +12178,7 @@ print(outputs)
 from pathlib import Path
 import autodokit as aok
 
-workspace_root = Path(r"D:/my_workspace").resolve()
+workspace_root = Path("/path/to/my_workspace").resolve()
 outputs = aok.run_affair("LaTeX转Word",
     config={},
     workspace_root=workspace_root,
@@ -12192,7 +12192,7 @@ print(outputs)
 from pathlib import Path
 from autodokit.affairs.LaTeX转Word.affair import execute
 
-config_path = Path(r"D:/my_workspace/configs/affair_config.json").resolve()
+config_path = Path("/path/to/my_workspace/configs/affair_config.json").resolve()
 outputs = execute(config_path)
 print(outputs)
 ```
@@ -12318,7 +12318,7 @@ print(outputs)
 from pathlib import Path
 import autodokit as aok
 
-workspace_root = Path(r"D:/my_workspace").resolve()
+workspace_root = Path("/path/to/my_workspace").resolve()
 outputs = aok.run_affair("PDF文件转md文件",
     config={'input_pdf_dir': 'data/文献原文数据',
      'output_md_dir': 'data/文献原文转md数据',
@@ -12337,7 +12337,7 @@ print(outputs)
 from pathlib import Path
 from autodokit.affairs.PDF文件转md文件.affair import execute
 
-config_path = Path(r"D:/my_workspace/configs/affair_config.json").resolve()
+config_path = Path("/path/to/my_workspace/configs/affair_config.json").resolve()
 outputs = execute(config_path)
 print(outputs)
 ```
@@ -12437,7 +12437,7 @@ print(outputs)
 from pathlib import Path
 import autodokit as aok
 
-workspace_root = Path(r"D:/my_workspace").resolve()
+workspace_root = Path("/path/to/my_workspace").resolve()
 outputs = aok.run_affair("PDF文件转结构化数据文件",
     config={},
     workspace_root=workspace_root,
@@ -12451,7 +12451,7 @@ print(outputs)
 from pathlib import Path
 from autodokit.affairs.PDF文件转结构化数据文件.affair import execute
 
-config_path = Path(r"D:/my_workspace/configs/affair_config.json").resolve()
+config_path = Path("/path/to/my_workspace/configs/affair_config.json").resolve()
 outputs = execute(config_path)
 print(outputs)
 ```
@@ -12547,7 +12547,7 @@ print(outputs)
 from pathlib import Path
 import autodokit as aok
 
-workspace_root = Path(r"D:/my_workspace").resolve()
+workspace_root = Path("/path/to/my_workspace").resolve()
 outputs = aok.run_affair("Word转LaTeX",
     config={},
     workspace_root=workspace_root,
@@ -12561,7 +12561,7 @@ print(outputs)
 from pathlib import Path
 from autodokit.affairs.Word转LaTeX.affair import execute
 
-config_path = Path(r"D:/my_workspace/configs/affair_config.json").resolve()
+config_path = Path("/path/to/my_workspace/configs/affair_config.json").resolve()
 outputs = execute(config_path)
 print(outputs)
 ```

@@ -676,8 +676,8 @@ def migrate_parse_assets_with_full_rewrite(payload: dict[str, Any]) -> dict[str,
 
     Examples:
         >>> payload = {
-        ...   "content_db": "C:/repo/workspace/database/content/content.db",
-        ...   "external_parse_root": "D:/old_workspace/references/structured_monkeyocr_full",
+        ...   "content_db": "/home/ethan/repo/workspace/database/content/content.db",
+        ...   "external_parse_root": "/home/ethan/old_workspace/references/structured_monkeyocr_full",
         ...   "mode": "preview"
         ... }
         >>> result = migrate_parse_assets_with_full_rewrite(payload)

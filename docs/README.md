@@ -8,7 +8,7 @@
 
   ```bash
   math-delimiters \
-    --input-dir "C:\\path\\to\\texfiles" \
+    --input-dir "/path/to/texfiles" \
     --input-file myfile.tex \
     --dry-run
   ```

@@ -24,7 +24,7 @@ def test_build_structure_tree_should_group_sections_and_references() -> None:
     """应能从元素流构建 section 与 references_section。"""
 
     source = {"title": "Demo Document", "backend": "multimodal_high_precision_v1"}
-    page_records = [{"page_index": 0, "page_number": 1, "image_path": "D:/tmp/page_0001.png"}]
+    page_records = [{"page_index": 0, "page_number": 1, "image_path": "/tmp/page_0001.png"}]
     page_results = [
         {
             "page_index": 0,
@@ -53,7 +53,7 @@ def test_build_tree_linear_index_should_stitch_tree_elements_and_attachments() -
     """应生成可按顺序重建内容的串联索引。"""
 
     source = {"title": "Demo Document", "backend": "multimodal_high_precision_v1"}
-    page_records = [{"page_index": 0, "page_number": 1, "image_path": "D:/tmp/page_0001.png"}]
+    page_records = [{"page_index": 0, "page_number": 1, "image_path": "/tmp/page_0001.png"}]
     page_results = [
         {
             "page_index": 0,
@@ -71,7 +71,7 @@ def test_build_tree_linear_index_should_stitch_tree_elements_and_attachments() -
         {
             "attachment_id": "attachment_00001",
             "attachment_type": "figure",
-            "storage_path": "D:/tmp/figure_0001.png",
+            "storage_path": "/tmp/figure_0001.png",
             "page_index": 0,
             "bbox": [1, 2, 3, 4],
             "linked_node_id": "tree_00003",
@@ -98,8 +98,8 @@ def test_build_elements_payload_should_prefer_canonical_page_index() -> None:
 
     source = {"title": "Demo Document", "backend": "multimodal_high_precision_v1"}
     page_records = [
-        {"page_index": 0, "page_number": 1, "image_path": "D:/tmp/page_0001.png"},
-        {"page_index": 1, "page_number": 2, "image_path": "D:/tmp/page_0002.png"},
+        {"page_index": 0, "page_number": 1, "image_path": "/tmp/page_0001.png"},
+        {"page_index": 1, "page_number": 2, "image_path": "/tmp/page_0002.png"},
     ]
     page_results = [
         {

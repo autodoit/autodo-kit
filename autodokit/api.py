@@ -17,6 +17,7 @@ from tempfile import NamedTemporaryFile
 from types import ModuleType
 from typing import Any
 
+from autodokit.path_compat import resolve_portable_path
 from autodokit.tools import load_json_or_py, resolve_paths_to_absolute
 from autodokit.tools.atomic.task_aok.postprocess_runtime import run_unified_postprocess
 from autodokit.tools.time_utils import now_iso
@@ -112,7 +113,7 @@ def _resolve_workspace_root(workspace_root: str | Path | None) -> Path:
 
     if workspace_root is None:
         return Path.cwd().resolve()
-    return Path(workspace_root).expanduser().resolve()
+    return resolve_portable_path(workspace_root, base=Path.cwd())
 
 
 def import_affair_module(affair_uid: str, workspace_root: str | Path | None = None) -> ModuleType:
@@ -189,7 +190,7 @@ def run_affair(
     temp_file_path: Path | None = None
 
     if config_path is not None:
-        resolved_config_path = Path(config_path).expanduser().resolve()
+        resolved_config_path = resolve_portable_path(config_path, base=root)
     else:
         root.mkdir(parents=True, exist_ok=True)
         with NamedTemporaryFile("w", suffix=".json", delete=False, encoding="utf-8", dir=str(root)) as temp_file:
@@ -243,7 +244,7 @@ def import_user_affair(
     """导入用户事务为标准三件套并更新注册表。"""
 
     runtime = bootstrap_runtime(workspace_root=workspace_root)
-    source_path = Path(source).expanduser().resolve()
+    source_path = resolve_portable_path(source, base=Path(runtime["workspace_root"]))
     if not source_path.exists() or not source_path.is_file():
         raise FileNotFoundError(f"source 不存在或不是文件: {source_path}")
 
@@ -408,7 +409,7 @@ def load_graph(
     if record is None:
         raise KeyError(f"未找到图配置: {uid}")
 
-    target = Path(str(record.get("graph_path") or "")).expanduser().resolve()
+    target = resolve_portable_path(str(record.get("graph_path") or ""), base=Path(runtime["workspace_root"]))
     if not target.exists():
         raise FileNotFoundError(f"图配置文件不存在: {target}")
     data = load_json_or_py(target)
