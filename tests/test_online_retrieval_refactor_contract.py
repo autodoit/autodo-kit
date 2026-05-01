@@ -20,13 +20,13 @@ def test_dispatcher_debug_path_injects_request_profile() -> None:
 
 
 def test_spis_delegate_by_request_profile(monkeypatch) -> None:
-    monkeypatch.setattr(content_portal_spis, "execute_cnki_single_download", lambda payload: {"status": "PASS", "channel": "zh"})
-    monkeypatch.setattr(content_portal_spis, "execute_open_single_download", lambda payload: {"status": "PASS", "channel": "en"})
+    monkeypatch.setattr(content_portal_spis, "execute_spis_zh_single_download", lambda payload: {"status": "PASS", "channel": "zh"})
+    monkeypatch.setattr(content_portal_spis, "execute_spis_en_single_download", lambda payload: {"status": "PASS", "channel": "en"})
 
     zh_result = content_portal_spis.execute_spis_single_download({"source": "spis"}, request_profile="zh")
     en_result = content_portal_spis.execute_spis_single_download({"source": "spis"}, request_profile="en")
 
     assert zh_result["channel"] == "zh"
-    assert zh_result["spis_delegate"] == "zh_cnki"
+    assert zh_result["spis_delegate"] == "spis_zh"
     assert en_result["channel"] == "en"
-    assert en_result["spis_delegate"] == "en_open_access"
+    assert en_result["spis_delegate"] == "spis_en"

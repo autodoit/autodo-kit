@@ -104,21 +104,27 @@ def _resolve_repo_path(project_root: Path, raw_path: str | Path | None, default_
 
 
 def _find_edge_executable() -> str:
-    """查找 Google Chrome 可执行文件。
+    """查找可用于 CDP 的 Chromium 内核浏览器可执行文件。
 
     Returns:
-        Google Chrome 可执行文件路径。
+        浏览器可执行文件路径。
 
     Raises:
-        RuntimeError: 当前系统未找到 Chrome 时抛出。
+        RuntimeError: 当前系统未找到可用浏览器时抛出。
     """
 
     candidates = [
+        shutil.which("msedge"),
+        shutil.which("microsoft-edge"),
         shutil.which("chrome"),
+        shutil.which("google-chrome"),
+        shutil.which("Google Chrome"),
         shutil.which("google-chrome"),
         shutil.which("google-chrome-stable"),
         shutil.which("chromium"),
         shutil.which("chromium-browser"),
+        "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
+        "/Applications/Microsoft Edge.app/Contents/MacOS/Microsoft Edge",
         "/usr/bin/google-chrome",
         "/usr/bin/google-chrome-stable",
         "/usr/bin/chromium",
@@ -127,7 +133,7 @@ def _find_edge_executable() -> str:
     for candidate in candidates:
         if candidate and Path(candidate).exists():
             return candidate
-    raise RuntimeError("未找到 Google Chrome，可先安装 Chrome 或在脚本中补充浏览器路径。")
+    raise RuntimeError("未找到可用浏览器（Chrome/Edge），请先安装或在脚本中补充浏览器路径。")
 
 
 def _launch_edge_with_cdp(profile_dir: Path, port: int, start_url: str) -> subprocess.Popen[str]:
@@ -166,6 +172,21 @@ def _connect_context(cdp_url: str) -> tuple[Playwright, BrowserContext]:
     if browser.contexts:
         return playwright, browser.contexts[0]
     return playwright, browser.new_context()
+
+
+def _connect_context_with_retry(cdp_url: str, retries: int = 12, delay_seconds: float = 1.0) -> tuple[Playwright, BrowserContext]:
+    """重试连接 CDP 浏览器上下文。"""
+
+    last_error: Exception | None = None
+    for _ in range(max(retries, 1)):
+        try:
+            return _connect_context(cdp_url)
+        except Exception as exc:  # noqa: BLE001
+            last_error = exc
+            time.sleep(max(delay_seconds, 0.1))
+    if last_error is not None:
+        raise last_error
+    raise RuntimeError("连接 CDP 失败，且未捕获到具体异常。")
 
 
 def _select_existing_page(context: BrowserContext, preferred_url: str = "") -> Page:
@@ -495,6 +516,31 @@ def _human_pause(page: Page, milliseconds: int = HUMAN_STEP_DELAY_MS) -> None:
     page.wait_for_timeout(milliseconds)
 
 
+def _safe_evaluate(page: Page, script: str, arg: Any | None = None, *, retries: int = 2) -> Any:
+    """执行 page.evaluate，并对导航竞态导致的上下文丢失做重试。"""
+
+    last_exc: Exception | None = None
+    for attempt in range(retries + 1):
+        try:
+            if arg is None:
+                return page.evaluate(script)
+            return page.evaluate(script, arg)
+        except Exception as exc:  # noqa: BLE001
+            last_exc = exc
+            message = str(exc)
+            if "Execution context was destroyed" not in message and "Cannot find context with specified id" not in message:
+                raise
+            if attempt >= retries:
+                break
+            try:
+                page.wait_for_load_state("domcontentloaded", timeout=5000)
+            except Exception:  # noqa: BLE001
+                page.wait_for_timeout(800)
+    if last_exc is not None:
+        raise last_exc
+    raise RuntimeError("evaluate 调用失败，且未捕获到具体异常")
+
+
 def _build_submit_search_script() -> str:
     """构造搜索脚本。"""
 
@@ -687,7 +733,17 @@ def _wait_for_human_if_needed(page: Page, api_key_file: str, allow_manual_interv
     manual_events: list[dict[str, Any]] = []
     wait_started_at = time.time()
     while True:
-        blocked_state = _detect_blocking_state(page)
+        try:
+            blocked_state = _detect_blocking_state(page)
+        except Exception as exc:  # noqa: BLE001
+            manual_events.append(
+                {
+                    "status": "manual_interrupted",
+                    "reason": "page_or_context_closed",
+                    "detail": f"{exc.__class__.__name__}: {exc}",
+                }
+            )
+            return manual_events
         if not blocked_state:
             return manual_events
         event: dict[str, Any] = dict(blocked_state)
@@ -709,7 +765,17 @@ def _wait_for_human_if_needed(page: Page, api_key_file: str, allow_manual_interv
             "[人工接管] 当前页面需要登录或完成验证，浏览器窗口会保持打开。"
             f"已等待 {elapsed} 秒，剩余约 {remaining} 秒，将自动轮询页面状态。"
         )
-        page.wait_for_timeout(MANUAL_WAIT_POLL_SECONDS * 1000)
+        try:
+            page.wait_for_timeout(MANUAL_WAIT_POLL_SECONDS * 1000)
+        except Exception as exc:  # noqa: BLE001
+            manual_events.append(
+                {
+                    "status": "manual_interrupted",
+                    "reason": "page_or_context_closed",
+                    "detail": f"{exc.__class__.__name__}: {exc}",
+                }
+            )
+            return manual_events
 
 
 def _parse_current_page(page: Page) -> dict[str, Any]:
@@ -924,7 +990,13 @@ def run_pipeline(config: dict[str, Any]) -> dict[str, Any]:
     port = int(config.get("cnki_cdp_port") or 9222)
     cdp_url = str(config.get("cnki_cdp_url") or f"http://127.0.0.1:{port}")
     entry_url = str(config.get("cnki_entry_url") or "https://kns.cnki.net/kns8s/search")
-    skip_launch = bool(config.get("cnki_skip_launch", False))
+    browser_config = dict(config.get("cnki_browser_config") or {})
+    skip_launch = bool(
+        config.get("cnki_skip_launch", False)
+        or browser_config.get("skip_launch", False)
+        or browser_config.get("existing_browser_only", False)
+        or browser_config.get("vscode_embedded_only", False)
+    )
     keep_browser = bool(config.get("keep_browser_open", True))
     allow_manual = bool(config.get("allow_manual_intervention", True))
     bailian_api_key_file = str(
@@ -945,29 +1017,57 @@ def run_pipeline(config: dict[str, Any]) -> dict[str, Any]:
 
     try:
         if not skip_launch:
-            print(f"[CNKI] 启动远程调试浏览器: {entry_url}")
-            browser_proc = _launch_edge_with_cdp(profile_dir=profile_dir, port=port, start_url=entry_url)
-            time.sleep(2)
+            return {
+                "status": "BLOCKED",
+                "error_type": "BrowserPolicyViolation",
+                "error": (
+                    "当前策略禁止脚本自动启动第三方浏览器。"
+                    "请改用已存在的受控会话，并设置 cnki_skip_launch=true 后重试。"
+                ),
+                "query": query,
+                "record_count": 0,
+                "download_count": 0,
+                "manual_events": manual_events,
+                "browser": {
+                    "cdp_url": cdp_url,
+                    "profile_dir": str(profile_dir),
+                    "kept_open": keep_browser,
+                    "launch_skipped": True,
+                },
+            }
         print(f"[CNKI] 连接 CDP: {cdp_url}")
         try:
-            playwright, context = _connect_context(cdp_url)
-        except Exception:
+            playwright, context = _connect_context_with_retry(cdp_url)
+        except Exception as exc:
             if skip_launch:
-                print("[CNKI] 未发现可接管的远程调试浏览器，改为自动启动 Chrome。")
-                browser_proc = _launch_edge_with_cdp(profile_dir=profile_dir, port=port, start_url=entry_url)
-                time.sleep(2)
-                playwright, context = _connect_context(cdp_url)
-            else:
-                raise
+                return {
+                    "status": "BLOCKED",
+                    "error_type": "BrowserAttachRequired",
+                    "error": (
+                        "当前配置为仅接管已有浏览器，但未连接到可用 CDP 会话。"
+                        "请先在目标浏览器开启远程调试并提供 cnki_cdp_url/cnki_cdp_port。"
+                    ),
+                    "query": query,
+                    "record_count": 0,
+                    "download_count": 0,
+                    "manual_events": manual_events,
+                    "browser": {
+                        "cdp_url": cdp_url,
+                        "profile_dir": str(profile_dir),
+                        "kept_open": keep_browser,
+                        "launch_skipped": True,
+                    },
+                }
+            raise exc
         page = _select_existing_page(context, preferred_url=entry_url)
         print(f"[CNKI] 已接管页面: {page.url}")
-        page.set_default_timeout(int((config.get("cnki_browser_config") or {}).get("timeout_ms") or 15000))
+        page.set_default_timeout(int(browser_config.get("timeout_ms") or 15000))
         manual_events.extend(_wait_for_human_if_needed(page, bailian_api_key_file, allow_manual))
 
         if entry_url and entry_url not in page.url and not _is_result_page(page):
             print("[CNKI] 当前活动页不是目标知网页面，自动新开入口页继续执行。")
             page = context.new_page()
-            page.set_default_timeout(int((config.get("cnki_browser_config") or {}).get("timeout_ms") or 15000))
+            page.set_default_timeout(int(browser_config.get("timeout_ms") or 15000))
             page.goto(entry_url, wait_until="domcontentloaded")
             _human_pause(page)
             manual_events.extend(_wait_for_human_if_needed(page, bailian_api_key_file, allow_manual))
@@ -976,7 +1076,7 @@ def run_pipeline(config: dict[str, Any]) -> dict[str, Any]:
             print("[CNKI] 当前已在结果页，直接从现有列表继续。")
         else:
             print(f"[CNKI] 提交检索词: {query}")
-            page.evaluate(_build_submit_search_script(), {"query": query})
+            _safe_evaluate(page, _build_submit_search_script(), {"query": query})
             _wait_for_result_page(page)
         manual_events.extend(_wait_for_human_if_needed(page, bailian_api_key_file, allow_manual))
         blocked_state = _detect_blocking_state(page)
@@ -1025,7 +1125,7 @@ def run_pipeline(config: dict[str, Any]) -> dict[str, Any]:
             before_mark = f"{parsed.get('current_page', '')}/{parsed.get('total_pages', '')}"
             print(f"[CNKI] 准备翻页，当前页标记: {before_mark}")
             _human_pause(page)
-            next_result = page.evaluate(_build_next_page_script(), {"beforePage": before_mark})
+            next_result = _safe_evaluate(page, _build_next_page_script(), {"beforePage": before_mark})
             if isinstance(next_result, dict) and next_result.get("error"):
                 print(f"[CNKI] 翻页结束: {next_result.get('error')}")
                 break
