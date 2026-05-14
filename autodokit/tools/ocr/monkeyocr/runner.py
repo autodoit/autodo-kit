@@ -9,6 +9,7 @@
 
 from __future__ import annotations
 
+import platform
 import subprocess
 import time
 from pathlib import Path
@@ -61,6 +62,9 @@ def _run_local_monkeyocr(
     runtime_settings: Dict[str, Any],
 ) -> Dict[str, Any]:
     """运行本地 MonkeyOCR 单篇解析。"""
+
+    if platform.system().lower() != "windows":
+        raise RuntimeError("本地 MonkeyOCR 当前仅支持 Windows；非 Windows 请启用 remote_processing 或补充对应本地 runner。")
 
     return run_monkeyocr_windows_single_pdf(
         input_pdf=str(Path(input_pdf).expanduser().resolve()),

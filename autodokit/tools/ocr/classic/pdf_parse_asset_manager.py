@@ -12,6 +12,7 @@ import re
 from pathlib import Path
 from typing import Any, Dict, List
 
+from autodokit.path_compat import resolve_portable_path
 from autodokit.tools.bibliodb_sqlite import (
     load_attachments_df,
     load_literatures_df,
@@ -152,9 +153,7 @@ def _resolve_monkeyocr_root(*, workspace_root: Path, raw_cfg: Dict[str, Any]) ->
 
     candidate = _stringify(raw_cfg.get("monkeyocr_root"))
     if candidate:
-        path = Path(candidate)
-        if not path.is_absolute():
-            raise ValueError(f"monkeyocr_root 必须为绝对路径：{path}")
+        path = resolve_portable_path(candidate, base=workspace_root)
         normalized = _normalize_candidate(path)
         return normalized or path.resolve()
 

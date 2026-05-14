@@ -610,7 +610,7 @@ def repair_reference_text_with_llm(
         handler_kind="llm_native",
         handler_name="repair_reference_text_with_llm",
         model_name=_stringify(result.get("model_name")),
-        skill_names=["ar_A060_综述预处理_v5"],
+        skill_names=["ar_A050_统一文献预处理解析_v1"],
         reasoning_summary="在单条参考文献解析前执行轻量文本修复。",
         payload=payload,
     )
@@ -902,7 +902,7 @@ def refine_reference_lines_with_llm(
         handler_kind="llm_native" if result["parse_method"] == "aliyun_llm_reference_block" else "local_script",
         handler_name="refine_reference_lines_with_llm",
         model_name=_stringify(result["model_name"]),
-        skill_names=["ar_A050_综述候选文献视图构建_v5"],
+        skill_names=["ar_A060_综述候选文献视图构建_v7"],
         reasoning_summary="对单篇文献的参考文献块执行一次独立 LLM 清洗请求。",
         payload=payload,
     )

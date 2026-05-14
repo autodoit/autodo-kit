@@ -17,6 +17,7 @@ from typing import Mapping, Sequence
 
 import pandas as pd
 
+from autodokit.path_compat import resolve_portable_path
 from autodokit.tools.time_utils import now_iso
 
 
@@ -72,6 +73,10 @@ READING_STATE_FILTER_VIEWS: tuple[tuple[str, str], ...] = (
     ),
     ("已预处理文献清单", "IFNULL(preprocessed, 0) = 1"),
     ("待泛读文献清单", "IFNULL(pending_rough_read, 0) = 1"),
+    (
+        "未解析待泛读文献清单",
+        "IFNULL(pending_rough_read, 0) = 1 AND IFNULL(preprocessed, 0) = 0 AND IFNULL(allow_unparsed_read, 0) = 1",
+    ),
     ("正泛读文献清单", "IFNULL(in_rough_read, 0) = 1"),
     ("已泛读文献清单", "IFNULL(rough_read_done, 0) = 1"),
     (
@@ -85,6 +90,14 @@ READING_STATE_FILTER_VIEWS: tuple[tuple[str, str], ...] = (
     ),
     ("正研读文献清单", "IFNULL(in_deep_read, 0) = 1"),
     ("已研读文献清单", "IFNULL(deep_read_done, 0) = 1"),
+    (
+        "未解析已泛读文献清单",
+        "IFNULL(rough_read_without_parse_done, 0) = 1",
+    ),
+    (
+        "未解析已研读文献清单",
+        "IFNULL(deep_read_without_parse_done, 0) = 1",
+    ),
 )
 READING_QUEUE_REQUIRED_COLUMNS: dict[str, str] = {
     "queue_uid": "TEXT",
@@ -114,6 +127,8 @@ READING_STATE_REQUIRED_COLUMNS: dict[str, str] = {
     "manual_guidance": "TEXT",
     "pending_preprocess": "INTEGER",
     "preprocessed": "INTEGER",
+    "allow_unparsed_read": "INTEGER",
+    "unparsed_read_in_effect": "INTEGER",
     "preprocess_status": "TEXT",
     "preprocess_note_path": "TEXT",
     "standard_note_path": "TEXT",
@@ -132,6 +147,9 @@ READING_STATE_REQUIRED_COLUMNS: dict[str, str] = {
     "deep_read_note_path": "TEXT",
     "deep_read_decision": "TEXT",
     "deep_read_reason": "TEXT",
+    "rough_read_without_parse_done": "INTEGER",
+    "deep_read_without_parse_done": "INTEGER",
+    "require_reread_after_parse": "INTEGER",
     "analysis_formal_synced": "INTEGER",
     "innovation_synced": "INTEGER",
     "last_batch_id": "TEXT",
@@ -497,15 +515,11 @@ def resolve_content_db_config(
         value = str(raw_value or "").strip()
         if not value:
             continue
-        path = Path(value)
-        if not path.is_absolute():
-            raise ValueError(f"{key} 必须为绝对路径：{path}")
+        path = resolve_portable_path(value, base=Path.cwd())
         return resolve_content_db_path(path), key
 
     if default_path is not None:
-        path = Path(default_path)
-        if not path.is_absolute():
-            raise ValueError(f"default_path 必须为绝对路径：{path}")
+        path = resolve_portable_path(default_path, base=Path.cwd())
         return resolve_content_db_path(path), "default"
 
     if required:
@@ -700,6 +714,8 @@ def _refresh_reading_state_views(conn: sqlite3.Connection) -> None:
         COALESCE(rs.manual_guidance, '') AS manual_guidance,
         COALESCE(rs.pending_preprocess, 0) AS pending_preprocess,
         COALESCE(rs.preprocessed, 0) AS preprocessed,
+        COALESCE(rs.allow_unparsed_read, 0) AS allow_unparsed_read,
+        COALESCE(rs.unparsed_read_in_effect, 0) AS unparsed_read_in_effect,
         COALESCE(rs.preprocess_status, '') AS preprocess_status,
         COALESCE(rs.preprocess_note_path, '') AS preprocess_note_path,
         COALESCE(rs.standard_note_path, '') AS standard_note_path,
@@ -718,6 +734,9 @@ def _refresh_reading_state_views(conn: sqlite3.Connection) -> None:
         COALESCE(rs.deep_read_note_path, '') AS deep_read_note_path,
         COALESCE(rs.deep_read_decision, '') AS deep_read_decision,
         COALESCE(rs.deep_read_reason, '') AS deep_read_reason,
+        COALESCE(rs.rough_read_without_parse_done, 0) AS rough_read_without_parse_done,
+        COALESCE(rs.deep_read_without_parse_done, 0) AS deep_read_without_parse_done,
+        COALESCE(rs.require_reread_after_parse, 0) AS require_reread_after_parse,
         COALESCE(rs.analysis_formal_synced, 0) AS analysis_formal_synced,
         COALESCE(rs.innovation_synced, 0) AS innovation_synced,
         COALESCE(rs.last_batch_id, '') AS last_batch_id,
@@ -731,6 +750,7 @@ def _refresh_reading_state_views(conn: sqlite3.Connection) -> None:
         CASE
             WHEN COALESCE(rs.pending_preprocess, 0) = 1 AND COALESCE(rs.preprocess_status, '') = 'missing_attachment' THEN '补件待办'
             WHEN COALESCE(rs.pending_preprocess, 0) = 1 THEN '待预处理'
+            WHEN COALESCE(rs.pending_rough_read, 0) = 1 AND COALESCE(rs.preprocessed, 0) = 0 AND COALESCE(rs.allow_unparsed_read, 0) = 1 THEN '未解析待泛读'
             WHEN COALESCE(rs.pending_rough_read, 0) = 1 THEN '待泛读'
             WHEN COALESCE(rs.in_rough_read, 0) = 1 THEN '正泛读'
             WHEN COALESCE(rs.rough_read_done, 0) = 1 AND COALESCE(rs.analysis_batch_synced, 0) = 0 THEN '待批次汇总'
@@ -1508,6 +1528,8 @@ def init_content_db(db_path: str | Path) -> Path:
                 manual_guidance TEXT,
                 pending_preprocess INTEGER,
                 preprocessed INTEGER,
+                allow_unparsed_read INTEGER,
+                unparsed_read_in_effect INTEGER,
                 preprocess_status TEXT,
                 preprocess_note_path TEXT,
                 standard_note_path TEXT,
@@ -1526,6 +1548,9 @@ def init_content_db(db_path: str | Path) -> Path:
                 deep_read_note_path TEXT,
                 deep_read_decision TEXT,
                 deep_read_reason TEXT,
+                rough_read_without_parse_done INTEGER,
+                deep_read_without_parse_done INTEGER,
+                require_reread_after_parse INTEGER,
                 analysis_formal_synced INTEGER,
                 innovation_synced INTEGER,
                 last_batch_id TEXT,

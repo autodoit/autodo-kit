@@ -1029,12 +1029,13 @@ def upsert_parse_asset_rows(db_path: Path, rows: Sequence[dict[str, Any]] | pd.D
                 where_sql = "cite_key = ?"
                 identity = cite_key
             params.append(identity)
+            assignment_sql = ",\n                    ".join(assignments)
 
             conn.execute(
                 f"""
                 UPDATE {LITERATURE_TABLE_NAME}
                 SET
-                    {",\n                    ".join(assignments)}
+                    {assignment_sql}
                 WHERE {where_sql}
                 """,
                 tuple(params),
@@ -1098,11 +1099,12 @@ def save_structured_state(
             assignments.append(f"{variant_column} = ?")
             params.append(structured_abs_path)
         params.append(uid_literature)
+        assignment_sql = ",\n                ".join(assignments)
         cursor = conn.execute(
             f"""
             UPDATE {LITERATURE_TABLE_NAME}
             SET
-                {",\n                ".join(assignments)}
+                {assignment_sql}
             WHERE uid_literature = ?
             """,
             tuple(params),

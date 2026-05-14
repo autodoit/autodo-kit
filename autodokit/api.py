@@ -23,6 +23,26 @@ from autodokit.tools.atomic.task_aok.postprocess_runtime import run_unified_post
 from autodokit.tools.time_utils import now_iso
 
 
+def _build_affair_uid_alias_map() -> dict[str, str]:
+    """构建 ar_Axxx 命名层到真实模块路径的别名映射。"""
+
+    try:
+        from autodokit.tools.affair_entry_registry_tools import MAINLINE_AFFAIR_ENTRY_MAP
+    except Exception:
+        return {}
+
+    alias_map: dict[str, str] = {}
+    for node_code, base in MAINLINE_AFFAIR_ENTRY_MAP.items():
+        affair_uid = str(base.get("affair_uid") or "").strip()
+        module_name = str(base.get("module") or "").strip()
+        if not affair_uid or not module_name:
+            continue
+        alias_map[affair_uid] = module_name
+        if not affair_uid.startswith("ar_A"):
+            alias_map[f"ar_{node_code}_{affair_uid}"] = module_name
+    return alias_map
+
+
 def _get_runtime_context_module() -> Any:
     """按需加载运行时上下文模块。
 
@@ -122,6 +142,10 @@ def import_affair_module(affair_uid: str, workspace_root: str | Path | None = No
     uid = str(affair_uid or "").strip()
     if not uid:
         raise ValueError("affair_uid 不能为空")
+
+    alias_module_name = _build_affair_uid_alias_map().get(uid)
+    if alias_module_name:
+        return importlib.import_module(alias_module_name)
 
     official_module_name = f"autodokit.affairs.{uid}.affair"
     try:

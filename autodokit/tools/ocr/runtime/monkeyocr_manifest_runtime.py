@@ -10,12 +10,14 @@ import json
 import os
 import time
 import hashlib
+import subprocess
 from contextlib import contextmanager
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Mapping
 
 import pandas as pd
 
+from autodokit.path_compat import detect_runtime_family, resolve_portable_path
 from autodokit.tools.bibliodb_sqlite import save_structured_state, upsert_parse_asset_rows
 from autodokit.tools.contentdb_sqlite import infer_workspace_root_from_content_db
 from autodokit.tools.ocr.classic.pdf_parse_asset_manager import (
@@ -81,12 +83,92 @@ def _resolve_path(value: Any, *, base_dir: Path | None = None) -> str:
     text = _stringify(value)
     if not text:
         return ""
-    path = Path(text)
-    if not path.is_absolute():
-        if base_dir is None:
-            raise ValueError(f"路径必须为绝对路径：{path}")
-        path = (base_dir / path).resolve()
-    return str(path.resolve())
+    resolved_base = base_dir if base_dir is not None else Path.cwd()
+    return str(resolve_portable_path(text, base=resolved_base))
+
+
+def _detect_nvidia_gpu_name() -> str:
+    try:
+        result = subprocess.run(
+            ["nvidia-smi", "--query-gpu=name", "--format=csv,noheader"],
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=5,
+            check=False,
+        )
+        if result.returncode == 0:
+            lines = [line.strip() for line in str(result.stdout or "").splitlines() if line.strip()]
+            if lines:
+                return lines[0]
+    except Exception:
+        pass
+
+    try:
+        import torch  # type: ignore
+
+        if torch.cuda.is_available() and torch.cuda.device_count() > 0:
+            return str(torch.cuda.get_device_name(0) or "")
+    except Exception:
+        pass
+    return ""
+
+
+def _detect_windows_display_adapter_name() -> str:
+    if detect_runtime_family() != "windows":
+        return ""
+    try:
+        result = subprocess.run(
+            [
+                "powershell",
+                "-NoProfile",
+                "-Command",
+                "Get-CimInstance Win32_VideoController | Select-Object -ExpandProperty Name",
+            ],
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=8,
+            check=False,
+        )
+        if result.returncode == 0:
+            lines = [line.strip() for line in str(result.stdout or "").splitlines() if line.strip()]
+            if lines:
+                return lines[0]
+    except Exception:
+        pass
+    return ""
+
+
+def _resolve_device_settings(merged: Mapping[str, Any]) -> Dict[str, Any]:
+    requested_device = _stringify(merged.get("device")).lower() or "auto"
+    requested_gpu_ids = _stringify(merged.get("gpu_visible_devices")) or "0"
+
+    if requested_device not in {"", "auto"}:
+        resolved_device = requested_device
+        detected_name = _detect_nvidia_gpu_name() if requested_device == "cuda" else _detect_windows_display_adapter_name()
+        detected_vendor = "nvidia" if requested_device == "cuda" else ("integrated_or_cpu" if detected_name else "cpu")
+    else:
+        nvidia_gpu_name = _detect_nvidia_gpu_name()
+        if nvidia_gpu_name:
+            resolved_device = "cuda"
+            detected_name = nvidia_gpu_name
+            detected_vendor = "nvidia"
+        else:
+            resolved_device = "cpu"
+            detected_name = _detect_windows_display_adapter_name()
+            detected_vendor = "integrated_or_cpu" if detected_name else "cpu"
+
+    return {
+        "device_requested": requested_device,
+        "device": resolved_device,
+        "gpu_visible_devices": requested_gpu_ids if resolved_device == "cuda" else "-1",
+        "detected_accelerator_name": detected_name,
+        "detected_accelerator_vendor": detected_vendor,
+        "acquire_gpu_lock": resolved_device == "cuda",
+    }
 
 
 def resolve_postprocess_settings(raw_cfg: Mapping[str, Any], *, workspace_root: Path) -> Dict[str, Any]:
@@ -131,8 +213,8 @@ def resolve_parse_runtime_settings(
     python_executable = _resolve_path(merged.get("python_executable"), base_dir=workspace_root) if merged.get("python_executable") else ""
     configured_venv_path = _stringify(global_cfg.get("venv_path"))
     if python_executable and configured_venv_path:
-        venv_path = Path(configured_venv_path).resolve()
-        python_path = Path(python_executable).resolve()
+        venv_path = resolve_portable_path(configured_venv_path, base=workspace_root)
+        python_path = resolve_portable_path(python_executable, base=workspace_root)
         try:
             python_path.relative_to(venv_path)
         except ValueError as exc:
@@ -140,10 +222,13 @@ def resolve_parse_runtime_settings(
                 f"pdf_parse_runtime.python_executable 必须位于 config.json 指定的 venv_path 内：{venv_path}，当前值：{python_path}"
             ) from exc
 
+    device_settings = _resolve_device_settings(merged)
+
     return {
         "backend": _stringify(merged.get("backend")) or "monkeyocr_windows",
-        "device": _stringify(merged.get("device")) or "cuda",
-        "gpu_visible_devices": _stringify(merged.get("gpu_visible_devices")) or "0",
+        "device": device_settings["device"],
+        "device_requested": device_settings["device_requested"],
+        "gpu_visible_devices": device_settings["gpu_visible_devices"],
         "max_retries": _normalize_int(merged.get("max_retries"), 2),
         "skip_existing": _normalize_bool(merged.get("skip_existing"), True),
         "ensure_runtime": _normalize_bool(merged.get("ensure_runtime"), True),
@@ -151,12 +236,15 @@ def resolve_parse_runtime_settings(
         "pip_index_url": _stringify(merged.get("pip_index_url")) or None,
         "runtime_root": runtime_root,
         "lock_name": lock_name,
-        "acquire_gpu_lock": _normalize_bool(merged.get("acquire_gpu_lock"), True),
+        "acquire_gpu_lock": _normalize_bool(merged.get("acquire_gpu_lock"), device_settings["acquire_gpu_lock"]),
         "models_dir": models_dir,
         "config_path": config_path,
         "python_executable": python_executable,
         "monkeyocr_root": str(_resolve_monkeyocr_root(workspace_root=workspace_root, raw_cfg=monkey_root_cfg)),
         "model_name": _stringify(merged.get("model_name")) or _resolve_monkeyocr_model_name(raw_cfg=monkey_root_cfg),
+        "detected_accelerator_name": device_settings["detected_accelerator_name"],
+        "detected_accelerator_vendor": device_settings["detected_accelerator_vendor"],
+        "runtime_family": detect_runtime_family(),
         "remote_processing": merged.get("remote_processing") if isinstance(merged.get("remote_processing"), dict) else {},
     }
 

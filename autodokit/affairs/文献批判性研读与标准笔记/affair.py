@@ -128,10 +128,14 @@ def execute(config_path: Path) -> List[Path]:
     assert content_db is not None
 
     parse_ready_only = bool(raw_cfg.get("parse_ready_only", True))
+    allow_unparsed_critical_read = bool(raw_cfg.get("allow_unparsed_critical_read", False))
     if parse_ready_only:
         state_df = load_reading_state_df(content_db, flag_filters={"deep_read_done": 0})
         if not state_df.empty and "deep_read_decision" in state_df.columns:
-            state_df = state_df[state_df["deep_read_decision"].astype(str).isin(["parse_ready", "pdf_fallback_ready"])].reset_index(drop=True)
+            allowed_decisions = ["parse_ready"]
+            if allow_unparsed_critical_read:
+                allowed_decisions.append("pdf_fallback_ready")
+            state_df = state_df[state_df["deep_read_decision"].astype(str).isin(allowed_decisions)].reset_index(drop=True)
     else:
         state_df = load_reading_state_df(content_db, flag_filters={"pending_deep_read": 1, "deep_read_done": 0})
 
@@ -182,6 +186,7 @@ def execute(config_path: Path) -> List[Path]:
         manual_guidance = _stringify(row.get("manual_guidance"))
         source_origin = _stringify(row.get("source_origin")) or "auto"
         deep_read_decision = _stringify(row.get("deep_read_decision"))
+        is_unparsed_critical_read = deep_read_decision == "pdf_fallback_ready" and int(row.get("preprocessed") or 0) == 0
 
         upsert_reading_state_rows(
             content_db,
@@ -347,6 +352,8 @@ def execute(config_path: Path) -> List[Path]:
                         f"A105 已完成批判性研读与标准笔记。"
                         f"阅读目标={reading_objective or '未指定'}；提示语={manual_guidance or '未指定'}"
                     ),
+                    "deep_read_without_parse_done": 1 if is_unparsed_critical_read else int(row.get("deep_read_without_parse_done") or 0),
+                    "require_reread_after_parse": 1 if is_unparsed_critical_read else int(row.get("require_reread_after_parse") or 0),
                 }
             )
             state_updates.extend(discovered_rows)
@@ -451,6 +458,7 @@ def execute(config_path: Path) -> List[Path]:
             "structure_llm_model": structure_llm_model,
             "enable_llm_contamination_filter": enable_llm_contamination_filter,
             "contamination_llm_model": contamination_llm_model,
+            "allow_unparsed_critical_read": allow_unparsed_critical_read,
         },
     )
     gate_path = output_dir / OUTPUT_GATE
@@ -472,6 +480,7 @@ def execute(config_path: Path) -> List[Path]:
                 "critical_read_count": len(result_rows),
                 "failure_count": len(failures),
                 "retrieval_feedback_request_count": len(merged_feedback_requests),
+                "allow_unparsed_critical_read": allow_unparsed_critical_read,
                 "enable_llm_basic_cleanup": enable_llm_basic_cleanup,
                 "enable_llm_structure_resolution": enable_llm_structure_resolution,
                 "enable_llm_contamination_filter": enable_llm_contamination_filter,

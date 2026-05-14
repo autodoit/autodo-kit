@@ -353,7 +353,8 @@ def _iter_sqlite_text_columns(conn: sqlite3.Connection) -> Iterable[Tuple[str, s
         "SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'"
     ).fetchall()
     for (table_name,) in table_rows:
-        pragma_rows = conn.execute(f"PRAGMA table_info('{table_name.replace("'", "''")}')").fetchall()
+        escaped_table_name = table_name.replace("'", "''")
+        pragma_rows = conn.execute(f"PRAGMA table_info('{escaped_table_name}')").fetchall()
         for row in pragma_rows:
             column_name = str(row[1])
             column_type = str(row[2] or "").upper()

@@ -16,7 +16,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import UTC, datetime
+from datetime import datetime, timezone
 from hashlib import sha1
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Tuple
@@ -107,6 +107,9 @@ class ReferenceParseResult:
     year_int: int | None
     title: str
     clean_title: str
+
+
+UTC = getattr(datetime, "UTC", timezone.utc)
 
 
 def _utc_now_iso() -> str:

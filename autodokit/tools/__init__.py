@@ -47,11 +47,27 @@ def resolve_path_from_base(base: str | Path, raw_path: str | Path) -> Path:
 
 def _looks_like_path(key: str, value: str) -> bool:
     key_l = key.lower()
-    if any(token in key_l for token in ["path", "dir", "root", "file", "workspace"]):
+    if any(
+        key_l == token
+        or key_l.startswith(f"{token}_")
+        or key_l.startswith(f"{token}-")
+        or key_l.endswith(f"_{token}")
+        or key_l.endswith(f"-{token}")
+        or f"_{token}_" in key_l
+        or f"-{token}-" in key_l
+        for token in ["path", "dir", "root", "file", "workspace"]
+    ):
         return True
     if value.startswith("http://") or value.startswith("https://"):
         return False
-    return "/" in value or "\\" in value
+    normalized = str(value or "").strip()
+    if not normalized:
+        return False
+    if normalized.startswith(("./", "../", ".\\", "..\\", "~/", "~\\", "/", "\\\\")):
+        return True
+    if len(normalized) >= 3 and normalized[1:3] in {":/", ":\\"}:
+        return True
+    return False
 
 
 def _resolve_value_to_absolute(value: Any, workspace_root: Path, parent_key: str = "") -> Any:
@@ -554,6 +570,7 @@ from autodokit.tools.ocr.monkeyocr.monkeyocr_windows_tools import (
     prepare_monkeyocr_windows_runtime,
     run_monkeyocr_windows_batch_folder,
     run_monkeyocr_windows_single_pdf,
+    update_monkeyocr_batch_status_csv,
 )
 from autodokit.tools.workspace_path_migration import (
     PathMapping,
@@ -931,6 +948,7 @@ _开发者工具 = [
     "set_tex_root",
     "prepare_monkeyocr_windows_runtime",
     "run_monkeyocr_windows_single_pdf",
+    "update_monkeyocr_batch_status_csv",
     "run_online_retrieval_router",
     "run_online_retrieval_from_bib",
 ]

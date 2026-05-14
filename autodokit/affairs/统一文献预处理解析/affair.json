@@ -1,0 +1,15 @@
+{
+  "workspace_root": "",
+  "content_db": "",
+  "output_dir": "",
+  "profile": "mixed",
+  "auto_fill_literature_type": true,
+  "max_items": 0,
+  "structured_converter": "monkeyocr",
+  "structured_reuse_any_variant": false,
+  "structured_generation_required": true,
+  "strict_structured_only": true,
+  "parse_model": "auto",
+  "is_auto_git_commit": "是",
+  "自动提交前是否询问人类": "是"
+}

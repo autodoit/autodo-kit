@@ -447,6 +447,10 @@ def _read_file_list_candidate_rows(file_list: Path) -> list[list[str]]:
                     value = item.strip()
                     if value:
                         rows.append([value])
+                elif isinstance(item, (list, tuple)):
+                    row = [str(value).strip() for value in item if str(value).strip()]
+                    if row:
+                        rows.append(row)
                 elif isinstance(item, dict):
                     row: list[str] = []
                     for key in ("pdf", "pdf_path", "path", "file", "filename", "文件", "文件名"):
@@ -495,23 +499,38 @@ def _read_file_list_candidate_rows(file_list: Path) -> list[list[str]]:
 
 def _resolve_pdf_candidate(input_dir: Path, value: str) -> Path | None:
     cleaned = value.strip().strip('"').strip("'").strip("`")
+    looks_like_windows_path = "\\" in cleaned or (":" in cleaned and not cleaned.startswith("/"))
     raw = Path(cleaned).expanduser()
     candidates = []
-    if raw.is_absolute():
-        candidates.append(raw)
-    else:
-        candidates.append(input_dir / raw)
 
-    if raw.suffix.lower() != ".pdf":
+    if looks_like_windows_path:
+        try:
+            windows_path = PureWindowsPath(cleaned)
+            candidates.append(input_dir / windows_path.name)
+            if len(windows_path.parts) >= 2:
+                candidates.append(input_dir / Path(*windows_path.parts[-2:]))
+        except Exception:
+            pass
+
+    if not looks_like_windows_path:
         if raw.is_absolute():
-            candidates.append(raw.with_suffix(".pdf"))
+            candidates.append(raw)
         else:
-            candidates.append((input_dir / raw).with_suffix(".pdf"))
+            candidates.append(input_dir / raw)
+
+        if raw.suffix.lower() != ".pdf":
+            if raw.is_absolute():
+                candidates.append(raw.with_suffix(".pdf"))
+            else:
+                candidates.append((input_dir / raw).with_suffix(".pdf"))
 
     for candidate in candidates:
-        resolved = candidate.resolve()
-        if resolved.exists() and resolved.is_file():
-            return resolved
+        try:
+            resolved = candidate.resolve()
+            if resolved.exists() and resolved.is_file():
+                return resolved
+        except OSError:
+            continue
 
     def _normalize_name(text: str) -> str:
         return "".join(ch.lower() for ch in text if ch.isalnum())

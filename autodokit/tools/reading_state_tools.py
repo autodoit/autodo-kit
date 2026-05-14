@@ -118,6 +118,7 @@ def build_followup_candidate_state_row(
     normalized_uid = _stringify(uid_literature)
     normalized_cite_key = _stringify(cite_key) or _stringify(base.get("cite_key")) or normalized_uid
     preprocessed = int(base.get("preprocessed") or 0)
+    allow_unparsed_read = int(base.get("allow_unparsed_read") or 0)
     pending_preprocess = int(base.get("pending_preprocess") or 0)
     pending_rough_read = int(base.get("pending_rough_read") or 0)
     in_rough_read = int(base.get("in_rough_read") or 0)
@@ -138,7 +139,7 @@ def build_followup_candidate_state_row(
             "theme_relation": _stringify(theme_relation),
         }
     )
-    if preprocessed:
+    if preprocessed or allow_unparsed_read:
         row["pending_preprocess"] = 0
         row["pending_rough_read"] = 1
     else:

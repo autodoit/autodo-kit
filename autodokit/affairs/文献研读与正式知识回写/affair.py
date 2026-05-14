@@ -90,6 +90,7 @@ def execute(config_path: Path) -> List[Path]:
     if max_items > 0:
         state_df = state_df.head(max_items).reset_index(drop=True)
     allow_pdf_text_fallback_on_parse_failure = bool(raw_cfg.get("allow_pdf_text_fallback_on_parse_failure", True))
+    allow_unparsed_deep_read_bypass = bool(raw_cfg.get("allow_unparsed_deep_read_bypass", False))
     translation_policy = dict(raw_cfg.get("translation_policy") or {})
     global_config_path = workspace_root / "config" / "config.json"
     parse_runtime = resolve_parse_runtime_settings(raw_cfg, workspace_root=workspace_root, global_config_path=global_config_path)
@@ -117,9 +118,61 @@ def execute(config_path: Path) -> List[Path]:
             ],
         )
 
+    bypass_df = pd.DataFrame()
+    parse_df = state_df.copy()
+    if allow_unparsed_deep_read_bypass and not state_df.empty:
+        bypass_mask = (
+            pd.to_numeric(state_df.get("preprocessed", 0), errors="coerce").fillna(0).astype(int) == 0
+        ) & (
+            pd.to_numeric(state_df.get("allow_unparsed_read", 0), errors="coerce").fillna(0).astype(int) == 1
+        )
+        bypass_df = state_df.loc[bypass_mask].copy()
+        parse_df = state_df.loc[~bypass_mask].copy()
+
+    if not bypass_df.empty:
+        for _, row in bypass_df.fillna("").iterrows():
+            uid_literature = _stringify(row.get("uid_literature"))
+            cite_key = _stringify(row.get("cite_key")) or uid_literature
+            source_origin = _stringify(row.get("source_origin")) or "auto"
+            state_updates.append(
+                {
+                    "uid_literature": uid_literature,
+                    "cite_key": cite_key,
+                    "source_origin": source_origin,
+                    "pending_deep_read": 0,
+                    "in_deep_read": 0,
+                    "deep_read_done": 0,
+                    "deep_read_decision": "pdf_fallback_ready",
+                    "deep_read_reason": "A100 在未解析先读开关下跳过 MonkeyOCR，按未解析旁路移交 A105。",
+                    "deep_read_without_parse_done": 1,
+                    "require_reread_after_parse": 1,
+                    "unparsed_read_in_effect": 1,
+                }
+            )
+            result_rows.append(
+                {
+                    "uid_literature": uid_literature,
+                    "cite_key": cite_key,
+                    "structured_json": "",
+                    "asset_dir": "",
+                    "parse_status": "unparsed_bypass_ready",
+                    "postprocess_enabled": 0,
+                    "postprocess_ok": 0,
+                    "postprocess_removed_noise_lines": 0,
+                    "postprocess_llm_basic_cleanup_status": "skipped_unparsed_bypass",
+                    "postprocess_llm_structure_status": "skipped_unparsed_bypass",
+                    "postprocess_contamination_removed_block_count": 0,
+                    "postprocess_markdown_path": "",
+                    "postprocess_audit_path": "",
+                    "parse_translation_status": "SKIP",
+                    "parse_translation_markdown_path": "",
+                    "parse_translation_audit_path": "",
+                }
+            )
+
     manifest_result = run_parse_manifest(
         content_db=content_db,
-        source_df=state_df,
+        source_df=parse_df,
         output_dir=output_dir,
         source_stage="A100",
         upstream_stage="A095",
@@ -148,19 +201,31 @@ def execute(config_path: Path) -> List[Path]:
             structured_json = _stringify(row.get("normalized_structured_path"))
             if int(row.get("postprocess_ok") or 0):
                 postprocess_success_count += 1
+            rough_done_without_parse = int(row.get("rough_read_without_parse_done") or 0) == 1
+            deep_done_without_parse = int(row.get("deep_read_without_parse_done") or 0) == 1
+            require_reread = int(row.get("require_reread_after_parse") or 0) == 1
+            should_force_rerough = require_reread and rough_done_without_parse
+            should_force_redeep = require_reread and deep_done_without_parse
             state_updates.append(
                 {
                     "uid_literature": uid_literature,
                     "cite_key": cite_key,
                     "source_origin": source_origin,
+                    "pending_rough_read": 1 if should_force_rerough else int(row.get("pending_rough_read") or 0),
+                    "rough_read_done": 0 if should_force_rerough else int(row.get("rough_read_done") or 0),
                     "pending_deep_read": 0,
                     "in_deep_read": 0,
-                    "deep_read_done": 0,
+                    "deep_read_done": 0 if should_force_redeep else int(row.get("deep_read_done") or 0),
                     "deep_read_decision": "parse_ready",
                     "deep_read_reason": (
                         "A100 已完成 non_review_deep 解析资产准备，"
                         "等待 A105 执行批判性研读与标准笔记写回。"
                     ),
+                    "allow_unparsed_read": 0,
+                    "unparsed_read_in_effect": 0,
+                    "require_reread_after_parse": 0,
+                    "rough_read_without_parse_done": int(row.get("rough_read_without_parse_done") or 0),
+                    "deep_read_without_parse_done": int(row.get("deep_read_without_parse_done") or 0),
                 }
             )
             result_rows.append(
@@ -315,6 +380,7 @@ def execute(config_path: Path) -> List[Path]:
             "contamination_llm_sdk_backend": postprocess_settings.get("contamination_llm_sdk_backend"),
             "contamination_llm_region": postprocess_settings.get("contamination_llm_region"),
             "allow_pdf_text_fallback_on_parse_failure": allow_pdf_text_fallback_on_parse_failure,
+            "allow_unparsed_deep_read_bypass": allow_unparsed_deep_read_bypass,
         },
     )
     gate_path = output_dir / OUTPUT_GATE

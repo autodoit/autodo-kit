@@ -8,6 +8,8 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Iterable, Mapping
 
+from autodokit.path_compat import resolve_portable_path
+
 
 def create_task_instance_dir(
     workspace_root: Path,
@@ -48,7 +50,10 @@ def resolve_legacy_output_dir(
     """解析旧输出目录，用于兼容镜像。"""
 
     raw_value = raw_cfg.get("legacy_output_dir") or raw_cfg.get("output_dir")
-    legacy_output_dir = Path(str(raw_value or default_path or config_path.parent))
+    legacy_output_dir = resolve_portable_path(
+        raw_value or default_path or config_path.parent,
+        base=config_path.parent,
+    )
     if not legacy_output_dir.is_absolute():
         raise ValueError(f"legacy_output_dir/output_dir 必须为绝对路径: {legacy_output_dir}")
     legacy_output_dir.mkdir(parents=True, exist_ok=True)

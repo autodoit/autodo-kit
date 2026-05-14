@@ -197,6 +197,8 @@ def execute(config_path: Path) -> List[Path]:
     max_items = int(raw_cfg.get("max_items") or 0)
     if max_items > 0:
         state_df = state_df.head(max_items).reset_index(drop=True)
+    allow_unparsed_read_bypass = bool(raw_cfg.get("allow_unparsed_read_bypass", False))
+    auto_enable_unparsed_for_failed_items = bool(raw_cfg.get("auto_enable_unparsed_for_failed_items", True))
 
     parse_runtime = resolve_parse_runtime_settings(
         raw_cfg,
@@ -256,6 +258,10 @@ def execute(config_path: Path) -> List[Path]:
         if manifest_status in {"succeeded", "skipped"}:
             ready_count += 1
             preprocess_status = "ready"
+            was_unparsed_read = int(existing.get("allow_unparsed_read") or 0) == 1 or int(existing.get("unparsed_read_in_effect") or 0) == 1
+            rough_done_without_parse = int(existing.get("rough_read_without_parse_done") or 0) == 1
+            deep_done_without_parse = int(existing.get("deep_read_without_parse_done") or 0) == 1
+            should_force_reread_after_parse = was_unparsed_read and (rough_done_without_parse or deep_done_without_parse)
 
             state_row = {
                 "uid_literature": uid_literature,
@@ -268,20 +274,26 @@ def execute(config_path: Path) -> List[Path]:
                 "manual_guidance": manual_guidance,
                 "pending_preprocess": 0,
                 "preprocessed": 1,
+                "allow_unparsed_read": 0,
+                "unparsed_read_in_effect": 0,
                 "preprocess_status": preprocess_status,
                 "preprocess_note_path": "",
-                "pending_rough_read": 1 if int(existing.get("rough_read_done") or 0) == 0 else int(existing.get("pending_rough_read") or 0),
+                "pending_rough_read": 1 if should_force_reread_after_parse or int(existing.get("rough_read_done") or 0) == 0 else int(existing.get("pending_rough_read") or 0),
                 "in_rough_read": int(existing.get("in_rough_read") or 0),
-                "rough_read_done": int(existing.get("rough_read_done") or 0),
-                "pending_deep_read": int(existing.get("pending_deep_read") or 0),
-                "deep_read_done": int(existing.get("deep_read_done") or 0),
+                "rough_read_done": 0 if should_force_reread_after_parse and rough_done_without_parse else int(existing.get("rough_read_done") or 0),
+                "pending_deep_read": 1 if should_force_reread_after_parse and deep_done_without_parse else int(existing.get("pending_deep_read") or 0),
+                "deep_read_done": 0 if should_force_reread_after_parse and deep_done_without_parse else int(existing.get("deep_read_done") or 0),
                 "deep_read_count": int(existing.get("deep_read_count") or 0),
+                "rough_read_without_parse_done": int(existing.get("rough_read_without_parse_done") or 0),
+                "deep_read_without_parse_done": int(existing.get("deep_read_without_parse_done") or 0),
+                "require_reread_after_parse": 0,
             }
             state_updates.append(state_row)
             existing_state_by_uid[uid_literature] = state_row
         else:
             failed_count += 1
             preprocess_status = "missing_attachment" if "未找到可用 PDF 附件" in failure_reason else "parse_failed"
+            enable_unparsed_bypass = allow_unparsed_read_bypass and auto_enable_unparsed_for_failed_items
             state_updates.append(
                 {
                     "uid_literature": uid_literature,
@@ -294,14 +306,19 @@ def execute(config_path: Path) -> List[Path]:
                     "manual_guidance": manual_guidance,
                     "pending_preprocess": 0,
                     "preprocessed": int(existing.get("preprocessed") or 0),
+                    "allow_unparsed_read": 1 if enable_unparsed_bypass else int(existing.get("allow_unparsed_read") or 0),
+                    "unparsed_read_in_effect": 1 if enable_unparsed_bypass else int(existing.get("unparsed_read_in_effect") or 0),
                     "preprocess_status": preprocess_status,
                     "preprocess_note_path": _stringify(existing.get("preprocess_note_path")),
-                    "pending_rough_read": int(existing.get("pending_rough_read") or 0),
+                    "pending_rough_read": 1 if enable_unparsed_bypass else int(existing.get("pending_rough_read") or 0),
                     "in_rough_read": int(existing.get("in_rough_read") or 0),
                     "rough_read_done": int(existing.get("rough_read_done") or 0),
                     "pending_deep_read": int(existing.get("pending_deep_read") or 0),
                     "deep_read_done": int(existing.get("deep_read_done") or 0),
                     "deep_read_count": int(existing.get("deep_read_count") or 0),
+                    "rough_read_without_parse_done": int(existing.get("rough_read_without_parse_done") or 0),
+                    "deep_read_without_parse_done": int(existing.get("deep_read_without_parse_done") or 0),
+                    "require_reread_after_parse": 1 if enable_unparsed_bypass else int(existing.get("require_reread_after_parse") or 0),
                 }
             )
 
@@ -382,6 +399,8 @@ def execute(config_path: Path) -> List[Path]:
             "postprocess_enabled": bool(postprocess_settings.get("enabled", False)),
             "upstream_stage": "A075",
             "downstream_stage": "A090",
+            "allow_unparsed_read_bypass": allow_unparsed_read_bypass,
+            "auto_enable_unparsed_for_failed_items": auto_enable_unparsed_for_failed_items,
         },
     )
     gate_path = output_dir / OUTPUT_GATE

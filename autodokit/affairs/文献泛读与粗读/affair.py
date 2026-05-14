@@ -282,6 +282,11 @@ def execute(config_path: Path) -> List[Path]:
         if _stringify(row.get("uid_literature"))
     }
     rough_pool = _load_rough_pool(content_db, literature_table)
+    consume_unparsed_bypass_items = bool(raw_cfg.get("consume_unparsed_bypass_items", False))
+    if not rough_pool.empty and not consume_unparsed_bypass_items:
+        preprocessed_series = pd.to_numeric(rough_pool.get("preprocessed", 0), errors="coerce").fillna(0).astype(int)
+        allow_unparsed_series = pd.to_numeric(rough_pool.get("allow_unparsed_read", 0), errors="coerce").fillna(0).astype(int)
+        rough_pool = rough_pool.loc[~((preprocessed_series == 0) & (allow_unparsed_series == 1))].copy()
     max_items = int(raw_cfg.get("max_items") or 6)
     max_references_per_item = int(raw_cfg.get("max_references_per_item") or 12)
     analysis_note_paths = resolve_analysis_note_paths(workspace_root, raw_cfg)
@@ -304,6 +309,7 @@ def execute(config_path: Path) -> List[Path]:
         manual_guidance = _stringify(row.get("manual_guidance"))
         reading_objective = _stringify(row.get("reading_objective"))
         source_origin = _stringify(row.get("source_origin")) or "auto"
+        unparsed_read_mode = int(row.get("preprocessed") or 0) == 0 and int(row.get("allow_unparsed_read") or 0) == 1
         upsert_reading_state_rows(
             content_db,
             [
@@ -556,6 +562,8 @@ def execute(config_path: Path) -> List[Path]:
                 "analysis_light_synced": 1,
                 "pending_deep_read": 1 if should_promote else 0,
                 "theme_relation": _stringify(row.get("theme_relation")) or "a090_completed",
+                "rough_read_without_parse_done": 1 if unparsed_read_mode else int(row.get("rough_read_without_parse_done") or 0),
+                "require_reread_after_parse": 1 if unparsed_read_mode else int(row.get("require_reread_after_parse") or 0),
             }
         )
 
@@ -648,6 +656,7 @@ def execute(config_path: Path) -> List[Path]:
                 "placeholder_count": quality_summary.get("placeholder_count", 0),
                 "missing_item_count": len(missing_items),
                 "retrieval_feedback_request_count": len(merged_feedback_requests),
+                "consume_unparsed_bypass_items": consume_unparsed_bypass_items,
             },
         )
     except Exception:
