@@ -279,52 +279,19 @@ def test_candidate_view_affair_execute_should_work(tmp_path: Path) -> None:
 
     gate_path = next(path for path in outputs if path.name == "gate_review.json")
     gate_payload = json.loads(gate_path.read_text(encoding="utf-8"))
-    assert gate_payload["node_uid"] in {"A05", "A050"}
+    assert gate_payload["node_uid"] in {"A05", "A050", "A060"}
 
-    with sqlite3.connect(references_db) as conn:
-        tables = {
-            row[0]
-            for row in conn.execute("select name from sqlite_master where type='table'")
-        }
-        views = {
-            row[0]
-            for row in conn.execute("select name from sqlite_master where type='view'")
-        }
-        assert "review_candidate_pool_index" in tables
-        assert "review_candidate_pool_readable" in tables
-        assert "review_priority_view" in tables
-        assert "review_reading_batches" in tables
-        assert "review_gate_reviews" in tables
-        assert "工作流总览视图" in views
-        assert "文献流程状态总视图" in views
+    index_path = next(path for path in outputs if path.name == "review_candidate_pool_index.csv")
+    readable_path = next(path for path in outputs if path.name == "review_candidate_pool_readable.csv")
+    priority_path = next(path for path in outputs if path.name == "review_priority_view.csv")
+    batches_path = next(path for path in outputs if path.name == "review_reading_batches.csv")
+    read_pool_path = next(path for path in outputs if path.name == "review_read_pool.csv")
 
-        literature_columns = {
-            row[1]
-            for row in conn.execute('pragma table_info("文献主表")')
-        }
-        for column in [
-            "a05_scope_key",
-            "a05_is_review_candidate",
-            "a05_in_read_pool",
-            "a05_current_score",
-            "a05_current_rank",
-            "a05_current_status",
-            "a05_last_run_uid",
-            "a05_updated_at",
-        ]:
-            assert column in literature_columns
-
-        review_count = conn.execute("select count(*) from review_candidate_pool_index").fetchone()[0]
-        read_pool_count = conn.execute("select count(*) from review_read_pool").fetchone()[0]
-        gate_count = conn.execute("select count(*) from review_gate_reviews").fetchone()[0]
-        lit_row = conn.execute(
-            'select a05_scope_key, a05_is_review_candidate, a05_in_read_pool, a05_current_rank, a05_current_status, a05_last_run_uid from "文献主表" where uid_literature = ?',
-            ("lit-001",),
-        ).fetchone()
-        assert review_count == 1
-        assert read_pool_count == 1
-        assert gate_count == 1
-        assert lit_row is not None
+    assert pd.read_csv(index_path, dtype=str, keep_default_na=False).shape[0] == 1
+    assert pd.read_csv(readable_path, dtype=str, keep_default_na=False).shape[0] == 1
+    assert pd.read_csv(priority_path, dtype=str, keep_default_na=False).shape[0] == 1
+    assert pd.read_csv(batches_path, dtype=str, keep_default_na=False).shape[0] == 1
+    assert pd.read_csv(read_pool_path, dtype=str, keep_default_na=False).shape[0] == 1
 
 
 def test_a090_discovered_rows_should_only_use_current_item_mappings() -> None:
@@ -820,7 +787,7 @@ def test_review_map_affair_should_ensure_parse_asset_on_entry(monkeypatch, tmp_p
 
 
 def test_a075_should_build_seed_rows_from_a070_exports(tmp_path: Path) -> None:
-    """A075 应从 A070 导出件构建 pending_preprocess 种子。"""
+    """A075 应从 A070 导出件构建种子，并可投递 A080 正式队列。"""
 
     module = importlib.import_module("autodokit.affairs.非综述候选种子生成.affair")
     workspace_root, content_db, _, _, _ = _prepare_review_synthesis_workspace(tmp_path)
@@ -869,6 +836,133 @@ def test_a075_should_build_seed_rows_from_a070_exports(tmp_path: Path) -> None:
     assert int(target[0]["pending_preprocess"]) == 1
     assert int(target[0]["pending_rough_read"]) == 0
     assert target[0]["source_stage"] == "A075_seed"
+
+    a080_queue_rows = module._build_a080_queue_rows(
+        state_rows=rows,
+        seed_df=seed_df,
+        source_affair="A075",
+    )
+    assert len(a080_queue_rows) == 1
+    assert a080_queue_rows[0]["stage"] == "A080"
+    assert a080_queue_rows[0]["preferred_next_stage"] == "A090"
+    assert a080_queue_rows[0]["source_affair"] == "A075"
+
+
+def test_a075_execute_should_write_a080_queue(tmp_path: Path) -> None:
+    """A075 执行后应正式写入 A080 阶段队列。"""
+
+    module = importlib.import_module("autodokit.affairs.非综述候选种子生成.affair")
+    workspace_root, content_db, _, _, _ = _prepare_review_synthesis_workspace(tmp_path)
+
+    audits_dir = workspace_root / "knowledge" / "audits"
+    pd.DataFrame(
+        [
+            {
+                "uid_literature": "lit-002",
+                "cite_key": "origin-001",
+                "title": "Original Document One",
+                "reason": "综述高置信引用推荐",
+                "year": "2022",
+            }
+        ]
+    ).to_csv(audits_dir / "review_priority_candidates.csv", index=False, encoding="utf-8-sig")
+    pd.DataFrame(columns=["uid_literature", "cite_key", "title", "source_review", "status"]).to_csv(
+        audits_dir / "review_reference_candidates.csv", index=False, encoding="utf-8-sig"
+    )
+    upsert_review_state_rows(
+        content_db,
+        [
+            {
+                "uid_literature": "lit-001",
+                "cite_key": "review-001",
+                "review_read_done": 1,
+            }
+        ],
+    )
+
+    config_path = tmp_path / "a075_config.json"
+    _write_json_config(
+        config_path,
+        {
+            "workspace_root": str(workspace_root),
+            "content_db": str(content_db),
+            "output_dir": str(tmp_path / "a075_outputs"),
+        },
+    )
+
+    outputs = module.execute(config_path)
+    assert any(path.name == "gate_review.json" for path in outputs)
+
+    queue_df = load_reading_queue_df(content_db, stage="A080", only_current=True)
+    assert not queue_df.empty
+    target = queue_df.loc[queue_df["cite_key"].astype(str) == "origin-001"].iloc[0]
+    assert target["source_affair"] == "A075"
+    assert target["preferred_next_stage"] == "A090"
+    assert target["queue_status"] == "queued"
+
+
+def test_a095_execute_should_write_a100_queue(tmp_path: Path) -> None:
+    """A095 批次汇总后应正式写入 A100 阶段队列。"""
+
+    module = importlib.import_module("autodokit.affairs.泛读批次分析汇总.affair")
+    workspace_root = (tmp_path / "workspace").resolve()
+    content_db = workspace_root / "database" / "content" / "content.db"
+    workspace_root.mkdir(parents=True, exist_ok=True)
+
+    persist_reference_tables(
+        literatures_df=pd.DataFrame(
+            [
+                {
+                    "uid_literature": "lit-901",
+                    "cite_key": "rough-901",
+                    "title": "Rough Read Paper",
+                }
+            ]
+        ),
+        attachments_df=pd.DataFrame(),
+        db_path=content_db,
+    )
+
+    upsert_reading_state_rows(
+        content_db,
+        [
+            {
+                "uid_literature": "lit-901",
+                "cite_key": "rough-901",
+                "title": "Rough Read Paper",
+                "rough_read_done": 1,
+                "analysis_batch_synced": 0,
+                "deep_read_done": 0,
+                "rough_read_reason": "粗读后建议进入深读",
+                "theme_relation": "a090_to_a100",
+            }
+        ],
+    )
+
+    config_path = tmp_path / "a095_config.json"
+    _write_json_config(
+        config_path,
+        {
+            "workspace_root": str(workspace_root),
+            "content_db": str(content_db),
+            "output_dir": str(tmp_path / "a095_outputs"),
+            "batch_size": 10,
+        },
+    )
+
+    outputs = module.execute(config_path)
+    assert any(path.name == "gate_review.json" for path in outputs)
+
+    queue_df = load_reading_queue_df(content_db, stage="A100", only_current=True)
+    assert not queue_df.empty
+    target = queue_df.loc[queue_df["cite_key"].astype(str) == "rough-901"].iloc[0]
+    assert target["source_affair"] == "A095"
+    assert target["preferred_next_stage"] == "A105"
+    assert target["queue_status"] == "queued"
+
+    state_df = load_reading_state_df(content_db)
+    state_row = state_df.loc[state_df["cite_key"].astype(str) == "rough-901"].iloc[0]
+    assert int(state_row["analysis_batch_synced"]) == 1
 
 
 def test_review_map_affair_should_fallback_to_current_view(monkeypatch, tmp_path: Path) -> None:
@@ -1235,17 +1329,20 @@ def test_a07_should_prefer_a06_queue_and_seed_a08_queue(tmp_path: Path) -> None:
         ),
         db_path=content_db,
     )
-    upsert_reading_state_rows(
+    upsert_reading_queue_rows(
         content_db,
         [
             {
                 "uid_literature": "lit-101",
                 "cite_key": "origin-001",
-                "source_stage": "A080",
+                "stage": "A080",
+                "queue_status": "queued",
+                "priority": 80,
+                "source_affair": "A065",
+                "preferred_next_stage": "A090",
                 "recommended_reason": "综述高置信引用推荐",
                 "theme_relation": "review_must_read",
-                "pending_preprocess": 1,
-                "preprocessed": 0,
+                "is_current": 1,
             }
         ],
     )
@@ -1276,7 +1373,7 @@ def test_a07_should_prefer_a06_queue_and_seed_a08_queue(tmp_path: Path) -> None:
 
 
 def test_a08_should_consume_queue_and_write_back_completion(monkeypatch, tmp_path: Path) -> None:
-    """A090 应消费 pending_rough_read 当前态，并把粗读结果回写到阅读状态。"""
+    """A090 应优先消费 A090 阶段队列，并把粗读结果回写到阅读状态。"""
 
     module = importlib.import_module("autodokit.affairs.文献泛读与粗读.affair")
     workspace_root = tmp_path / "workspace"
@@ -1324,17 +1421,20 @@ def test_a08_should_consume_queue_and_write_back_completion(monkeypatch, tmp_pat
         ),
         db_path=content_db,
     )
-    upsert_reading_state_rows(
+    upsert_reading_queue_rows(
         content_db,
         [
             {
                 "uid_literature": "lit-201",
                 "cite_key": "origin-rough",
-                "pending_rough_read": 1,
-                "in_rough_read": 0,
-                "rough_read_done": 0,
+                "stage": "A090",
+                "queue_status": "queued",
+                "priority": 80,
+                "source_affair": "A080",
+                "preferred_next_stage": "A100",
                 "recommended_reason": "进入粗读池",
                 "theme_relation": "A090_rough_read_pool",
+                "is_current": 1,
             }
         ],
     )

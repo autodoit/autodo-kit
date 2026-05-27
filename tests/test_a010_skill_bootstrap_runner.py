@@ -13,9 +13,9 @@ def test_mainline_registry_should_point_a010_to_skill_runner(tmp_path: Path) -> 
     """主链注册表中的 A010 应指向技能脚本桥接 runner。"""
 
     payload = build_mainline_affair_entry_registry(workspace_root=tmp_path / "workspace")
-    a010 = next(record for record in payload["records"] if record["node_code"] == "A010")
-    assert a010["module"] == "autodokit.tools.a010_skill_bootstrap_runner"
-    assert a010["callable"] == "execute"
+    a010 = next(record for record in payload["记录"] if record["节点编码"] == "A010")
+    assert a010["模块路径"] == "autodokit.tools.a010_skill_bootstrap_runner"
+    assert a010["入口函数"] == "execute"
 
 
 def test_a010_skill_runner_should_invoke_generate_config_script(monkeypatch, tmp_path: Path) -> None:
@@ -56,22 +56,22 @@ def test_a010_skill_runner_should_invoke_generate_config_script(monkeypatch, tmp
     global_config_path.write_text(
         json.dumps(
             {
-                "workflow_name": "学术科研工作流工作空间",
-                "root_path": str(tmp_path.resolve()).replace("\\", "/"),
-                "workspace_root": str(workspace_root.resolve()).replace("\\", "/"),
-                "venv_path": str((tmp_path / ".venv").resolve()).replace("\\", "/"),
-                "project": {
-                    "project_name": "SystemicRiskResearch",
-                    "project_goal": "你的项目研究主题",
+                "工作流名称": "学术科研工作流工作空间",
+                "工程根路径": str(tmp_path.resolve()).replace("\\", "/"),
+                "工作区根路径": str(workspace_root.resolve()).replace("\\", "/"),
+                "虚拟环境路径": str((tmp_path / ".venv").resolve()).replace("\\", "/"),
+                "项目": {
+                    "项目名称": "SystemicRiskResearch",
+                    "项目目标": "你的项目研究主题",
                 },
-                "llm": {
-                    "aliyun_api_key_file": str((tmp_path / "configs" / "bailian-api-key.txt").resolve()).replace("\\", "/"),
+                "模型": {
+                    "阿里云密钥文件": str((tmp_path / "configs" / "bailian-api-key.txt").resolve()).replace("\\", "/"),
                 },
-                "bootstrap": {
-                    "template_root": str(template_root.resolve()).replace("\\", "/"),
-                    "self_check_report_path": str(self_check_path.resolve()).replace("\\", "/"),
+                "初始化": {
+                    "模板根路径": str(template_root.resolve()).replace("\\", "/"),
+                    "自检报告路径": str(self_check_path.resolve()).replace("\\", "/"),
                 },
-                "node_inputs": {
+                "节点输入": {
                     "A020": str(a020_config_path.resolve()).replace("\\", "/"),
                 },
                 "is_auto_git_commit": "是",
@@ -86,9 +86,9 @@ def test_a010_skill_runner_should_invoke_generate_config_script(monkeypatch, tmp
     local_config_path.write_text(
         json.dumps(
             {
-                "template_root": str(template_root.resolve()).replace("\\", "/"),
-                "dry_run": False,
-                "is_auto_git_commit": "是",
+                "模板根路径": str(template_root.resolve()).replace("\\", "/"),
+                "是否仅预演": False,
+                "是否自动Git提交": "是",
                 "自动提交前是否询问人类": "否",
             },
             ensure_ascii=False,

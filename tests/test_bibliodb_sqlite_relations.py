@@ -31,6 +31,21 @@ from autodokit.tools.bibliodb_sqlite import (
     upsert_review_state_rows,
 )
 from autodokit.tools.contentdb_sqlite import init_content_db
+from autodokit.tools.contentdb_sqlite import (
+    AUTHOR_LINK_TABLE_NAME,
+    AUTHOR_TABLE_NAME,
+    KNOWLEDGE_INDEX_TABLE_NAME,
+    KNOWLEDGE_LINK_TABLE_NAME,
+    backfill_content_relationships,
+    load_author_entities_df,
+    load_knowledge_literature_links_df,
+    load_literature_author_links_df,
+    resolve_content_physical_column,
+)
+from autodokit.tools.storage_backend import (
+    persist_knowledge_tables,
+    persist_reference_main_table,
+)
 
 
 def test_incremental_import_tool_should_merge_records_and_preserve_runtime_tables(tmp_path: Path) -> None:
@@ -125,6 +140,8 @@ def test_incremental_import_tool_should_merge_records_and_preserve_runtime_table
 
     literatures_df = load_literatures_df(db_path)
     attachments_df = load_attachments_df(db_path)
+    author_entities_df = load_author_entities_df(db_path)
+    author_links_df = load_literature_author_links_df(db_path)
     tags_df = load_tags_df(db_path)
     reading_state_df = load_reading_state_df(db_path)
 
@@ -137,6 +154,8 @@ def test_incremental_import_tool_should_merge_records_and_preserve_runtime_table
     assert "lit-old-001" in uid_values
     assert len(uid_values) == 2
     assert set(attachments_df["uid_literature"].tolist()) == {"lit-old-001"}
+    assert set(author_entities_df["display_name"].tolist()) >= {"研究者甲", "研究者乙", "研究者丙", "研究者丁"}
+    assert set(author_links_df["uid_literature"].tolist()) == uid_values
     assert set(tags_df["tag"].tolist()) == {"科学学", "学术影响力"}
     assert set(reading_state_df["uid_literature"].tolist()) == {"lit-old-001"}
     assert "imported_at" in literatures_df.columns
@@ -497,27 +516,289 @@ def test_reading_state_views_should_expose_human_facing_live_lists(tmp_path: Pat
 
     with sqlite3.connect(db_path) as conn:
         pending_preprocess = conn.execute(
-            'SELECT uid_literature, preprocess_status, current_list_name FROM "待预处理文献清单"'
+            'SELECT 文献标识 FROM "待预处理文献清单"'
         ).fetchall()
         attachment_backlog = conn.execute(
-            'SELECT uid_literature FROM "补件待办文献清单"'
+            'SELECT 文献标识 FROM "补件待办文献清单"'
         ).fetchall()
         pending_rough = conn.execute(
-            'SELECT uid_literature, primary_attachment_name, source_origin FROM "待泛读文献清单"'
+            'SELECT 文献标识 FROM "待泛读文献清单"'
         ).fetchall()
         pending_critical = conn.execute(
-            'SELECT uid_literature, current_parse_status, deep_read_decision FROM "待批判性研读文献清单"'
+            'SELECT 文献标识, 当前解析状态 FROM "待批判性研读文献清单"'
         ).fetchall()
         overview_row = conn.execute(
-            'SELECT uid_literature, title, current_list_name, attachment_count, current_parse_status FROM "阅读状态总视图" WHERE uid_literature = ?',
+            'SELECT 文献标识, 标题, 当前阶段, 当前状态, 当前解析状态 FROM "文献流程状态总视图" WHERE 文献标识 = ?',
             ("lit-parse",),
         ).fetchone()
 
-    assert pending_preprocess == [("lit-pre", "missing_attachment", "补件待办")]
+    assert pending_preprocess == [("lit-pre",)]
     assert attachment_backlog == [("lit-pre",)]
-    assert pending_rough == [("lit-rough", "rough.pdf", "human")]
-    assert pending_critical == [("lit-parse", "ready", "parse_ready")]
-    assert overview_row == ("lit-parse", "待批判性研读文献", "待批判性研读", 0, "ready")
+    assert pending_rough == [("lit-rough",)]
+    assert pending_critical == [("lit-parse", "ready")]
+    assert overview_row == ("lit-parse", "待批判性研读文献", "批判性研读", "待处理", "ready")
+
+
+def test_init_content_db_should_preserve_manual_author_links(tmp_path: Path) -> None:
+    """初始化不应再从文献主表破坏性重建作者关联。"""
+
+    db_path = tmp_path / "content.db"
+    save_tables(
+        db_path,
+        literatures_df=pd.DataFrame(
+            [
+                {
+                    "uid_literature": "lit-001",
+                    "cite_key": "lit-001",
+                    "title": "作者关系保留测试",
+                    "authors": "研究者甲 and 研究者乙",
+                    "created_at": "2026-05-27T10:00:00+08:00",
+                    "updated_at": "2026-05-27T10:00:00+08:00",
+                }
+            ]
+        ),
+        if_exists="replace",
+    )
+
+    with sqlite3.connect(db_path) as conn:
+        conn.execute('DELETE FROM "文献作者关联"')
+        conn.execute('DELETE FROM "作者表"')
+        conn.execute(
+            f'INSERT INTO "作者表" ({resolve_content_physical_column(AUTHOR_TABLE_NAME, "uid_author")}, "显示姓名", "规范姓名", "来源类型", "创建时间", "更新时间") VALUES (?, ?, ?, ?, ?, ?)',
+            (
+                "author-manual-001",
+                "人工作者",
+                "人工作者",
+                "manual_curated",
+                "2026-05-27T10:00:00+08:00",
+                "2026-05-27T10:00:00+08:00",
+            ),
+        )
+        conn.execute(
+            f'INSERT INTO "文献作者关联" ({resolve_content_physical_column(AUTHOR_LINK_TABLE_NAME, "uid_literature_author")}, {resolve_content_physical_column(AUTHOR_LINK_TABLE_NAME, "uid_literature")}, {resolve_content_physical_column(AUTHOR_LINK_TABLE_NAME, "uid_author")}, "作者顺序", "是否第一作者", "是否通讯作者", "显示姓名", "来源类型", "创建时间", "更新时间") VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+            (
+                "link-manual-001",
+                "lit-001",
+                "author-manual-001",
+                1,
+                1,
+                1,
+                "人工作者",
+                "manual_curated",
+                "2026-05-27T10:00:00+08:00",
+                "2026-05-27T10:00:00+08:00",
+            ),
+        )
+        conn.commit()
+
+    init_content_db(db_path)
+
+    author_links_df = load_literature_author_links_df(db_path)
+    assert len(author_links_df) == 1
+    row = author_links_df.iloc[0]
+    assert row["uid_author"] == "author-manual-001"
+    assert int(row["is_corresponding"]) == 1
+    assert row["source_type"] == "manual_curated"
+
+
+def test_backfill_content_relationships_should_preserve_manual_knowledge_links(tmp_path: Path) -> None:
+    """知识关系回填应补齐缺失关系，但不覆盖人工关系。"""
+
+    db_path = tmp_path / "content.db"
+    save_tables(
+        db_path,
+        literatures_df=pd.DataFrame(
+            [
+                {
+                    "uid_literature": "lit-001",
+                    "cite_key": "cite-001",
+                    "title": "知识关系补齐测试",
+                    "standard_note_uid": "note-001",
+                    "created_at": "2026-05-27T10:00:00+08:00",
+                    "updated_at": "2026-05-27T10:00:00+08:00",
+                }
+            ]
+        ),
+        if_exists="replace",
+    )
+
+    with sqlite3.connect(db_path) as conn:
+        conn.execute(
+            f'INSERT INTO "知识索引" ({resolve_content_physical_column(KNOWLEDGE_INDEX_TABLE_NAME, "uid_knowledge")}, {resolve_content_physical_column(KNOWLEDGE_INDEX_TABLE_NAME, "uid_literature")}, {resolve_content_physical_column(KNOWLEDGE_INDEX_TABLE_NAME, "cite_key")}, {resolve_content_physical_column(KNOWLEDGE_INDEX_TABLE_NAME, "note_type")}, {resolve_content_physical_column(KNOWLEDGE_INDEX_TABLE_NAME, "evidence_uids")}) VALUES (?, ?, ?, ?, ?)',
+            (
+                "note-001",
+                "lit-001",
+                "cite-001",
+                "literature_standard_note",
+                "lit-001",
+            ),
+        )
+        conn.execute(
+            f'INSERT INTO "知识文献关联" ({resolve_content_physical_column(KNOWLEDGE_LINK_TABLE_NAME, "uid_knowledge")}, {resolve_content_physical_column(KNOWLEDGE_LINK_TABLE_NAME, "uid_literature")}, "关联类型", "是否主项", {resolve_content_physical_column(KNOWLEDGE_LINK_TABLE_NAME, "cite_key")}, "来源字段", "创建时间", "更新时间") VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
+            (
+                "note-001",
+                "lit-001",
+                "manual_curated",
+                1,
+                "cite-001",
+                "manual",
+                "2026-05-27T10:00:00+08:00",
+                "2026-05-27T10:00:00+08:00",
+            ),
+        )
+        conn.commit()
+
+    backfill_content_relationships(db_path)
+
+    knowledge_links_df = load_knowledge_literature_links_df(db_path)
+    relation_types = set(knowledge_links_df["关联类型"].tolist())
+    assert relation_types == {"manual_curated", "standard_note"}
+
+
+def test_persist_reference_main_table_should_refresh_standard_note_links_and_preserve_manual_links(tmp_path: Path) -> None:
+    """文献事务主写入应刷新 scoped 标准笔记关系，并保留人工关系。"""
+
+    db_path = tmp_path / "content.db"
+    save_tables(
+        db_path,
+        literatures_df=pd.DataFrame(
+            [
+                {
+                    "uid_literature": "lit-001",
+                    "cite_key": "cite-001",
+                    "title": "旧标准笔记绑定",
+                    "standard_note_uid": "note-old",
+                    "created_at": "2026-05-27T10:00:00+08:00",
+                    "updated_at": "2026-05-27T10:00:00+08:00",
+                }
+            ]
+        ),
+        if_exists="replace",
+    )
+
+    with sqlite3.connect(db_path) as conn:
+        conn.execute(
+            f'INSERT INTO "知识索引" ({resolve_content_physical_column(KNOWLEDGE_INDEX_TABLE_NAME, "uid_knowledge")}, {resolve_content_physical_column(KNOWLEDGE_INDEX_TABLE_NAME, "uid_literature")}, {resolve_content_physical_column(KNOWLEDGE_INDEX_TABLE_NAME, "cite_key")}, {resolve_content_physical_column(KNOWLEDGE_INDEX_TABLE_NAME, "note_type")}, {resolve_content_physical_column(KNOWLEDGE_INDEX_TABLE_NAME, "evidence_uids")}) VALUES (?, ?, ?, ?, ?)',
+            ("note-old", "lit-001", "cite-001", "literature_standard_note", "lit-001"),
+        )
+        conn.execute(
+            f'INSERT INTO "知识索引" ({resolve_content_physical_column(KNOWLEDGE_INDEX_TABLE_NAME, "uid_knowledge")}, {resolve_content_physical_column(KNOWLEDGE_INDEX_TABLE_NAME, "uid_literature")}, {resolve_content_physical_column(KNOWLEDGE_INDEX_TABLE_NAME, "cite_key")}, {resolve_content_physical_column(KNOWLEDGE_INDEX_TABLE_NAME, "note_type")}, {resolve_content_physical_column(KNOWLEDGE_INDEX_TABLE_NAME, "evidence_uids")}) VALUES (?, ?, ?, ?, ?)',
+            ("note-new", "lit-001", "cite-001", "literature_standard_note", "lit-001"),
+        )
+        conn.execute(
+            f'INSERT INTO "知识文献关联" ({resolve_content_physical_column(KNOWLEDGE_LINK_TABLE_NAME, "uid_knowledge")}, {resolve_content_physical_column(KNOWLEDGE_LINK_TABLE_NAME, "uid_literature")}, "关联类型", "是否主项", {resolve_content_physical_column(KNOWLEDGE_LINK_TABLE_NAME, "cite_key")}, "来源字段", "创建时间", "更新时间") VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
+            (
+                "note-old",
+                "lit-001",
+                "manual_curated",
+                1,
+                "cite-001",
+                "manual",
+                "2026-05-27T10:00:00+08:00",
+                "2026-05-27T10:00:00+08:00",
+            ),
+        )
+        conn.execute(
+            f'INSERT INTO "知识文献关联" ({resolve_content_physical_column(KNOWLEDGE_LINK_TABLE_NAME, "uid_knowledge")}, {resolve_content_physical_column(KNOWLEDGE_LINK_TABLE_NAME, "uid_literature")}, "关联类型", "是否主项", {resolve_content_physical_column(KNOWLEDGE_LINK_TABLE_NAME, "cite_key")}, "来源字段", "创建时间", "更新时间") VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
+            (
+                "note-old",
+                "lit-001",
+                "standard_note",
+                1,
+                "cite-001",
+                "文献主表.standard_note_uid",
+                "2026-05-27T10:00:00+08:00",
+                "2026-05-27T10:00:00+08:00",
+            ),
+        )
+        conn.commit()
+
+    persist_reference_main_table(
+        pd.DataFrame(
+            [
+                {
+                    "uid_literature": "lit-001",
+                    "cite_key": "cite-001",
+                    "title": "新标准笔记绑定",
+                    "standard_note_uid": "note-new",
+                    "created_at": "2026-05-27T10:00:00+08:00",
+                    "updated_at": "2026-05-27T11:00:00+08:00",
+                }
+            ]
+        ),
+        db_path,
+    )
+
+    knowledge_links_df = load_knowledge_literature_links_df(db_path)
+    uid_knowledge_column = resolve_content_physical_column(KNOWLEDGE_LINK_TABLE_NAME, "uid_knowledge")
+    standard_links = knowledge_links_df.loc[knowledge_links_df["关联类型"] == "standard_note"]
+    assert len(standard_links) == 1
+    assert standard_links.iloc[0][uid_knowledge_column] == "note-new"
+
+    manual_links = knowledge_links_df.loc[knowledge_links_df["关联类型"] == "manual_curated"]
+    assert len(manual_links) == 1
+    assert manual_links.iloc[0][uid_knowledge_column] == "note-old"
+
+
+def test_persist_knowledge_tables_should_preserve_manual_links_on_replace(tmp_path: Path) -> None:
+    """知识事务主写入在 replace 时应恢复人工关系，并补齐自动关系。"""
+
+    db_path = tmp_path / "content.db"
+    save_tables(
+        db_path,
+        literatures_df=pd.DataFrame(
+            [
+                {
+                    "uid_literature": "lit-001",
+                    "cite_key": "cite-001",
+                    "title": "知识保存入口测试",
+                    "created_at": "2026-05-27T10:00:00+08:00",
+                    "updated_at": "2026-05-27T10:00:00+08:00",
+                }
+            ]
+        ),
+        if_exists="replace",
+    )
+
+    with sqlite3.connect(db_path) as conn:
+        conn.execute(
+            f'INSERT INTO "知识索引" ({resolve_content_physical_column(KNOWLEDGE_INDEX_TABLE_NAME, "uid_knowledge")}, {resolve_content_physical_column(KNOWLEDGE_INDEX_TABLE_NAME, "uid_literature")}, {resolve_content_physical_column(KNOWLEDGE_INDEX_TABLE_NAME, "cite_key")}, {resolve_content_physical_column(KNOWLEDGE_INDEX_TABLE_NAME, "note_type")}, {resolve_content_physical_column(KNOWLEDGE_INDEX_TABLE_NAME, "evidence_uids")}) VALUES (?, ?, ?, ?, ?)',
+            ("note-001", "lit-001", "cite-001", "literature_standard_note", "lit-001"),
+        )
+        conn.execute(
+            f'INSERT INTO "知识文献关联" ({resolve_content_physical_column(KNOWLEDGE_LINK_TABLE_NAME, "uid_knowledge")}, {resolve_content_physical_column(KNOWLEDGE_LINK_TABLE_NAME, "uid_literature")}, "关联类型", "是否主项", {resolve_content_physical_column(KNOWLEDGE_LINK_TABLE_NAME, "cite_key")}, "来源字段", "创建时间", "更新时间") VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
+            (
+                "note-001",
+                "lit-001",
+                "manual_curated",
+                1,
+                "cite-001",
+                "manual",
+                "2026-05-27T10:00:00+08:00",
+                "2026-05-27T10:00:00+08:00",
+            ),
+        )
+        conn.commit()
+
+    persist_knowledge_tables(
+        index_df=pd.DataFrame(
+            [
+                {
+                    "uid_knowledge": "note-001",
+                    "uid_literature": "lit-001",
+                    "cite_key": "cite-001",
+                    "note_type": "literature_standard_note",
+                    "evidence_uids": "lit-001",
+                }
+            ]
+        ),
+        attachments_df=pd.DataFrame(),
+        db_path=db_path,
+    )
+
+    knowledge_links_df = load_knowledge_literature_links_df(db_path)
+    relation_types = set(knowledge_links_df["关联类型"].tolist())
+    assert relation_types == {"manual_curated", "standard_note"}
 
 
 def test_flow_state_should_sync_from_legacy_reading_and_review_states(tmp_path: Path) -> None:

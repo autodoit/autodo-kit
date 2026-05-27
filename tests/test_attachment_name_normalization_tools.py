@@ -234,9 +234,8 @@ def test_a020_should_call_attachment_name_normalization_tool_when_enabled(tmp_pa
 
     attachments_df = load_attachments_df(content_db)
     literatures_df = load_literatures_df(content_db)
-    cite_key = str(literatures_df.iloc[0]["cite_key"])
     uid_attachment = str(attachments_df.iloc[0]["uid_attachment"])
-    expected_name = f"{cite_key}-{uid_attachment}.pdf"
+    expected_name = f"att-paper-{uid_attachment}.pdf"
 
     assert attachments_df.iloc[0]["attachment_name"] == expected_name
     assert literatures_df.iloc[0]["primary_attachment_name"] == expected_name
@@ -320,9 +319,8 @@ def test_a040_should_call_attachment_name_normalization_tool_when_enabled(tmp_pa
 
     attachments_df = load_attachments_df(content_db)
     literatures_df = load_literatures_df(content_db)
-    cite_key = str(literatures_df.iloc[0]["cite_key"])
     uid_attachment = str(attachments_df.iloc[0]["uid_attachment"])
-    expected_name = f"{cite_key}-{uid_attachment}.pdf"
+    expected_name = f"att-paper-{uid_attachment}.pdf"
 
     assert attachments_df.iloc[0]["attachment_name"] == expected_name
     assert literatures_df.iloc[0]["primary_attachment_name"] == expected_name

@@ -1,12 +1,19 @@
 from __future__ import annotations
 
 from autodokit.tools.online_retrieval_literatures.policies import assert_supported_combo
+from autodokit.tools.online_retrieval_literatures.profiles import infer_request_profile
+from autodokit.tools.online_retrieval_literatures.orchestrators import metadata_orchestrator
 from autodokit.tools.online_retrieval_literatures.orchestrators.request_dispatcher import dispatch_request
 from autodokit.tools.online_retrieval_literatures.executors import content_portal_spis
 
 
 def test_capability_matrix_supports_spis_single_download() -> None:
     cell = assert_supported_combo("spis", "single", "download")
+    assert cell["layer"] == "executor"
+
+
+def test_capability_matrix_supports_deepxiv_search_metadata() -> None:
+    cell = assert_supported_combo("deepxiv", "search", "metadata")
     assert cell["layer"] == "executor"
 
 
@@ -30,3 +37,16 @@ def test_spis_delegate_by_request_profile(monkeypatch) -> None:
     assert zh_result["spis_delegate"] == "spis_zh"
     assert en_result["channel"] == "en"
     assert en_result["spis_delegate"] == "spis_en"
+
+
+def test_deepxiv_request_profile_is_english() -> None:
+    assert infer_request_profile({"source": "deepxiv"}) == "en"
+
+
+def test_deepxiv_metadata_dispatch(monkeypatch) -> None:
+    monkeypatch.setattr(metadata_orchestrator, "execute_deepxiv_metadata", lambda payload: {"status": "PASS", "provider": "deepxiv"})
+
+    result = metadata_orchestrator.run_metadata({"source": "deepxiv"}, source="deepxiv", request_profile="en")
+
+    assert result["status"] == "PASS"
+    assert result["provider"] == "deepxiv"

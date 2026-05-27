@@ -5,20 +5,28 @@ from __future__ import annotations
 import importlib
 import json
 from pathlib import Path
+import sqlite3
 
 import pandas as pd
 
 from autodokit.tools.bibliodb_sqlite import (
+    init_db,
     get_structured_state,
     load_flow_state_df,
     load_reading_queue_df,
     load_reading_state_df,
     load_review_state_df,
+    replace_reference_tables_only,
     upsert_flow_state_rows,
+    upsert_reading_queue_rows,
     upsert_reading_state_rows,
     upsert_review_state_rows,
 )
-from autodokit.tools.storage_backend import persist_reference_tables
+from autodokit.tools.contentdb_sqlite import (
+    LITERATURE_TABLE_NAME,
+    READING_QUEUE_TO_LITERATURE_COLUMN_MAP,
+    resolve_content_physical_column,
+)
 
 
 def _write_json(path: Path, payload: dict) -> None:
@@ -72,8 +80,44 @@ def _prepare_workspace(tmp_path: Path) -> tuple[Path, Path, Path]:
             }
         ]
     )
-    persist_reference_tables(literatures_df=literatures_df, attachments_df=attachments_df, db_path=content_db)
+    replace_reference_tables_only(db_path=content_db, literatures_df=literatures_df, attachments_df=attachments_df)
     return workspace_root, content_db, pdf_path
+
+
+def test_init_db_should_backfill_parse_runtime_columns_for_legacy_tables(tmp_path: Path) -> None:
+    content_db = tmp_path / "legacy_content.db"
+    with sqlite3.connect(content_db) as conn:
+        conn.executescript(
+            '''
+            CREATE TABLE "文献主表" (
+                "内部编号" INTEGER PRIMARY KEY AUTOINCREMENT,
+                uid_literature TEXT,
+                cite_key TEXT,
+                "标题" TEXT
+            );
+            CREATE TABLE "附件表" (
+                "内部编号" INTEGER PRIMARY KEY AUTOINCREMENT,
+                uid_attachment TEXT,
+                "附件名称" TEXT,
+                "存储路径" TEXT
+            );
+            INSERT INTO "文献主表" (uid_literature, cite_key, "标题") VALUES ('lit-001', 'demo-001', 'Demo');
+            INSERT INTO "附件表" (uid_attachment, "附件名称", "存储路径") VALUES ('att-001', 'demo.pdf', 'demo.pdf');
+            '''
+        )
+
+    init_db(content_db)
+
+    with sqlite3.connect(content_db) as conn:
+        literature_columns = {row[1] for row in conn.execute('PRAGMA table_info("文献主表")').fetchall()}
+        attachment_columns = {row[1] for row in conn.execute('PRAGMA table_info("附件表")').fetchall()}
+
+    assert "current_parse_asset_uid" in literature_columns
+    assert "current_parse_status" in literature_columns
+    assert "current_parse_path" in literature_columns
+    assert "current_parse_asset_uid" in attachment_columns
+    assert "current_parse_status" in attachment_columns
+    assert "current_parse_path" in attachment_columns
 
 
 def _fake_parse_result(output_root: Path, output_name: str) -> dict:
@@ -224,25 +268,70 @@ def test_run_parse_manifest_should_report_gpu_lock_conflict_without_running(monk
     assert "GPU 锁已被占用" in result["lock_error"]
 
 
+def test_run_parse_manifest_should_cleanup_incomplete_asset_before_rerun(monkeypatch, tmp_path: Path) -> None:
+    module = importlib.import_module("autodokit.tools.ocr.runtime.monkeyocr_manifest_runtime")
+    workspace_root, content_db, pdf_path = _prepare_workspace(tmp_path)
+    output_dir = workspace_root / "tasks" / "202604110003-A055"
+    output_dir.mkdir(parents=True, exist_ok=True)
+
+    partial_dir = workspace_root / "references" / "structured_monkeyocr_full" / "lit-001"
+    partial_dir.mkdir(parents=True, exist_ok=True)
+    stale_file = partial_dir / "stale.tmp"
+    stale_file.write_text("partial", encoding="utf-8")
+
+    def _fake_runner(**kwargs):
+        assert not stale_file.exists()
+        return _fake_parse_result(Path(str(kwargs["output_dir"])), str(kwargs.get("output_name") or "lit-001"))
+
+    monkeypatch.setattr(module, "run_monkeyocr_single_pdf", _fake_runner)
+
+    result = module.run_parse_manifest(
+        content_db=content_db,
+        source_df=pd.DataFrame([
+            {"uid_literature": "lit-001", "cite_key": "demo-001", "priority_rank": 1}
+        ]),
+        output_dir=output_dir,
+        source_stage="A055",
+        upstream_stage="A050",
+        downstream_stage="A090",
+        parse_level="non_review_rough",
+        literature_scope="non_review",
+        runtime_settings={
+            "monkeyocr_root": str((workspace_root / "fake-monkey").resolve()),
+            "model_name": "MonkeyOCR-pro-1.2B",
+            "device": "cuda",
+            "runtime_root": str((workspace_root / "runtime" / "monkeyocr").resolve()),
+            "acquire_gpu_lock": False,
+        },
+        postprocess_settings={"enabled": True},
+        global_config_path=workspace_root / "config" / "config.json",
+        overwrite_existing=False,
+    )
+
+    assert result["counts"]["succeeded"] == 1
+    assert not stale_file.exists()
+
+
 def test_a080_affair_should_consume_manifest_runner(monkeypatch, tmp_path: Path) -> None:
     module = importlib.import_module("autodokit.affairs.非综述候选视图构建.affair")
     workspace_root, content_db, pdf_path = _prepare_workspace(tmp_path)
     output_dir = tmp_path / "outputs_a080"
     output_dir.mkdir(parents=True, exist_ok=True)
 
-    upsert_reading_state_rows(
+    upsert_reading_queue_rows(
         content_db,
         [
             {
                 "uid_literature": "lit-001",
                 "cite_key": "demo-001",
-                "pending_preprocess": 1,
-                "preprocessed": 0,
-                "pending_rough_read": 0,
-                "rough_read_done": 0,
-                "pending_deep_read": 0,
-                "deep_read_done": 0,
-                "deep_read_count": 0,
+                "stage": "A080",
+                "queue_status": "queued",
+                "priority": 80,
+                "source_affair": "A075",
+                "preferred_next_stage": "A090",
+                "recommended_reason": "test",
+                "theme_relation": "demo",
+                "is_current": 1,
             }
         ],
     )
@@ -297,11 +386,6 @@ def test_a080_affair_should_consume_manifest_runner(monkeypatch, tmp_path: Path)
 
     outputs = module.execute(config_path)
     assert any(path.name == "a080_preprocess_index.csv" for path in outputs)
-    state_df = load_reading_state_df(content_db, flag_filters={"uid_literature": "lit-001"})
-    row = state_df[state_df["uid_literature"].astype(str) == "lit-001"].iloc[0]
-    assert int(row["pending_preprocess"]) == 0
-    assert int(row["preprocessed"]) == 1
-    assert int(row["pending_rough_read"]) == 1
 
 
 def test_a100_affair_should_promote_parse_ready_without_gpu(monkeypatch, tmp_path: Path) -> None:
@@ -310,15 +394,20 @@ def test_a100_affair_should_promote_parse_ready_without_gpu(monkeypatch, tmp_pat
     output_dir = tmp_path / "outputs_a100"
     output_dir.mkdir(parents=True, exist_ok=True)
 
-    upsert_reading_state_rows(
+    upsert_reading_queue_rows(
         content_db,
         [
             {
                 "uid_literature": "lit-001",
                 "cite_key": "demo-001",
-                "pending_deep_read": 1,
-                "deep_read_done": 0,
-                "deep_read_count": 0,
+                "stage": "A100",
+                "queue_status": "queued",
+                "priority": 80,
+                "source_affair": "A090",
+                "preferred_next_stage": "A105",
+                "recommended_reason": "test",
+                "theme_relation": "demo",
+                "is_current": 1,
             }
         ],
     )
@@ -537,15 +626,753 @@ def test_a050_affair_should_consume_flow_state_when_legacy_flags_missing(monkeyp
     outputs = module.execute(config_path)
     assert any(path.name == "a050_unified_preprocess_index.csv" for path in outputs)
 
-    queue_df = load_reading_queue_df(content_db, stage="A050_NON_REVIEW", only_current=True)
+    queue_df = load_reading_queue_df(content_db, stage="A050_NON_REVIEW", only_current=False)
     assert not queue_df.empty
     assert "demo-001" in queue_df["cite_key"].astype(str).tolist()
 
     flow_df = load_flow_state_df(content_db, flag_filters={"uid_literature": "lit-001"})
     assert not flow_df.empty
 
-    state_df = load_reading_state_df(content_db, flag_filters={"uid_literature": "lit-001"})
-    row = state_df[state_df["uid_literature"].astype(str) == "lit-001"].iloc[0]
-    assert int(row["pending_preprocess"]) == 0
-    assert int(row["preprocessed"]) == 1
-    assert int(row["pending_rough_read"]) == 1
+
+def test_a050_priority_only_should_rank_full_library_and_write_main_table_summary(tmp_path: Path) -> None:
+    module = importlib.import_module("autodokit.affairs.统一文献预处理解析.affair")
+    workspace_root = (tmp_path / "workspace").resolve()
+    content_db = workspace_root / "database" / "content" / "content.db"
+    attachment_dir = workspace_root / "references" / "attachments"
+    attachment_dir.mkdir(parents=True, exist_ok=True)
+
+    review_pdf = attachment_dir / "review.pdf"
+    non_review_pdf = attachment_dir / "non_review.pdf"
+    review_pdf.write_bytes(b"%PDF-1.4\n%review\n")
+    non_review_pdf.write_bytes(b"%PDF-1.4\n%non-review\n")
+
+    literatures_df = pd.DataFrame(
+        [
+            {
+                "uid_literature": "lit-review",
+                "cite_key": "review-001",
+                "title": "房地产价格波动对银行系统性风险影响研究综述",
+                "year": "2024",
+                "abstract": "聚焦房地产价格波动、银行系统性风险与银行间网络传染机制的综述。",
+                "keywords": "房地产价格波动;银行系统性风险;银行间网络;综述",
+                "entry_type": "article",
+                "literature_type": "review",
+                "pdf_path": str(review_pdf),
+                "primary_attachment_name": review_pdf.name,
+            },
+            {
+                "uid_literature": "lit-non-review",
+                "cite_key": "paper-001",
+                "title": "房地产下行压力、资产负债表重估与银行风险共振",
+                "year": "2023",
+                "abstract": "研究房地产冲击经资产负债表渠道和共同资产渠道影响银行系统性风险。",
+                "keywords": "房地产下行压力;资产负债表;共同资产;银行系统性风险",
+                "entry_type": "article",
+                "literature_type": "non_review",
+                "pdf_path": str(non_review_pdf),
+                "primary_attachment_name": non_review_pdf.name,
+            },
+            {
+                "uid_literature": "lit-background",
+                "cite_key": "paper-999",
+                "title": "制造业数字化转型与出口绩效",
+                "year": "2021",
+                "abstract": "与当前主题弱相关。",
+                "keywords": "制造业;出口",
+                "entry_type": "article",
+                "literature_type": "non_review",
+                "pdf_path": "",
+                "primary_attachment_name": "",
+            },
+        ]
+    )
+    attachments_df = pd.DataFrame(
+        [
+            {
+                "uid_attachment": "att-review",
+                "uid_literature": "lit-review",
+                "attachment_name": review_pdf.name,
+                "attachment_type": "fulltext",
+                "file_ext": "pdf",
+                "storage_path": str(review_pdf),
+                "source_path": str(review_pdf),
+                "is_primary": 1,
+                "status": "available",
+            },
+            {
+                "uid_attachment": "att-non-review",
+                "uid_literature": "lit-non-review",
+                "attachment_name": non_review_pdf.name,
+                "attachment_type": "fulltext",
+                "file_ext": "pdf",
+                "storage_path": str(non_review_pdf),
+                "source_path": str(non_review_pdf),
+                "is_primary": 1,
+                "status": "available",
+            },
+        ]
+    )
+    replace_reference_tables_only(db_path=content_db, literatures_df=literatures_df, attachments_df=attachments_df)
+
+    config_path = tmp_path / "a050_priority_only.json"
+    _write_json(
+        config_path,
+        {
+            "workspace_root": str(workspace_root),
+            "content_db": str(content_db),
+            "node_code": "A050",
+            "execution_mode": "priority_only",
+            "processing_settings": {
+                "priority_policy": {
+                    "topic_name": "房地产价格波动对银行系统性风险",
+                    "concept_families": {
+                        "real_estate": ["房地产价格波动", "房地产下行压力", "房地产冲击"],
+                        "systemic_risk": ["银行系统性风险", "系统性风险"],
+                        "mechanism": ["银行间网络", "资产负债表", "共同资产", "网络传染"],
+                    },
+                }
+            },
+        },
+    )
+
+    outputs = module.execute(config_path)
+    assert any(path.name == "a050_preprocess_priority_index.csv" for path in outputs)
+
+    review_queue = load_reading_queue_df(content_db, stage="A050_REVIEW", only_current=True)
+    non_review_queue = load_reading_queue_df(content_db, stage="A050_NON_REVIEW", only_current=True)
+    combined = pd.concat([review_queue, non_review_queue], ignore_index=True, sort=False)
+    assert len(combined) == 3
+
+    combined = combined.sort_values(by=["priority"], ascending=[True]).reset_index(drop=True)
+    assert combined.iloc[0]["cite_key"] == "review-001"
+    assert combined.iloc[0]["queue_status"] == "queued"
+    assert combined.iloc[1]["cite_key"] == "paper-001"
+    assert combined.iloc[1]["queue_status"] == "queued"
+
+    blocked_row = combined.loc[combined["cite_key"].astype(str) == "paper-999"].iloc[0]
+    assert blocked_row["queue_status"] == "blocked"
+
+    with sqlite3.connect(content_db) as conn:
+        cite_key_column = resolve_content_physical_column(LITERATURE_TABLE_NAME, "cite_key")
+        priority_column = READING_QUEUE_TO_LITERATURE_COLUMN_MAP["priority"]
+        queue_status_column = READING_QUEUE_TO_LITERATURE_COLUMN_MAP["queue_status"]
+        rows = conn.execute(
+            f'SELECT "{cite_key_column}", "{priority_column}", "{queue_status_column}" FROM "{LITERATURE_TABLE_NAME}" ORDER BY "{priority_column}" ASC'
+        ).fetchall()
+    assert rows[0][0] == "review-001"
+    assert rows[1][0] == "paper-001"
+    assert rows[2][0] == "paper-999"
+
+
+def test_a055_should_consume_queue_in_ascending_priority_order(monkeypatch, tmp_path: Path) -> None:
+    module = importlib.import_module("autodokit.affairs.统一文献预处理解析.affair")
+    workspace_root, content_db, pdf_path = _prepare_workspace(tmp_path)
+
+    second_pdf = workspace_root / "references" / "attachments" / "demo-2.pdf"
+    second_pdf.parent.mkdir(parents=True, exist_ok=True)
+    second_pdf.write_bytes(b"%PDF-1.4\n%demo-2\n")
+
+    replace_reference_tables_only(
+        db_path=content_db,
+        literatures_df=pd.DataFrame(
+            [
+                {
+                    "uid_literature": "lit-001",
+                    "cite_key": "demo-001",
+                    "title": "Demo Paper 1",
+                    "year": "2024",
+                    "pdf_path": str(pdf_path),
+                    "primary_attachment_name": pdf_path.name,
+                },
+                {
+                    "uid_literature": "lit-002",
+                    "cite_key": "demo-002",
+                    "title": "Demo Paper 2",
+                    "year": "2023",
+                    "pdf_path": str(second_pdf),
+                    "primary_attachment_name": second_pdf.name,
+                },
+            ]
+        ),
+        attachments_df=pd.DataFrame(
+            [
+                {
+                    "uid_attachment": "att-001",
+                    "uid_literature": "lit-001",
+                    "attachment_name": pdf_path.name,
+                    "attachment_type": "fulltext",
+                    "file_ext": "pdf",
+                    "storage_path": str(pdf_path),
+                    "source_path": str(pdf_path),
+                    "is_primary": 1,
+                    "status": "available",
+                },
+                {
+                    "uid_attachment": "att-002",
+                    "uid_literature": "lit-002",
+                    "attachment_name": second_pdf.name,
+                    "attachment_type": "fulltext",
+                    "file_ext": "pdf",
+                    "storage_path": str(second_pdf),
+                    "source_path": str(second_pdf),
+                    "is_primary": 1,
+                    "status": "available",
+                },
+            ]
+        ),
+    )
+
+    upsert_reading_queue_rows(
+        content_db,
+        [
+            {
+                "uid_literature": "lit-001",
+                "cite_key": "demo-001",
+                "stage": "A050_NON_REVIEW",
+                "queue_status": "queued",
+                "priority": 9,
+                "source_affair": "A050",
+                "preferred_next_stage": "A090",
+                "recommended_reason": "later",
+                "theme_relation": "demo",
+                "is_current": 1,
+            },
+            {
+                "uid_literature": "lit-002",
+                "cite_key": "demo-002",
+                "stage": "A050_NON_REVIEW",
+                "queue_status": "queued",
+                "priority": 2,
+                "source_affair": "A050",
+                "preferred_next_stage": "A090",
+                "recommended_reason": "earlier",
+                "theme_relation": "demo",
+                "is_current": 1,
+            },
+        ],
+    )
+
+    captured_order: list[str] = []
+    monkeypatch.setattr(module, "_takeover_previous_a055_run", lambda **kwargs: [])
+
+    def _fake_runner(**kwargs):
+        source_df = kwargs["source_df"].copy().reset_index(drop=True)
+        captured_order.extend(source_df["cite_key"].astype(str).tolist())
+        manifest_df = pd.DataFrame(
+            [
+                {
+                    "uid_literature": row["uid_literature"],
+                    "cite_key": row["cite_key"],
+                    "title": row.get("title", ""),
+                    "pdf_path": row.get("pdf_path", ""),
+                    "source_stage": "A050_NON_REVIEW",
+                    "recommended_reason": row.get("recommended_reason", ""),
+                    "theme_relation": row.get("theme_relation", ""),
+                    "source_origin": "auto",
+                    "reading_objective": "",
+                    "manual_guidance": "",
+                    "manifest_status": "succeeded",
+                    "normalized_structured_path": str(workspace_root / "references" / "structured_monkeyocr_full" / row["uid_literature"] / "normalized_structured.json"),
+                    "reconstructed_markdown_path": str(workspace_root / "references" / "structured_monkeyocr_full" / row["uid_literature"] / "reconstructed_content.md"),
+                    "asset_dir": str(workspace_root / "references" / "structured_monkeyocr_full" / row["uid_literature"]),
+                    "postprocess_ok": 1,
+                    "postprocess_llm_basic_cleanup_status": "ok",
+                    "postprocess_llm_structure_status": "ok",
+                    "postprocess_contamination_removed_block_count": 0,
+                    "failure_reason": "",
+                }
+                for _, row in source_df.iterrows()
+            ]
+        )
+        for _, row in source_df.iterrows():
+            asset_dir = workspace_root / "references" / "structured_monkeyocr_full" / row["uid_literature"]
+            _ensure_complete_asset(asset_dir)
+        artifacts = _write_runner_artifacts(Path(kwargs["output_dir"]), manifest_df)
+        return {
+            "manifest_df": manifest_df,
+            **artifacts,
+            "readable_manifest_path": artifacts["manifest_path"],
+            "failures": [],
+            "counts": {"total": len(manifest_df), "succeeded": len(manifest_df), "skipped": 0, "failed": 0},
+            "lock_error": "",
+        }
+
+    monkeypatch.setattr(module, "run_parse_manifest", _fake_runner)
+
+    config_path = tmp_path / "a055_priority_order.json"
+    _write_json(
+        config_path,
+        {
+            "workspace_root": str(workspace_root),
+            "content_db": str(content_db),
+            "node_code": "A055",
+            "execution_mode": "full_preprocess",
+            "profile": "non_review",
+            "run_mode": "local_only",
+        },
+    )
+
+    module.execute(config_path)
+    assert captured_order == ["demo-002", "demo-001"]
+
+
+def test_a055_mixed_should_start_from_global_min_priority_batch(monkeypatch, tmp_path: Path) -> None:
+    module = importlib.import_module("autodokit.affairs.统一文献预处理解析.affair")
+    workspace_root, content_db, pdf_path = _prepare_workspace(tmp_path)
+
+    review_pdf = workspace_root / "references" / "attachments" / "review.pdf"
+    review_pdf.parent.mkdir(parents=True, exist_ok=True)
+    review_pdf.write_bytes(b"%PDF-1.4\n%review\n")
+
+    replace_reference_tables_only(
+        db_path=content_db,
+        literatures_df=pd.DataFrame(
+            [
+                {
+                    "uid_literature": "lit-001",
+                    "cite_key": "demo-001",
+                    "title": "Review Paper",
+                    "year": "2024",
+                    "literature_type": "review",
+                    "pdf_path": str(review_pdf),
+                    "primary_attachment_name": review_pdf.name,
+                },
+                {
+                    "uid_literature": "lit-002",
+                    "cite_key": "demo-002",
+                    "title": "Non Review Paper",
+                    "year": "2024",
+                    "literature_type": "non_review",
+                    "pdf_path": str(pdf_path),
+                    "primary_attachment_name": pdf_path.name,
+                },
+            ]
+        ),
+        attachments_df=pd.DataFrame(
+            [
+                {
+                    "uid_attachment": "att-001",
+                    "uid_literature": "lit-001",
+                    "attachment_name": review_pdf.name,
+                    "attachment_type": "fulltext",
+                    "file_ext": "pdf",
+                    "storage_path": str(review_pdf),
+                    "source_path": str(review_pdf),
+                    "is_primary": 1,
+                    "status": "available",
+                },
+                {
+                    "uid_attachment": "att-002",
+                    "uid_literature": "lit-002",
+                    "attachment_name": pdf_path.name,
+                    "attachment_type": "fulltext",
+                    "file_ext": "pdf",
+                    "storage_path": str(pdf_path),
+                    "source_path": str(pdf_path),
+                    "is_primary": 1,
+                    "status": "available",
+                },
+            ]
+        ),
+    )
+
+    upsert_reading_queue_rows(
+        content_db,
+        [
+            {
+                "uid_literature": "lit-001",
+                "cite_key": "demo-001",
+                "stage": "A050_REVIEW",
+                "queue_status": "queued",
+                "priority": 8,
+                "source_affair": "A050",
+                "preferred_next_stage": "A060",
+                "recommended_reason": "review later",
+                "theme_relation": "demo",
+                "is_current": 1,
+            },
+            {
+                "uid_literature": "lit-002",
+                "cite_key": "demo-002",
+                "stage": "A050_NON_REVIEW",
+                "queue_status": "queued",
+                "priority": 1,
+                "source_affair": "A050",
+                "preferred_next_stage": "A090",
+                "recommended_reason": "non-review first",
+                "theme_relation": "demo",
+                "is_current": 1,
+            },
+        ],
+    )
+
+    batch_profiles: list[str] = []
+    batch_orders: list[list[str]] = []
+    monkeypatch.setattr(module, "_takeover_previous_a055_run", lambda **kwargs: [])
+
+    def _fake_runner(**kwargs):
+        source_df = kwargs["source_df"].copy().reset_index(drop=True)
+        profile = kwargs.get("literature_scope") or kwargs.get("profile") or ""
+        batch_profiles.append(str(profile))
+        batch_orders.append(source_df["cite_key"].astype(str).tolist())
+        manifest_df = pd.DataFrame(
+            [
+                {
+                    "uid_literature": row["uid_literature"],
+                    "cite_key": row["cite_key"],
+                    "title": row.get("title", ""),
+                    "pdf_path": row.get("pdf_path", ""),
+                    "source_stage": row.get("stage", ""),
+                    "recommended_reason": row.get("recommended_reason", ""),
+                    "theme_relation": row.get("theme_relation", ""),
+                    "source_origin": "auto",
+                    "reading_objective": "",
+                    "manual_guidance": "",
+                    "manifest_status": "succeeded",
+                    "normalized_structured_path": str(workspace_root / "references" / "structured_monkeyocr_full" / row["uid_literature"] / "normalized_structured.json"),
+                    "reconstructed_markdown_path": str(workspace_root / "references" / "structured_monkeyocr_full" / row["uid_literature"] / "reconstructed_content.md"),
+                    "asset_dir": str(workspace_root / "references" / "structured_monkeyocr_full" / row["uid_literature"]),
+                    "postprocess_ok": 1,
+                    "postprocess_llm_basic_cleanup_status": "ok",
+                    "postprocess_llm_structure_status": "ok",
+                    "postprocess_contamination_removed_block_count": 0,
+                    "failure_reason": "",
+                }
+                for _, row in source_df.iterrows()
+            ]
+        )
+        for _, row in source_df.iterrows():
+            _ensure_complete_asset(workspace_root / "references" / "structured_monkeyocr_full" / row["uid_literature"])
+        artifacts = _write_runner_artifacts(Path(kwargs["output_dir"]), manifest_df)
+        return {
+            "manifest_df": manifest_df,
+            **artifacts,
+            "readable_manifest_path": artifacts["manifest_path"],
+            "failures": [],
+            "counts": {"total": len(manifest_df), "succeeded": len(manifest_df), "skipped": 0, "failed": 0},
+            "lock_error": "",
+        }
+
+    monkeypatch.setattr(module, "run_parse_manifest", _fake_runner)
+
+    config_path = tmp_path / "a055_mixed_priority_order.json"
+    _write_json(
+        config_path,
+        {
+            "workspace_root": str(workspace_root),
+            "content_db": str(content_db),
+            "node_code": "A055",
+            "execution_mode": "full_preprocess",
+            "profile": "mixed",
+            "run_mode": "local_only",
+        },
+    )
+
+    module.execute(config_path)
+    assert batch_profiles[0] == "non_review"
+    assert batch_orders[0] == ["demo-002"]
+
+def test_a055_takeover_should_stop_previous_local_and_remote(monkeypatch, tmp_path: Path) -> None:
+    module = importlib.import_module("autodokit.affairs.统一文献预处理解析.affair")
+    workspace_root = (tmp_path / "workspace").resolve()
+    workspace_root.mkdir(parents=True, exist_ok=True)
+
+    guard_path = module._runtime_guard_path(workspace_root)
+    guard_path.write_text(json.dumps({"pid": 4242, "task_uid": "old-run"}, ensure_ascii=False), encoding="utf-8")
+
+    monkeypatch.setattr(module, "_is_pid_alive", lambda pid: pid == 4242)
+    killed: list[int] = []
+    monkeypatch.setattr(module, "_terminate_local_process", lambda pid: killed.append(pid) or True)
+    monkeypatch.setattr(module, "stop_remote_monkeyocr_jobs", lambda runtime: {"enabled": True, "killed": True})
+
+    actions = module._takeover_previous_a055_run(
+        workspace_root=workspace_root,
+        parse_runtime={"remote_processing": {"enabled": True, "mode": "ssh"}},
+        task_uid="new-run",
+    )
+
+    assert killed == [4242]
+    assert "local_killed:4242" in actions
+    assert "remote_stopped" in actions
+
+
+def _ensure_complete_asset(asset_dir: Path) -> None:
+    asset_dir.mkdir(parents=True, exist_ok=True)
+    (asset_dir / "normalized_structured.json").write_text("{}", encoding="utf-8")
+    (asset_dir / "reconstructed_content.md").write_text("demo", encoding="utf-8")
+    (asset_dir / "parse_record.json").write_text("{}", encoding="utf-8")
+    (asset_dir / "quality_report.json").write_text("{}", encoding="utf-8")
+
+
+def test_a055_remote_only_tmux_should_dispatch_without_local_parse(monkeypatch, tmp_path: Path) -> None:
+    module = importlib.import_module("autodokit.affairs.统一文献预处理解析.affair")
+    workspace_root, content_db, _ = _prepare_workspace(tmp_path)
+
+    monkeypatch.setattr(module, "_takeover_previous_a055_run", lambda **kwargs: [])
+    monkeypatch.setattr(module, "run_parse_manifest", lambda **kwargs: (_ for _ in ()).throw(AssertionError("should not run local parse")))
+
+    launch_calls: list[dict] = []
+
+    def _fake_launch(runtime_settings, **kwargs):
+        launch_calls.append({"runtime_settings": runtime_settings, **kwargs})
+        return {"enabled": True, "mode": "ssh", "session_name": "a055_remote_0001", "returncode": 0, "stdout": "", "stderr": ""}
+
+    monkeypatch.setattr(module, "launch_remote_tmux_command", _fake_launch)
+
+    config_path = tmp_path / "a055_remote_only.json"
+    _write_json(
+        config_path,
+        {
+            "workspace_root": str(workspace_root),
+            "content_db": str(content_db),
+            "node_code": "A055",
+            "execution_mode": "full_preprocess",
+            "run_mode": "remote_only_tmux",
+            "remote_only": {
+                "remote_command": "echo remote-only-a055",
+                "tmux_session_prefix": "a055",
+            },
+            "pdf_parse_runtime": {
+                "remote_processing": {
+                    "enabled": True,
+                    "mode": "ssh",
+                    "ssh": {"host": "dummy", "user": "dummy"},
+                }
+            },
+        },
+    )
+
+    outputs = module.execute(config_path)
+    assert launch_calls
+    assert any(path.name == "a055_remote_dispatch.json" for path in outputs)
+    dispatch_path = next(path for path in outputs if path.name == "a055_remote_dispatch.json")
+    dispatch_payload = json.loads(dispatch_path.read_text(encoding="utf-8"))
+    assert dispatch_payload["run_mode"] == "remote_only_tmux"
+    assert dispatch_payload["session_name"] == "a055_remote_0001"
+
+
+def test_a055_local_only_should_return_gate_when_queue_empty(monkeypatch, tmp_path: Path) -> None:
+    module = importlib.import_module("autodokit.affairs.统一文献预处理解析.affair")
+    workspace_root, content_db, _ = _prepare_workspace(tmp_path)
+
+    monkeypatch.setattr(module, "_takeover_previous_a055_run", lambda **kwargs: (_ for _ in ()).throw(AssertionError("should not takeover previous run")))
+    monkeypatch.setattr(module, "run_parse_manifest", lambda **kwargs: (_ for _ in ()).throw(AssertionError("should not run local parse")))
+
+    config_path = tmp_path / "a055_local_only_empty.json"
+    _write_json(
+        config_path,
+        {
+            "workspace_root": str(workspace_root),
+            "content_db": str(content_db),
+            "node_code": "A055",
+            "execution_mode": "full_preprocess",
+            "run_mode": "local_only",
+        },
+    )
+
+    outputs = module.execute(config_path)
+
+    assert len(outputs) == 1
+    gate_path = outputs[0]
+    gate_payload = json.loads(gate_path.read_text(encoding="utf-8"))
+    assert gate_path.name == "gate_review.json"
+    assert gate_payload["recommendation"] == "retry_current"
+    assert "未找到可执行条目" in gate_payload["summary"]
+
+
+def test_a055_record_parse_results_should_sync_from_done_marker(tmp_path: Path) -> None:
+    module = importlib.import_module("autodokit.affairs.统一文献预处理解析.affair")
+    workspace_root, content_db, _ = _prepare_workspace(tmp_path)
+
+    upsert_reading_queue_rows(
+        content_db,
+        [
+            {
+                "uid_literature": "lit-001",
+                "cite_key": "demo-001",
+                "stage": "A050_NON_REVIEW",
+                "queue_status": "queued",
+                "priority": 80,
+                "source_affair": "A050",
+                "preferred_next_stage": "A090",
+                "recommended_reason": "test",
+                "theme_relation": "demo",
+                "is_current": 1,
+            }
+        ],
+    )
+
+    asset_dir = workspace_root / "references" / "structured_monkeyocr_full" / "lit-001"
+    _ensure_complete_asset(asset_dir)
+    marker_name = "a055_parse_done.done.txt"
+    (asset_dir / marker_name).touch(exist_ok=True)
+
+    config_path = tmp_path / "a055_record.json"
+    _write_json(
+        config_path,
+        {
+            "workspace_root": str(workspace_root),
+            "content_db": str(content_db),
+            "node_code": "A055",
+            "execution_mode": "full_preprocess",
+            "run_mode": "record_parse_results",
+            "parse_done_marker_name": marker_name,
+            "pdf_parse_runtime": {
+                "remote_processing": {
+                    "enabled": False,
+                }
+            },
+        },
+    )
+
+    outputs = module.execute(config_path)
+    assert any(path.name == "a055_record_parse_results_index.csv" for path in outputs)
+
+    queue_df = load_reading_queue_df(content_db, stage="A050_NON_REVIEW", only_current=True)
+    assert queue_df.empty
+
+    a090_queue = load_reading_queue_df(content_db, stage="A090", only_current=True)
+    assert not a090_queue.empty
+
+    with sqlite3.connect(content_db) as conn:
+        uid_column = resolve_content_physical_column(LITERATURE_TABLE_NAME, "uid_literature")
+        row = conn.execute(
+            f'SELECT "预处理执行状态", "预处理结果路径", "解析状态", "当前解析状态", "当前解析路径", "结构化状态", "结构化正文路径" FROM "文献主表" WHERE "{uid_column}" = ?',
+            ("lit-001",),
+        ).fetchone()
+
+    assert row is not None
+    assert row[0] == "已处理"
+    assert row[1] == str(asset_dir)
+    assert row[2] == "已完成"
+    assert row[3] == "ready"
+    assert row[4] != ""
+    assert row[5] == "ready"
+    assert row[6] != ""
+
+
+def test_a055_record_parse_results_should_resolve_attachment_stem_without_marker(tmp_path: Path) -> None:
+    module = importlib.import_module("autodokit.affairs.统一文献预处理解析.affair")
+    workspace_root, _, pdf_path = _prepare_workspace(tmp_path)
+
+    asset_dir = workspace_root / "references" / "structured_monkeyocr_full" / pdf_path.stem
+    _ensure_complete_asset(asset_dir)
+
+    source_df = pd.DataFrame(
+        [
+            {
+                "uid_literature": "lit-001",
+                "cite_key": "demo-001",
+                "primary_attachment_name": pdf_path.name,
+                "pdf_path": str(pdf_path),
+            }
+        ]
+    )
+
+    ready_df = module._collect_record_ready_rows(
+        source_df,
+        workspace_root=workspace_root,
+        marker_name="a055_parse_done.done.txt",
+    )
+
+    assert len(ready_df) == 1
+    assert ready_df.iloc[0]["asset_dir"] == str(asset_dir)
+    assert ready_df.iloc[0]["done_marker_path"] == ""
+
+
+def test_a055_local_only_should_disable_remote_and_write_done_marker(monkeypatch, tmp_path: Path) -> None:
+    module = importlib.import_module("autodokit.affairs.统一文献预处理解析.affair")
+    workspace_root, content_db, pdf_path = _prepare_workspace(tmp_path)
+    output_dir = tmp_path / "outputs_a055"
+    output_dir.mkdir(parents=True, exist_ok=True)
+
+    upsert_reading_queue_rows(
+        content_db,
+        [
+            {
+                "uid_literature": "lit-001",
+                "cite_key": "demo-001",
+                "stage": "A050_NON_REVIEW",
+                "queue_status": "queued",
+                "priority": 80,
+                "source_affair": "A050",
+                "preferred_next_stage": "A090",
+                "recommended_reason": "test",
+                "theme_relation": "demo",
+                "is_current": 1,
+            }
+        ],
+    )
+
+    asset_dir = workspace_root / "references" / "structured_monkeyocr_full" / "lit-001"
+    _ensure_complete_asset(asset_dir)
+
+    manifest_df = pd.DataFrame(
+        [
+            {
+                "uid_literature": "lit-001",
+                "cite_key": "demo-001",
+                "title": "Demo Paper",
+                "pdf_path": str(pdf_path),
+                "source_stage": "A050_NON_REVIEW",
+                "recommended_reason": "test",
+                "theme_relation": "demo",
+                "source_origin": "auto",
+                "reading_objective": "objective",
+                "manual_guidance": "guidance",
+                "manifest_status": "succeeded",
+                "normalized_structured_path": str(asset_dir / "normalized_structured.json"),
+                "reconstructed_markdown_path": str(asset_dir / "reconstructed_content.md"),
+                "asset_dir": str(asset_dir),
+                "postprocess_ok": 1,
+                "postprocess_llm_basic_cleanup_status": "ok",
+                "postprocess_llm_structure_status": "ok",
+                "postprocess_contamination_removed_block_count": 0,
+                "failure_reason": "",
+            }
+        ]
+    )
+
+    runtime_captured: dict = {}
+    monkeypatch.setattr(module, "_takeover_previous_a055_run", lambda **kwargs: [])
+
+    def _fake_runner(**kwargs):
+        runtime_captured["runtime"] = kwargs.get("runtime_settings")
+        artifacts = _write_runner_artifacts(Path(kwargs["output_dir"]), manifest_df)
+        return {
+            "manifest_df": manifest_df,
+            **artifacts,
+            "readable_manifest_path": artifacts["manifest_path"],
+            "failures": [],
+            "counts": {"total": 1, "succeeded": 1, "skipped": 0, "failed": 0},
+            "lock_error": "",
+        }
+
+    monkeypatch.setattr(module, "run_parse_manifest", _fake_runner)
+
+    config_path = tmp_path / "a055_local_only.json"
+    _write_json(
+        config_path,
+        {
+            "workspace_root": str(workspace_root),
+            "content_db": str(content_db),
+            "output_dir": str(output_dir),
+            "node_code": "A055",
+            "execution_mode": "full_preprocess",
+            "profile": "non_review",
+            "run_mode": "local_only",
+            "pdf_parse_runtime": {
+                "remote_processing": {
+                    "enabled": True,
+                    "mode": "ssh",
+                    "ssh": {"host": "dummy", "user": "dummy"},
+                }
+            },
+        },
+    )
+
+    outputs = module.execute(config_path)
+    assert any(path.name == "a055_unified_preprocess_index.csv" for path in outputs)
+    assert isinstance(runtime_captured.get("runtime"), dict)
+    assert not bool((runtime_captured["runtime"].get("remote_processing") or {}).get("enabled"))
+    assert (asset_dir / "a055_parse_done.done.txt").exists()

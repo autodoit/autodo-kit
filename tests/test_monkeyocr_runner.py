@@ -106,3 +106,68 @@ def test_run_monkeyocr_single_pdf_remote_mode_should_use_remote_transfer(monkeyp
     assert remote_state["remote_input"].exists()
     assert Path(result["output_dir"]).exists()
     assert Path(result["reconstructed_markdown_path"]).exists()
+
+
+def test_launch_remote_tmux_command_should_delegate_to_ssh(monkeypatch) -> None:
+    from autodokit.tools.ocr.monkeyocr import runner
+
+    monkeypatch.setattr(runner, "_load_ssh_connection", lambda cfg: {"host": "dummy", "user": "dummy", **cfg})
+    captured: dict[str, str] = {}
+
+    def _fake_ssh_run(_ssh_cfg, remote_command: str, *, timeout: int):
+        captured["cmd"] = remote_command
+        captured["timeout"] = str(timeout)
+        return {"returncode": 0, "stdout": "ok", "stderr": ""}
+
+    monkeypatch.setattr(runner, "_ssh_run", _fake_ssh_run)
+
+    result = runner.launch_remote_tmux_command(
+        {
+            "remote_processing": {
+                "enabled": True,
+                "mode": "ssh",
+                "ssh": {"host": "dummy", "user": "dummy"},
+            }
+        },
+        remote_command="echo remote-only-a055",
+        session_prefix="a055",
+        session_name="a055_test_session",
+        timeout=15,
+    )
+
+    assert result["session_name"] == "a055_test_session"
+    assert "tmux new-session" in captured["cmd"]
+    assert "a055_test_session" in captured["cmd"]
+
+
+def test_launch_remote_tmux_command_should_quote_inline_python(monkeypatch) -> None:
+    from autodokit.tools.ocr.monkeyocr import runner
+
+    monkeypatch.setattr(runner, "_load_ssh_connection", lambda cfg: {"host": "dummy", "user": "dummy", **cfg})
+    captured: dict[str, str] = {}
+
+    def _fake_ssh_run(_ssh_cfg, remote_command: str, *, timeout: int):
+        captured["cmd"] = remote_command
+        captured["timeout"] = str(timeout)
+        return {"returncode": 0, "stdout": "ok", "stderr": ""}
+
+    monkeypatch.setattr(runner, "_ssh_run", _fake_ssh_run)
+
+    runner.launch_remote_tmux_command(
+        {
+            "remote_processing": {
+                "enabled": True,
+                "mode": "ssh",
+                "ssh": {"host": "dummy", "user": "dummy"},
+            }
+        },
+        remote_command="cd /repo && ./.venv/bin/python -c \"from pathlib import Path; print(Path('demo'))\"",
+        session_prefix="a055",
+        session_name="a055_python_inline",
+        timeout=15,
+    )
+
+    assert 'bash -lc ' in captured["cmd"]
+    assert 'tmux new-session -d -s a055_python_inline bash -lc ' in captured["cmd"]
+    assert 'python -c "from pathlib import Path; print(Path(' in captured["cmd"]
+    assert '"bash -lc ' not in captured["cmd"]

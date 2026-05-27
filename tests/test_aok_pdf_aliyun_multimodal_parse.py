@@ -11,8 +11,8 @@ import pandas as pd
 from autodokit.tools.old.ocr.aliyun_multimodal.aok_pdf_aliyun_multimodal_batch_manage import batch_manage_pdf_with_aliyun_multimodal
 from autodokit.tools.old.ocr.aliyun_multimodal.aok_pdf_aliyun_multimodal_parse import parse_pdf_with_aliyun_multimodal
 from autodokit.tools.old.ocr.aliyun_multimodal.aliyun_multimodal_postprocess_tools import postprocess_aliyun_multimodal_parse_outputs
-from autodokit.tools.bibliodb_sqlite import load_literatures_df, load_parse_assets_df, save_tables
-from autodokit.tools.contentdb_sqlite import init_content_db
+from autodokit.tools.bibliodb_sqlite import load_literatures_df, load_parse_assets_df, save_tables, upsert_reading_queue_rows
+from autodokit.tools.contentdb_sqlite import init_content_db, resolve_content_physical_column
 from autodokit.tools.ocr.classic.pdf_parse_asset_manager import ensure_multimodal_parse_asset
 
 
@@ -422,11 +422,10 @@ def test_init_content_db_should_auto_migrate_legacy_schema(tmp_path: Path) -> No
 
     init_content_db(content_db)
 
+    uid_literature_column = resolve_content_physical_column("文献主表", "uid_literature")
+    cite_key_column = resolve_content_physical_column("文献主表", "cite_key")
+    title_column = resolve_content_physical_column("文献主表", "title")
     with sqlite3.connect(content_db) as conn:
-        literature_columns = {
-            row[1]
-            for row in conn.execute('PRAGMA table_info("文献主表")')
-        }
         table_names = {
             row[0]
             for row in conn.execute("SELECT name FROM sqlite_master WHERE type='table'")
@@ -435,27 +434,217 @@ def test_init_content_db_should_auto_migrate_legacy_schema(tmp_path: Path) -> No
             row[0]
             for row in conn.execute("SELECT name FROM sqlite_master WHERE type='view'")
         }
-        index_names = {
-            row[0]
-            for row in conn.execute("SELECT name FROM sqlite_master WHERE type='index'")
-        }
         migrated_row = conn.execute(
-            'SELECT uid_literature, cite_key, title FROM "文献主表" WHERE uid_literature = ?',
+            f'SELECT "{uid_literature_column}", "{cite_key_column}", "{title_column}" FROM "文献主表" WHERE "{uid_literature_column}" = ?',
             ("lit-legacy-001",),
         ).fetchone()
 
     assert migrated_row == ("lit-legacy-001", "legacy_001", "Legacy Paper")
-    assert "a05_scope_key" in literature_columns
-    assert "a05_current_rank" in literature_columns
-    assert "structured_status" in literature_columns
-    assert "structured_backend" in literature_columns
-    assert "structured_abs_path" in literature_columns
-    assert "文献流程状态" in table_names
-    assert "文献解析资产" in table_names
     assert "工作区节点状态" in table_names
-    assert "文献流程状态总视图" in view_names
-    assert "工作流总览视图" in view_names
-    assert "待处理文献流程清单" in view_names
-    assert "idx_lit_a05_rank" in index_names
-    assert "idx_flow_state_stage" in index_names
-    assert "idx_parse_asset_lit_level" in index_names
+    assert "事务关联总视图" in view_names
+    assert "A050事务关联视图" in view_names
+    assert "A055事务关联视图" in view_names
+    assert "A160事务关联视图" in view_names
+
+
+def test_init_content_db_should_convert_runtime_public_tables_to_views(tmp_path: Path) -> None:
+    """旧 public runtime tables 初始化后应迁成 current-state views。"""
+
+    content_db = (tmp_path / "legacy_runtime_tables.db").resolve()
+    with sqlite3.connect(content_db) as conn:
+        conn.execute(
+            """
+            CREATE TABLE "文献主表" (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                uid_literature TEXT UNIQUE,
+                cite_key TEXT,
+                title TEXT,
+                created_at TEXT,
+                updated_at TEXT
+            )
+            """
+        )
+        conn.execute(
+            'INSERT INTO "文献主表" (uid_literature, cite_key, title, created_at, updated_at) VALUES (?, ?, ?, ?, ?)',
+            ("lit-legacy-001", "legacy_001", "Legacy Paper", "2026-04-02T00:00:00+00:00", "2026-04-02T00:00:00+00:00"),
+        )
+        conn.execute(
+            'CREATE TABLE "文献阅读状态" ("uid_文献" TEXT, "cite_key" TEXT, "阅读待预处理" INTEGER, "阅读更新时间" TEXT)'
+        )
+        conn.execute(
+            'INSERT INTO "文献阅读状态" VALUES (?, ?, ?, ?)',
+            ("lit-legacy-001", "legacy_001", 1, "2026-04-03T00:00:00+00:00"),
+        )
+        conn.execute(
+            'CREATE TABLE "文献预处理" ("uid_文献" TEXT, "cite_key" TEXT, "阶段" TEXT, "队列状态" TEXT, "更新时间" TEXT)'
+        )
+        conn.execute(
+            'INSERT INTO "文献预处理" VALUES (?, ?, ?, ?, ?)',
+            ("lit-legacy-001", "legacy_001", "A050_REVIEW", "queued", "2026-04-03T00:00:00+00:00"),
+        )
+        conn.execute(
+            'CREATE TABLE "文献流程状态" ("uid_文献" TEXT, "cite_key" TEXT, "当前阶段" TEXT, "节点编码" TEXT, "更新时间" TEXT)'
+        )
+        conn.execute(
+            'INSERT INTO "文献流程状态" VALUES (?, ?, ?, ?, ?)',
+            ("lit-legacy-001", "legacy_001", "A050", "A050", "2026-04-03T00:00:00+00:00"),
+        )
+        conn.execute(
+            'CREATE TABLE "文献解析资产" ("uid_资产" TEXT, "uid_文献" TEXT, "uid_附件" TEXT, "解析状态" TEXT, "结构化正文路径" TEXT, "更新时间" TEXT)'
+        )
+        conn.execute(
+            'INSERT INTO "文献解析资产" VALUES (?, ?, ?, ?, ?, ?)',
+            ("asset-legacy-001", "lit-legacy-001", "", "done", "C:/tmp/structured.md", "2026-04-03T00:00:00+00:00"),
+        )
+        conn.execute(
+            """
+            CREATE TABLE "文献翻译资产" (
+                translation_uid TEXT PRIMARY KEY,
+                uid_literature TEXT,
+                cite_key TEXT,
+                source_asset_uid TEXT,
+                source_kind TEXT,
+                target_lang TEXT,
+                translation_scope TEXT,
+                provider TEXT,
+                model_name TEXT,
+                asset_dir TEXT,
+                translated_markdown_path TEXT,
+                translated_structured_path TEXT,
+                translation_audit_path TEXT,
+                status TEXT,
+                is_current INTEGER,
+                created_at TEXT,
+                updated_at TEXT
+            )
+            """
+        )
+        conn.execute(
+            'INSERT INTO "文献翻译资产" VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+            (
+                "tr-legacy-001",
+                "lit-legacy-001",
+                "legacy_001",
+                "asset-legacy-001",
+                "parse",
+                "zh",
+                "full_text",
+                "provider",
+                "model",
+                "C:/tmp/translation",
+                "C:/tmp/translation.md",
+                "C:/tmp/translation.json",
+                "C:/tmp/translation.audit",
+                "done",
+                1,
+                "2026-04-03T00:00:00+00:00",
+                "2026-04-03T00:00:00+00:00",
+            ),
+        )
+        conn.commit()
+
+    init_content_db(content_db)
+
+    with sqlite3.connect(content_db) as conn:
+        object_types = dict(
+            conn.execute(
+                "SELECT name, type FROM sqlite_master WHERE name IN (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                (
+                    "文献阅读状态",
+                    "文献预处理",
+                    "文献流程状态",
+                    "文献解析资产",
+                    "文献翻译资产",
+                    "content_translation_assets_storage",
+                    "事务关联总视图",
+                    "A050事务关联视图",
+                    "A055事务关联视图",
+                    "A160事务关联视图",
+                ),
+            ).fetchall()
+        )
+        translation_count = conn.execute('SELECT COUNT(*) FROM "文献翻译资产"').fetchone()[0]
+        storage_count = conn.execute('SELECT COUNT(*) FROM "content_translation_assets_storage"').fetchone()[0]
+
+    assert object_types["文献阅读状态"] == "view"
+    assert object_types["文献预处理"] == "view"
+    assert object_types["文献流程状态"] == "view"
+    assert object_types["文献解析资产"] == "view"
+    assert object_types["文献翻译资产"] == "view"
+    assert object_types["content_translation_assets_storage"] == "table"
+    assert object_types["事务关联总视图"] == "view"
+    assert object_types["A050事务关联视图"] == "view"
+    assert object_types["A055事务关联视图"] == "view"
+    assert object_types["A160事务关联视图"] == "view"
+    assert translation_count == 1
+    assert storage_count == 1
+
+
+def test_transaction_relation_view_should_support_queue_only_rows(tmp_path: Path) -> None:
+    """事务关联视图应显示仅存在于预处理队列中的 A075/A080 条目。"""
+
+    content_db = (tmp_path / "transaction_relation.db").resolve()
+    init_content_db(content_db)
+
+    uid_column = resolve_content_physical_column("文献主表", "uid_literature")
+    cite_key_column = resolve_content_physical_column("文献主表", "cite_key")
+    title_column = resolve_content_physical_column("文献主表", "title")
+    first_author_column = resolve_content_physical_column("文献主表", "first_author")
+    year_column = resolve_content_physical_column("文献主表", "year")
+    created_at_column = resolve_content_physical_column("文献主表", "created_at")
+    updated_at_column = resolve_content_physical_column("文献主表", "updated_at")
+
+    with sqlite3.connect(content_db) as conn:
+        conn.executemany(
+            f'''
+            INSERT INTO "文献主表" (
+                "{uid_column}",
+                "{cite_key_column}",
+                "{title_column}",
+                "{first_author_column}",
+                "{year_column}",
+                "{created_at_column}",
+                "{updated_at_column}"
+            ) VALUES (?, ?, ?, ?, ?, ?, ?)
+            ''',
+            [
+                ("lit-queue-001", "queue_001", "Queue Paper", "Author Queue", "2025", "2026-05-27T00:00:00+00:00", "2026-05-27T00:00:00+00:00"),
+            ],
+        )
+        conn.commit()
+
+    upsert_reading_queue_rows(
+        content_db,
+        [
+            {
+                "uid_literature": "lit-queue-001",
+                "cite_key": "queue_001",
+                "stage": "A080",
+                "source_affair": "A075",
+                "queue_status": "queued",
+                "priority": 80,
+                "recommended_reason": "human seed",
+                "preferred_next_stage": "A090",
+                "is_current": 1,
+                "updated_at": "2026-05-27T00:00:00+00:00",
+            }
+        ],
+    )
+    init_content_db(content_db)
+
+    with sqlite3.connect(content_db) as conn:
+        rows = conn.execute(
+            '''
+            SELECT 事务编码, 引文键, 当前阶段, 当前状态
+            FROM "事务关联总视图"
+            WHERE 引文键 = 'queue_001'
+            ORDER BY 引文键
+            '''
+        ).fetchall()
+        a080_view_type = conn.execute(
+            "SELECT type FROM sqlite_master WHERE name = ?",
+            ("A080事务关联视图",),
+        ).fetchone()
+
+    assert rows == [("A075", "queue_001", "普通文献预处理事务", "待处理")]
+    assert a080_view_type == ("view",)
