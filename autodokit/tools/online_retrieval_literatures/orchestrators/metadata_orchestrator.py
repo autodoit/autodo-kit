@@ -7,6 +7,7 @@ from typing import Any
 from autodokit.tools.online_retrieval_literatures.catalogs import source_family
 from autodokit.tools.online_retrieval_literatures.executors.content_portal_cnki import execute_cnki_metadata
 from autodokit.tools.online_retrieval_literatures.executors.content_portal_spis import execute_spis_metadata
+from autodokit.tools.online_retrieval_literatures.executors.deepxiv_platform import execute_deepxiv_metadata
 from autodokit.tools.online_retrieval_literatures.executors.open_platform import execute_open_metadata
 
 
@@ -28,5 +29,7 @@ def run_metadata(payload: dict[str, Any], *, source: str, request_profile: str) 
         if source == "spis":
             return execute_spis_metadata(payload, request_profile=request_profile)
     if family == "open_platform":
+        if source == "deepxiv":
+            return execute_deepxiv_metadata(payload)
         return execute_open_metadata(payload)
     raise ValueError(f"metadata 不支持的来源: source={source}")

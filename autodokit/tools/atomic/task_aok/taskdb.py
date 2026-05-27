@@ -18,7 +18,7 @@ from typing import Any, Callable, Dict, List, Tuple
 
 import pandas as pd
 
-from ...contentdb_sqlite import CONTENT_DB_DIRECTORY_NAME, DEFAULT_CONTENT_DB_NAME, resolve_content_db_path
+from ...contentdb_sqlite import CONTENT_DB_DIRECTORY_NAME, DEFAULT_CONTENT_DB_NAME, KNOWLEDGE_INDEX_TABLE_NAME, LITERATURE_TABLE_NAME, resolve_content_db_path
 from ...time_utils import now_iso
 
 
@@ -1268,7 +1268,7 @@ def validate_aok_taskdb(
     if resolved_references_db.exists():
         if resolved_references_db.suffix.lower() == ".db":
             with sqlite3.connect(str(resolved_references_db)) as conn:
-                literature_table = pd.read_sql_query("SELECT uid_literature FROM literatures", conn)
+                literature_table = pd.read_sql_query(f'SELECT uid_literature FROM "{LITERATURE_TABLE_NAME}"', conn)
         else:
             literature_table = pd.read_csv(resolved_references_db, dtype=str, keep_default_na=False)
         if "uid_literature" in literature_table.columns:
@@ -1280,7 +1280,7 @@ def validate_aok_taskdb(
     if resolved_knowledge_db.exists():
         if resolved_knowledge_db.suffix.lower() == ".db":
             with sqlite3.connect(str(resolved_knowledge_db)) as conn:
-                knowledge_table = pd.read_sql_query("SELECT uid_knowledge FROM knowledge_index", conn)
+                knowledge_table = pd.read_sql_query(f'SELECT uid_knowledge FROM "{KNOWLEDGE_INDEX_TABLE_NAME}"', conn)
         else:
             knowledge_table = pd.read_csv(resolved_knowledge_db, dtype=str, keep_default_na=False)
         if "uid_knowledge" in knowledge_table.columns:

@@ -20,6 +20,7 @@ from autodokit.tools.reading_state_tools import (
     merge_retrieval_feedback_requests,
     should_route_back_to_a040,
 )
+from autodokit.tools.affair_request_bus import dispatch_affair_request, register_a040_requests_from_feedback
 from autodokit.tools.storage_backend import load_knowledge_tables, load_reference_tables, persist_knowledge_tables, persist_reference_tables
 from autodokit.tools.atomic.task_aok.task_instance_dir import create_task_instance_dir, mirror_artifacts_to_legacy, resolve_legacy_output_dir
 from autodokit.tools.atomic.task_aok.post_affair_git_commit import affair_auto_git_commit
@@ -27,6 +28,8 @@ from autodokit.tools.atomic.task_aok.post_affair_git_commit import affair_auto_g
 
 OUTPUT_INDEX = "a105_critical_reading_index.csv"
 OUTPUT_GATE = "gate_review.json"
+OUTPUT_RELATED_ITEMS_CSV = "related_literature_items.csv"
+OUTPUT_RELATED_ITEMS_MD = "related_literature_items.md"
 
 
 def _stringify(value: Any) -> str:
@@ -114,10 +117,60 @@ def _build_critical_note(*, title: str, cite_key: str, text: str, reading_object
     )
 
 
+def _write_related_literature_items(output_dir: Path, frame: pd.DataFrame) -> list[Path]:
+    snapshot_columns = [
+        "uid_literature",
+        "cite_key",
+        "title",
+        "deep_read_note_path",
+        "structured_json",
+        "discovered_candidate_count",
+        "knowledge_uid",
+        "asset_backend",
+        "note_translation_status",
+        "translated_note_path",
+    ]
+    available_columns = [column for column in snapshot_columns if column in frame.columns]
+    snapshot_df = frame[available_columns].copy() if available_columns else pd.DataFrame()
+
+    csv_path = output_dir / OUTPUT_RELATED_ITEMS_CSV
+    md_path = output_dir / OUTPUT_RELATED_ITEMS_MD
+    snapshot_df.to_csv(csv_path, index=False, encoding="utf-8-sig")
+
+    label_map = {
+        "uid_literature": "文献 UID",
+        "cite_key": "题录键",
+        "title": "标题",
+        "deep_read_note_path": "标准笔记路径",
+        "structured_json": "结构化 JSON",
+        "discovered_candidate_count": "发现候选数",
+        "knowledge_uid": "知识 UID",
+        "asset_backend": "解析后端",
+        "note_translation_status": "译文状态",
+        "translated_note_path": "译文笔记路径",
+    }
+    lines = ["# A105 相关文献条目", "", f"共 {len(snapshot_df)} 条。", ""]
+    if snapshot_df.empty:
+        lines.append("当前任务没有产出可记录的相关文献条目。")
+    else:
+        for index, row in snapshot_df.fillna("").iterrows():
+            title = _stringify(row.get("title")) or _stringify(row.get("cite_key")) or _stringify(row.get("uid_literature")) or f"条目 {index + 1}"
+            lines.append(f"## {index + 1}. {title}")
+            for column in available_columns:
+                value = _stringify(row.get(column))
+                if not value:
+                    continue
+                lines.append(f"- {label_map.get(column, column)}：{value}")
+            lines.append("")
+    md_path.write_text("\n".join(lines).rstrip() + "\n", encoding="utf-8")
+    return [csv_path, md_path]
+
+
 @affair_auto_git_commit("A105")
 def execute(config_path: Path) -> List[Path]:
     raw_cfg = load_json_or_py(config_path)
     workspace_root = _resolve_workspace_root(config_path, raw_cfg)
+    auto_dispatch_feedback_requests = bool(raw_cfg.get("auto_dispatch_feedback_requests_to_a040", True))
     legacy_output_dir = resolve_legacy_output_dir(raw_cfg, config_path)
     output_dir = create_task_instance_dir(workspace_root, "A105")
     content_db, _ = resolve_content_db_config(
@@ -423,7 +476,42 @@ def execute(config_path: Path) -> List[Path]:
     result_df = pd.DataFrame(result_rows)
     index_path = output_dir / OUTPUT_INDEX
     result_df.to_csv(index_path, index=False, encoding="utf-8-sig")
+    related_item_paths = _write_related_literature_items(output_dir, result_df)
     merged_feedback_requests = merge_retrieval_feedback_requests(retrieval_feedback_requests)
+    need_retrieval_feedback = len(merged_feedback_requests) > 0
+    need_download_feedback = any(bool(item.get("need_fulltext", False)) for item in merged_feedback_requests)
+    registered_feedback_requests: List[Dict[str, Any]] = []
+    dispatched_feedback_requests: List[Dict[str, Any]] = []
+    dispatch_failures: List[str] = []
+    if merged_feedback_requests:
+        registered_feedback_requests = register_a040_requests_from_feedback(
+            workspace_root=workspace_root,
+            feedback_requests=merged_feedback_requests,
+            source_node="A105",
+            priority="高" if need_download_feedback else "中",
+            creator_type="affair",
+            creator_id="A105_文献批判性研读与标准笔记",
+            attribute_vector={
+                "source_stage": "A105",
+                "need_download_feedback": need_download_feedback,
+                "request_count": len(merged_feedback_requests),
+            },
+        )
+        if auto_dispatch_feedback_requests:
+            for record in registered_feedback_requests:
+                request_uid = _stringify(record.get("request_uid") or record.get("uid_请求"))
+                if not request_uid:
+                    continue
+                try:
+                    dispatched_feedback_requests.append(
+                        dispatch_affair_request(
+                            workspace_root=workspace_root,
+                            request_uid=request_uid,
+                            raise_on_error=True,
+                        )
+                    )
+                except Exception as exc:
+                    dispatch_failures.append(f"{request_uid}: {exc}")
     feedback_path = output_dir / "retrieval_feedback_requests_A105.json"
     feedback_summary_path = output_dir / "retrieval_feedback_summary_A105.json"
     feedback_summary = {
@@ -431,9 +519,28 @@ def execute(config_path: Path) -> List[Path]:
         "source_stage": "A105",
         "request_count": len(merged_feedback_requests),
         "critical_read_count": len(result_rows),
+        "need_retrieval_feedback": need_retrieval_feedback,
+        "need_download_feedback": need_download_feedback,
+        "registered_request_count": len(registered_feedback_requests),
+        "auto_dispatch_feedback_requests": auto_dispatch_feedback_requests,
+        "dispatched_request_count": len(dispatched_feedback_requests),
+        "dispatch_failed_count": len(dispatch_failures),
     }
+    affair_request_result_path = output_dir / "affair_request_dispatch_A105.json"
     feedback_path.write_text(json.dumps(merged_feedback_requests, ensure_ascii=False, indent=2), encoding="utf-8")
     feedback_summary_path.write_text(json.dumps(feedback_summary, ensure_ascii=False, indent=2), encoding="utf-8")
+    affair_request_result_path.write_text(
+        json.dumps(
+            {
+                "registered_requests": registered_feedback_requests,
+                "dispatched_results": dispatched_feedback_requests,
+                "dispatch_failures": dispatch_failures,
+            },
+            ensure_ascii=False,
+            indent=2,
+        ),
+        encoding="utf-8",
+    )
 
     gate_review = build_gate_review(
         node_uid="A105",
@@ -443,11 +550,17 @@ def execute(config_path: Path) -> List[Path]:
             {"name": "critical_read_count", "value": len(result_rows)},
             {"name": "failure_count", "value": len(failures)},
             {"name": "retrieval_feedback_request_count", "value": len(merged_feedback_requests)},
+            {"name": "need_retrieval_feedback", "value": need_retrieval_feedback},
+            {"name": "need_download_feedback", "value": need_download_feedback},
+            {"name": "registered_feedback_request_count", "value": len(registered_feedback_requests)},
+            {"name": "auto_dispatch_feedback_requests", "value": auto_dispatch_feedback_requests},
+            {"name": "dispatched_feedback_request_count", "value": len(dispatched_feedback_requests)},
+            {"name": "dispatch_failure_count", "value": len(dispatch_failures)},
         ],
-        artifacts=[str(index_path), str(feedback_path), str(feedback_summary_path)],
+        artifacts=[str(index_path), *[str(path) for path in related_item_paths], str(feedback_path), str(feedback_summary_path), str(affair_request_result_path)],
         recommendation="pass" if result_rows else "retry_current",
         score=max(45.0, 92.0 - len(failures) * 10.0),
-        issues=failures,
+        issues=[*failures, *dispatch_failures],
         metadata={
             "workspace_root": str(workspace_root),
             "content_db": str(content_db),
@@ -475,7 +588,7 @@ def execute(config_path: Path) -> List[Path]:
             reasoning_summary="消费 parse_ready 条目，完成批判性研读、标准文献笔记写回与新候选回流。",
             gate_review=gate_review,
             gate_review_path=gate_path,
-            artifact_paths=[path for path in [index_path, gate_path] if path is not None],
+            artifact_paths=[path for path in [index_path, *related_item_paths, gate_path] if path is not None],
             payload={
                 "critical_read_count": len(result_rows),
                 "failure_count": len(failures),
@@ -489,6 +602,6 @@ def execute(config_path: Path) -> List[Path]:
     except Exception:
         pass
 
-    mirror_artifacts_to_legacy([index_path, feedback_path, feedback_summary_path, gate_path], legacy_output_dir, output_dir)
-    return [index_path, feedback_path, feedback_summary_path, gate_path]
+    mirror_artifacts_to_legacy([index_path, *related_item_paths, feedback_path, feedback_summary_path, gate_path], legacy_output_dir, output_dir)
+    return [index_path, *related_item_paths, feedback_path, feedback_summary_path, gate_path]
 

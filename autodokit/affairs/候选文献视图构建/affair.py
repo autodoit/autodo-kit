@@ -10,6 +10,7 @@ from typing import Any, Dict, Iterable, List, Tuple
 
 import pandas as pd
 
+from autodokit.path_compat import resolve_portable_path
 from autodokit.tools import (
     append_aok_log_event,
     allocate_reading_batches,
@@ -31,9 +32,8 @@ from autodokit.tools import (
     process_reference_citation,
     refine_reference_lines_with_llm,
 )
-from autodokit.tools.ocr.classic.pdf_parse_asset_manager import ensure_multimodal_parse_asset
 from autodokit.tools.bibliodb_sqlite import replace_tags_for_namespace, save_structured_state, upsert_reading_queue_rows, upsert_review_state_rows
-from autodokit.tools.contentdb_sqlite import get_pdf_structured_variant_column, resolve_content_db_config, resolve_pdf_structured_variant_output_dir
+from autodokit.tools.contentdb_sqlite import derive_literature_parse_state, get_pdf_structured_variant_column, resolve_content_db_config, resolve_pdf_structured_variant_output_dir
 from autodokit.tools.ocr.classic.pdf_to_structured_data_converter_local_pipeline_v2 import convert_pdf_to_structured_data_file as convert_pdf_to_structured_data_file_local_v2
 from autodokit.tools.ocr.babeldoc.pdf_to_structure_data_converter_use_babeldoc import convert_pdf_to_structured_data_file as convert_pdf_to_structured_data_file_babeldoc
 from autodokit.tools.storage_backend import (
@@ -140,10 +140,7 @@ def _resolve_workspace_root(config_path: Path, raw_cfg: Dict[str, Any]) -> Path:
     for key in ("workspace_root",):
         candidate = _stringify(raw_cfg.get(key))
         if candidate:
-            path = Path(candidate)
-            if not path.is_absolute():
-                raise ValueError(f"{key} 必须为绝对路径: {path}")
-            return path
+            return resolve_portable_path(candidate, base=config_path.parent)
     return config_path.parents[2]
 
 
@@ -188,6 +185,20 @@ def _resolve_existing_structured_path(
         path = Path(structured_abs_path)
         if path.is_absolute() and path.exists() and path.is_file():
             return path, _stringify(source_record.get("structured_backend")), _stringify(source_record.get("structured_task_type"))
+
+    current_parse_path = _stringify(source_record.get("current_parse_path"))
+    current_parse_state = derive_literature_parse_state(
+        parse_state=source_record.get("parse_state") or source_record.get("解析状态"),
+        current_parse_status=source_record.get("current_parse_status"),
+        structured_status=source_record.get("structured_status"),
+        has_parse_result=bool(current_parse_path),
+    )
+    current_parse_level = _stringify(source_record.get("current_parse_level"))
+    current_parse_backend = _stringify(source_record.get("current_parse_backend"))
+    if current_parse_path and current_parse_state == "已完成":
+        path = Path(current_parse_path)
+        if path.is_absolute() and path.exists() and path.is_file():
+            return path, current_parse_backend, current_parse_level
 
     for converter, task_type in structured_variants:
         column_name = get_pdf_structured_variant_column(converter, task_type)
@@ -308,22 +319,12 @@ def _ensure_structured_reference_lines(
             return working_literature, source_record, [], [], False
 
         if _is_monkeyocr_converter(structured_converter):
-            global_config_path = workspace_root / "config" / "config.json"
-            parse_level = structured_task_type if structured_task_type not in {"reference_context", "full_fine_grained"} else "review_deep"
-            parse_asset = ensure_multimodal_parse_asset(
-                content_db=content_db,
-                parse_level=parse_level,
-                uid_literature=_stringify(source_record.get("uid_literature")),
-                cite_key=_stringify(source_record.get("cite_key")),
-                source_stage="A050",
-                api_key_file=api_key_file or None,
-                global_config_path=global_config_path if global_config_path.exists() else None,
-                overwrite_existing=False,
-                model=parse_model or "auto",
-            )
-            structured_path = Path(_stringify(parse_asset.get("normalized_structured_path"))).resolve()
-            backend = "monkeyocr"
-            task_type = parse_level
+            if structured_generation_required:
+                raise ValueError(
+                    "当前 A060 仅消费文献主表 current_parse/结构化摘要，不再在事务内补造 MonkeyOCR 解析资产。"
+                    f" uid_literature={_stringify(source_record.get('uid_literature')) or 'unknown'}"
+                )
+            return working_literature, source_record, [], [], False
         else:
             output_dir = resolve_pdf_structured_variant_output_dir(
                 workspace_root,
@@ -409,6 +410,7 @@ def _ensure_structured_reference_lines(
 def _resolve_content_db_path(
     raw_cfg: Dict[str, Any],
     global_cfg: Dict[str, Any],
+    config_path: Path,
 ) -> Tuple[Path | None, str]:
     """优先使用节点配置，其次回退到 workspace 全局 config。"""
 
@@ -421,9 +423,7 @@ def _resolve_content_db_path(
     if not fallback_raw:
         return None, ""
 
-    fallback_path = Path(fallback_raw)
-    if not fallback_path.is_absolute():
-        raise ValueError(f"config.paths.content_db_path 必须为绝对路径: {fallback_path}")
+    fallback_path = resolve_portable_path(fallback_raw, base=config_path.parent)
     return fallback_path, "config.paths.content_db_path"
 
 
@@ -1238,6 +1238,7 @@ def _prepare_review_assets(
                     line,
                     workspace_root=workspace_root,
                     global_config_path=global_config_path,
+                    api_key_file=api_key_file,
                     source=placeholder_source,
                     placeholder_run_uid=placeholder_run_uid,
                     enable_reference_line_repair=enable_reference_line_repair,
@@ -1337,19 +1338,20 @@ def _load_candidate_records(raw_cfg: Dict[str, Any]) -> List[Dict[str, Any]]:
     return []
 
 
-@affair_auto_git_commit("A050")
+@affair_auto_git_commit("A060")
 def execute(config_path: Path) -> List[Path]:
     """事务执行入口。"""
 
+    config_path = Path(config_path)
     raw_cfg = load_json_or_py(config_path)
     workspace_root = _resolve_workspace_root(config_path, raw_cfg)
     global_config_path = workspace_root / "config" / "config.json"
     if not global_config_path.exists():
         global_config_path = None
     global_cfg = _load_global_config(global_config_path)
-    content_db_path, db_input_key = _resolve_content_db_path(raw_cfg, global_cfg)
+    content_db_path, db_input_key = _resolve_content_db_path(raw_cfg, global_cfg, config_path)
     legacy_output_dir = resolve_legacy_output_dir(raw_cfg, config_path)
-    output_dir = create_task_instance_dir(workspace_root, "A050")
+    output_dir = create_task_instance_dir(workspace_root, "A060")
     global_config_path = workspace_root / "config" / "config.json"
     if not global_config_path.exists():
         global_config_path = None
@@ -1372,10 +1374,9 @@ def execute(config_path: Path) -> List[Path]:
     content_db_raw = str(content_db_path) if content_db_path is not None else str(raw_cfg.get("literature_csv") or "").strip()
     literature_table = pd.DataFrame()
     content_db: Path | None = None
+    persist_review_views_to_content_db = bool(raw_cfg.get("persist_review_views_to_content_db", False))
     if content_db_raw:
-        content_db = Path(content_db_raw)
-        if not content_db.is_absolute():
-            raise ValueError(f"content_db 必须为绝对路径: {content_db}")
+        content_db = resolve_portable_path(content_db_raw, base=config_path.parent)
         if content_db.exists():
             literature_table = load_reference_main_table(content_db)
             literature_table = _enrich_literature_with_primary_attachments(literature_table, content_db)
@@ -1391,11 +1392,9 @@ def execute(config_path: Path) -> List[Path]:
 
     direct_from_reference_db = not candidates and not literature_table.empty
     structured_seed_dir_raw = _stringify(raw_cfg.get("direct_review_structured_dir"))
-    structured_seed_dir = Path(structured_seed_dir_raw) if structured_seed_dir_raw else None
+    structured_seed_dir = resolve_portable_path(structured_seed_dir_raw, base=config_path.parent) if structured_seed_dir_raw else None
     direct_structured_matches = pd.DataFrame()
     if structured_seed_dir is not None:
-        if not structured_seed_dir.is_absolute():
-            raise ValueError(f"direct_review_structured_dir 必须为绝对路径: {structured_seed_dir}")
         direct_structured_matches = _collect_direct_structured_review_rows(
             literature_table,
             structured_dir=structured_seed_dir,
@@ -1406,7 +1405,7 @@ def execute(config_path: Path) -> List[Path]:
         views = _build_direct_structured_review_views(
             direct_structured_matches,
             source_round=str(raw_cfg.get("source_round") or "round_direct_structured_review"),
-            source_affair=str(raw_cfg.get("source_affair") or "A050_direct_structured_review_seed"),
+            source_affair=str(raw_cfg.get("source_affair") or "A060_direct_structured_review_seed"),
             batch_size=batch_size,
             extra_fields=extra_fields,
         )
@@ -1515,7 +1514,7 @@ def execute(config_path: Path) -> List[Path]:
         "mapped_reference_count": 0,
         "validation_errors": [],
     }
-    queue_stage = "A060"
+    queue_stage = "A065"
     if not direct_structured_matches.empty and bool(raw_cfg.get("skip_a060_when_structured_ready", False)):
         queue_stage = _stringify(raw_cfg.get("direct_review_queue_stage")) or "A065"
     next_stage_queue_count = 0
@@ -1533,14 +1532,14 @@ def execute(config_path: Path) -> List[Path]:
                     "uid_literature": uid_literature,
                     "cite_key": cite_key,
                     "stage": queue_stage,
-                    "source_affair": "A050",
+                    "source_affair": "A060",
                     "queue_status": "queued",
                     "priority": _stringify(row.get("score")) or _stringify(row.get("priority")) or 68.0,
-                    "bucket": "review_candidate",
-                    "preferred_next_stage": queue_stage,
-                    "recommended_reason": "A050 候选视图构建完成，进入后续综述处理入口",
-                    "theme_relation": _stringify(raw_cfg.get("research_topic") or raw_cfg.get("topic") or "A050_topic"),
-                    "source_round": "a050",
+                    "bucket": "review_reference_preprocess",
+                    "preferred_next_stage": "A070" if queue_stage == "A065" else queue_stage,
+                    "recommended_reason": "A060 综述候选视图构建完成，进入 A065 参考文献处理与标准笔记骨架阶段",
+                    "theme_relation": _stringify(raw_cfg.get("research_topic") or raw_cfg.get("topic") or "A060_topic"),
+                    "source_round": "a060",
                     "run_uid": run_uid,
                     "scope_key": scope_key,
                     "is_current": 1,
@@ -1550,10 +1549,13 @@ def execute(config_path: Path) -> List[Path]:
                 {
                     "uid_literature": uid_literature,
                     "cite_key": cite_key,
-                    "source_stage": "A050",
+                    "source_stage": "A060",
                     "pending_review_candidate": 0,
                     "review_candidate_ready": 1,
-                    "pending_review_parse": 1,
+                    "pending_review_parse": 0,
+                    "review_parse_ready": 1,
+                    "pending_reference_preprocess": 1,
+                    "reference_preprocessed": 0,
                 }
             )
         if queue_rows:
@@ -1564,8 +1566,8 @@ def execute(config_path: Path) -> List[Path]:
             review_state_count = len(review_rows)
 
     gate_review = build_gate_review(
-        node_uid="A05",
-        node_name="候选文献视图构建",
+        node_uid="A060",
+        node_name="综述候选文献视图构建",
         summary=f"基于文献总库生成综述候选 {len(review_candidate_pool_index)} 条，可读视图 {len(review_candidate_pool_readable)} 条，阅读批次 {review_reading_batches['batch_id'].nunique() if not review_reading_batches.empty else 0} 个，并写入 {queue_stage} 当前态队列 {next_stage_queue_count} 条。",
         checks=[
             {"name": "review_candidate_count", "value": len(review_candidate_pool_index)},
@@ -1626,7 +1628,7 @@ def execute(config_path: Path) -> List[Path]:
     gate_path = output_dir / "gate_review.json"
     gate_path.write_text(json.dumps(gate_review, ensure_ascii=False, indent=2), encoding="utf-8")
 
-    if content_db is not None:
+    if content_db is not None and persist_review_views_to_content_db:
         persist_review_candidate_views(
             content_db,
             view_tables=review_view_tables,
@@ -1636,14 +1638,14 @@ def execute(config_path: Path) -> List[Path]:
         )
 
     append_aok_log_event(
-        event_type="A050_REVIEW_CANDIDATE_VIEWS_BUILT",
+        event_type="A060_REVIEW_CANDIDATE_VIEWS_BUILT",
         project_root=workspace_root,
         enabled=logging_enabled,
-        affair_code="A050",
+        affair_code="A060",
         handler_name="候选文献视图构建",
         agent_names=["ar_A060_综述候选文献视图构建事务智能体_v7"],
         skill_names=["ar_A060_综述候选文献视图构建_v7", "m_ObsidianMarkdown_v1"],
-        reasoning_summary="生成综述候选视图，并根据解析资产就绪情况推进到 A060 或直接进入 A065。",
+        reasoning_summary="生成综述候选视图，并在结构化资产就绪后推进到 A065。",
         gate_review=gate_review,
         gate_review_path=gate_path,
         artifact_paths=[

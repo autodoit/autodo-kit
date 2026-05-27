@@ -10,6 +10,8 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
+from autodokit.tools.contentdb_sqlite import LITERATURE_TABLE_NAME
+
 
 def _now_iso() -> str:
     return datetime.now().astimezone().isoformat(timespec="seconds")
@@ -115,7 +117,7 @@ def detect_and_clean_literature_title_braces(payload: dict[str, Any]) -> dict[st
 
     select_sql = (
         "SELECT uid_literature, cite_key, title, source_type "
-        "FROM literatures "
+        f'FROM "{LITERATURE_TABLE_NAME}" '
         "WHERE (instr(title, '{') > 0 OR instr(title, '}') > 0)"
     )
     params: list[Any] = []
@@ -134,15 +136,15 @@ def detect_and_clean_literature_title_braces(payload: dict[str, Any]) -> dict[st
         matched_rows = list(conn.execute(select_sql, tuple(params)).fetchall())
         all_rows_count = int(
             conn.execute(
-                "SELECT COUNT(1) FROM literatures WHERE instr(title, '{') > 0 OR instr(title, '}') > 0"
+                f'SELECT COUNT(1) FROM "{LITERATURE_TABLE_NAME}" WHERE instr(title, ''{{'') > 0 OR instr(title, ''}}'') > 0'
             ).fetchone()[0]
         )
         table_columns = {
             str(row[1])
-            for row in conn.execute("PRAGMA table_info(literatures)").fetchall()
+            for row in conn.execute(f'PRAGMA table_info("{LITERATURE_TABLE_NAME}")').fetchall()
         }
 
-        update_sql = "UPDATE literatures SET title = ?"
+        update_sql = f'UPDATE "{LITERATURE_TABLE_NAME}" SET title = ?'
         if update_updated_at and "updated_at" in table_columns:
             update_sql += ", updated_at = ?"
         update_sql += " WHERE uid_literature = ?"

@@ -38,6 +38,10 @@ from autodokit.tools.atomic.task_aok.post_affair_git_commit import affair_auto_g
 from autodokit.tools.atomic.task_aok.task_instance_dir import create_task_instance_dir, mirror_artifacts_to_legacy, resolve_legacy_output_dir
 
 
+OUTPUT_RELATED_ITEMS_CSV = "related_literature_items.csv"
+OUTPUT_RELATED_ITEMS_MD = "related_literature_items.md"
+
+
 @dataclass
 class MatrixConfig:
     """文献矩阵配置。
@@ -69,6 +73,8 @@ class MatrixConfig:
         "正文（可能较长，已截断）：\n{text}\n"
     )
     max_chars: int = 8000
+
+
 def _as_uid_list(v: Any) -> Optional[List[str]]:
     if v is None:
         return None
@@ -82,6 +88,61 @@ def _as_uid_list(v: Any) -> Optional[List[str]]:
                 out.append(uid_text)
         return out
     return None
+
+
+def _stringify(value: Any) -> str:
+    if value is None:
+        return ""
+    return str(value).strip()
+
+
+def _extract_doc_snapshot_row(doc: Dict[str, Any]) -> Dict[str, str]:
+    meta = doc.get("meta") if isinstance(doc.get("meta"), dict) else {}
+    return {
+        "uid": _stringify(doc.get("uid")),
+        "title": _stringify(doc.get("title") or meta.get("title")),
+        "year": _stringify(doc.get("year") or meta.get("year")),
+        "source_origin": _stringify(doc.get("source_origin") or meta.get("source_origin")),
+        "structured_json": _stringify(doc.get("structured_json") or meta.get("structured_json")),
+        "pdf_path": _stringify(doc.get("pdf_path") or meta.get("pdf_path")),
+    }
+
+
+def _write_related_literature_items(output_dir: Path, docs: List[Dict[str, Any]]) -> List[Path]:
+    fieldnames = ["uid", "title", "year", "source_origin", "structured_json", "pdf_path"]
+    rows = [_extract_doc_snapshot_row(doc) for doc in docs]
+
+    csv_path = output_dir / OUTPUT_RELATED_ITEMS_CSV
+    md_path = output_dir / OUTPUT_RELATED_ITEMS_MD
+
+    with csv_path.open("w", encoding="utf-8-sig", newline="") as handle:
+        writer = csv.DictWriter(handle, fieldnames=fieldnames)
+        writer.writeheader()
+        writer.writerows(rows)
+
+    lines = ["# A110 相关文献条目", "", f"共 {len(rows)} 条。", ""]
+    if not rows:
+        lines.append("当前任务没有可记录的相关文献条目。")
+    else:
+        label_map = {
+            "uid": "文献 UID",
+            "title": "标题",
+            "year": "年份",
+            "source_origin": "来源",
+            "structured_json": "结构化 JSON",
+            "pdf_path": "PDF 路径",
+        }
+        for index, row in enumerate(rows, start=1):
+            title = row.get("title") or row.get("uid") or f"条目 {index}"
+            lines.append(f"## {index}. {title}")
+            for column in fieldnames:
+                value = row.get(column, "")
+                if not value:
+                    continue
+                lines.append(f"- {label_map.get(column, column)}：{value}")
+            lines.append("")
+    md_path.write_text("\n".join(lines).rstrip() + "\n", encoding="utf-8")
+    return [csv_path, md_path]
 
 
 def _run_literature_matrix(*, merged: Dict[str, Any]) -> List[Path]:
@@ -141,11 +202,16 @@ def _run_literature_matrix(*, merged: Dict[str, Any]) -> List[Path]:
     if cfg.limit is not None:
         docs = docs[: int(cfg.limit)]
 
+    related_paths = _write_related_literature_items(out_dir, docs)
+
     route_hints: Dict[str, Any] = dict(model_route)
     route_hints.setdefault("input_chars", cfg.max_chars)
 
+    global_config_path = str(merged.get("global_config_path") or "").strip()
     llm_cfg = load_aliyun_llm_config(
         model=cfg.model,
+        api_key_file=str(merged.get("api_key_file") or "").strip() or None,
+        config_path=Path(global_config_path).resolve() if global_config_path else None,
         affair_name="文献矩阵",
         route_hints=route_hints,
     )
@@ -201,7 +267,7 @@ def _run_literature_matrix(*, merged: Dict[str, Any]) -> List[Path]:
         for r in rows:
             w.writerow({k: r.get(k, "") for k in fieldnames})
 
-    return [matrix_jsonl, matrix_csv]
+    return [matrix_jsonl, matrix_csv, *related_paths]
 
 
 class LiteratureMatrixTemplateAffair(TemplateAffairBase):

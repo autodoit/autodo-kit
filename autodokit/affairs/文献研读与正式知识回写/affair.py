@@ -10,8 +10,8 @@ from typing import Any, Dict, List
 import pandas as pd
 
 from autodokit.tools import append_aok_log_event, build_gate_review, load_json_or_py
-from autodokit.tools.bibliodb_sqlite import load_reading_state_df, upsert_reading_state_rows
-from autodokit.tools.contentdb_sqlite import CONTENT_DB_DIRECTORY_NAME, DEFAULT_CONTENT_DB_NAME, resolve_content_db_config
+from autodokit.tools.bibliodb_sqlite import READING_QUEUE_COLUMNS, READING_QUEUE_STORAGE_TABLE, load_reading_queue_df, load_reading_state_df, upsert_reading_queue_rows, upsert_reading_state_rows
+from autodokit.tools.contentdb_sqlite import CONTENT_DB_DIRECTORY_NAME, DEFAULT_CONTENT_DB_NAME, derive_literature_parse_state, resolve_content_db_config
 from autodokit.tools.literature_translation_tools import run_literature_translation
 from autodokit.tools.ocr.runtime.monkeyocr_manifest_runtime import (
     resolve_parse_runtime_settings,
@@ -20,10 +20,13 @@ from autodokit.tools.ocr.runtime.monkeyocr_manifest_runtime import (
 )
 from autodokit.tools.ocr.classic.pdf_parse_asset_manager import ensure_pdf_text_fallback_asset
 from autodokit.tools.atomic.task_aok.post_affair_git_commit import affair_auto_git_commit
+from autodokit.tools.storage_backend import load_reference_tables
 
 
 OUTPUT_INDEX = "a100_deep_parse_index.csv"
 OUTPUT_GATE = "gate_review.json"
+OUTPUT_RELATED_ITEMS_CSV = "related_literature_items.csv"
+OUTPUT_RELATED_ITEMS_MD = "related_literature_items.md"
 
 
 def _build_task_instance_dir(workspace_root: Path, node_code: str) -> Path:
@@ -72,6 +75,150 @@ def _resolve_output_dir(config_path: Path, raw_cfg: Dict[str, Any]) -> Path:
     return output_dir
 
 
+def _has_parse_summary(row: Dict[str, Any]) -> bool:
+    parse_state = derive_literature_parse_state(
+        parse_state=row.get("parse_state") or row.get("解析状态"),
+        current_parse_status=row.get("current_parse_status"),
+        structured_status=row.get("structured_status"),
+        has_parse_result=bool(_stringify(row.get("current_parse_path")) or _stringify(row.get("structured_abs_path"))),
+    )
+    if parse_state == "已完成" and _stringify(row.get("current_parse_path")):
+        return True
+    structured_status = _stringify(row.get("structured_status")).lower()
+    if structured_status in {"ready", "succeeded", "success", "completed", "ok"} and _stringify(row.get("structured_abs_path")):
+        return True
+    return False
+
+
+def _load_deep_parse_pool(
+    content_db: Path,
+    *,
+    literature_df: pd.DataFrame,
+    state_df: pd.DataFrame,
+) -> tuple[pd.DataFrame, str]:
+    queue_df = load_reading_queue_df(
+        content_db,
+        stage="A100",
+        only_current=True,
+        queue_statuses=["queued", "candidate", "in_progress"],
+    )
+    if not queue_df.empty:
+        literature_by_uid = {
+            _stringify(row.get("uid_literature")): row.to_dict()
+            for _, row in literature_df.fillna("").iterrows()
+            if _stringify(row.get("uid_literature"))
+        }
+        state_by_uid = {
+            _stringify(row.get("uid_literature")): row.to_dict()
+            for _, row in state_df.fillna("").iterrows()
+            if _stringify(row.get("uid_literature"))
+        }
+        merged_rows: list[dict[str, Any]] = []
+        for _, row in queue_df.fillna("").iterrows():
+            queue_row = row.to_dict()
+            uid_literature = _stringify(queue_row.get("uid_literature"))
+            combined: dict[str, Any] = {}
+            if uid_literature:
+                combined.update(literature_by_uid.get(uid_literature, {}))
+                combined.update(state_by_uid.get(uid_literature, {}))
+            combined.update(queue_row)
+            combined["cite_key"] = _stringify(combined.get("cite_key")) or uid_literature
+            merged_rows.append(combined)
+        return pd.DataFrame(merged_rows).fillna(""), "queue"
+
+    legacy_df = state_df.loc[
+        pd.to_numeric(state_df.get("pending_deep_read", 0), errors="coerce").fillna(0).astype(int) == 1
+    ].copy()
+    if legacy_df.empty:
+        return pd.DataFrame(), "queue"
+    return legacy_df.fillna(""), "reading_state"
+
+
+def _consume_current_stage_queue_rows(content_db: Path, *, stage: str, completed_df: pd.DataFrame) -> int:
+    if completed_df is None or completed_df.empty:
+        return 0
+    identities: list[tuple[str, str]] = []
+    for _, row in completed_df.fillna("").iterrows():
+        uid_literature = _stringify(row.get("uid_literature"))
+        cite_key = _stringify(row.get("cite_key"))
+        if not uid_literature and not cite_key:
+            continue
+        identities.append((uid_literature, cite_key))
+    if not identities:
+        return 0
+    queue_df = load_reading_queue_df(content_db).copy()
+    if queue_df.empty:
+        return 0
+    now_iso = datetime.now().isoformat(timespec="seconds")
+    identity_set = set(identities)
+    mask = (
+        queue_df.get("stage", pd.Series(dtype=str)).astype(str).eq(stage)
+        & queue_df.get("is_current", pd.Series(dtype=int)).fillna(0).astype(int).eq(1)
+        & pd.Series(
+            [(_stringify(row.get("uid_literature")), _stringify(row.get("cite_key"))) in identity_set for _, row in queue_df.fillna("").iterrows()],
+            index=queue_df.index,
+        )
+    )
+    affected = int(mask.sum())
+    if affected <= 0:
+        return 0
+    queue_df.loc[mask, "is_current"] = 0
+    queue_df.loc[mask, "queue_status"] = "completed"
+    queue_df.loc[mask, "updated_at"] = now_iso
+    if "id" in queue_df.columns:
+        queue_df = queue_df.drop(columns=["id"])
+    queue_df = queue_df[[column for column in READING_QUEUE_COLUMNS if column in queue_df.columns]].copy()
+    upsert_reading_queue_rows(content_db, queue_df)
+    return affected
+
+
+def _write_related_literature_items(output_dir: Path, frame: pd.DataFrame) -> list[Path]:
+    snapshot_columns = [
+        "uid_literature",
+        "cite_key",
+        "title",
+        "source_origin",
+        "parse_status",
+        "structured_json",
+        "asset_dir",
+        "postprocess_markdown_path",
+        "parse_translation_status",
+    ]
+    available_columns = [column for column in snapshot_columns if column in frame.columns]
+    snapshot_df = frame[available_columns].copy() if available_columns else pd.DataFrame()
+
+    csv_path = output_dir / OUTPUT_RELATED_ITEMS_CSV
+    md_path = output_dir / OUTPUT_RELATED_ITEMS_MD
+    snapshot_df.to_csv(csv_path, index=False, encoding="utf-8-sig")
+
+    label_map = {
+        "uid_literature": "文献 UID",
+        "cite_key": "题录键",
+        "title": "标题",
+        "source_origin": "来源口径",
+        "parse_status": "解析状态",
+        "structured_json": "结构化 JSON",
+        "asset_dir": "解析资产目录",
+        "postprocess_markdown_path": "后处理 Markdown",
+        "parse_translation_status": "译文状态",
+    }
+    lines = ["# A100 相关文献条目", "", f"共 {len(snapshot_df)} 条。", ""]
+    if snapshot_df.empty:
+        lines.append("当前任务没有产出可记录的相关文献条目。")
+    else:
+        for index, row in snapshot_df.fillna("").iterrows():
+            title = _stringify(row.get("title")) or _stringify(row.get("cite_key")) or _stringify(row.get("uid_literature")) or f"条目 {index + 1}"
+            lines.append(f"## {index + 1}. {title}")
+            for column in available_columns:
+                value = _stringify(row.get(column))
+                if not value:
+                    continue
+                lines.append(f"- {label_map.get(column, column)}：{value}")
+            lines.append("")
+    md_path.write_text("\n".join(lines).rstrip() + "\n", encoding="utf-8")
+    return [csv_path, md_path]
+
+
 @affair_auto_git_commit("A100")
 def execute(config_path: Path) -> List[Path]:
     raw_cfg = load_json_or_py(config_path)
@@ -85,7 +232,13 @@ def execute(config_path: Path) -> List[Path]:
     )
     assert content_db is not None
 
-    state_df = load_reading_state_df(content_db, flag_filters={"pending_deep_read": 1})
+    literature_df, _, _ = load_reference_tables(db_path=content_db)
+    existing_state_df = load_reading_state_df(content_db)
+    state_df, input_mode = _load_deep_parse_pool(
+        content_db,
+        literature_df=literature_df,
+        state_df=existing_state_df,
+    )
     max_items = int(raw_cfg.get("max_items") or 3)
     if max_items > 0:
         state_df = state_df.head(max_items).reset_index(drop=True)
@@ -122,7 +275,7 @@ def execute(config_path: Path) -> List[Path]:
     parse_df = state_df.copy()
     if allow_unparsed_deep_read_bypass and not state_df.empty:
         bypass_mask = (
-            pd.to_numeric(state_df.get("preprocessed", 0), errors="coerce").fillna(0).astype(int) == 0
+            ~state_df.apply(lambda row: _has_parse_summary(row.to_dict()), axis=1)
         ) & (
             pd.to_numeric(state_df.get("allow_unparsed_read", 0), errors="coerce").fillna(0).astype(int) == 1
         )
@@ -232,6 +385,8 @@ def execute(config_path: Path) -> List[Path]:
                 {
                     "uid_literature": uid_literature,
                     "cite_key": cite_key,
+                    "title": _stringify(row.get("title")) or cite_key,
+                    "source_origin": source_origin,
                     "structured_json": structured_json,
                     "asset_dir": _stringify(row.get("asset_dir")),
                     "parse_status": "ready",
@@ -303,6 +458,8 @@ def execute(config_path: Path) -> List[Path]:
                     {
                         "uid_literature": uid_literature,
                         "cite_key": cite_key,
+                        "title": _stringify(row.get("title")) or cite_key,
+                        "source_origin": source_origin,
                         "structured_json": _stringify(fallback_asset.get("normalized_structured_path")),
                         "asset_dir": _stringify(fallback_asset.get("asset_dir")),
                         "parse_status": "fallback_ready",
@@ -334,24 +491,32 @@ def execute(config_path: Path) -> List[Path]:
 
     if state_updates:
         upsert_reading_state_rows(content_db, state_updates)
+    completed_df = manifest_df.loc[
+        manifest_df.get("manifest_status", pd.Series(dtype=str)).astype(str).str.lower().isin(["succeeded", "skipped"])
+    ].copy() if not manifest_df.empty else pd.DataFrame()
+    consumed_a100_queue_count = _consume_current_stage_queue_rows(content_db, stage="A100", completed_df=completed_df)
 
     result_df = pd.DataFrame(result_rows)
     index_path = output_dir / OUTPUT_INDEX
     result_df.to_csv(index_path, index=False, encoding="utf-8-sig")
+    related_item_paths = _write_related_literature_items(output_dir, result_df)
 
     gate_review = build_gate_review(
         node_uid="A100",
         node_name="文献精解析资产化",
         summary=(
-            f"完成 deep parse 准备 {len(result_rows)} 篇；"
-            f"后处理成功 {postprocess_success_count} 篇；失败 {len(failures)} 篇。"
+            f"完成 deep parse 准备 {len(result_rows)} 篇（mode={input_mode}）；"
+            f"后处理成功 {postprocess_success_count} 篇；失败 {len(failures)} 篇；"
+            f"消费 A100 队列 {consumed_a100_queue_count} 条。"
         ),
         checks=[
             {"name": "deep_parse_ready_count", "value": len(result_rows)},
+            {"name": "input_mode", "value": input_mode},
             {"name": "postprocess_success_count", "value": postprocess_success_count},
             {"name": "failure_count", "value": len(failures)},
+            {"name": "consumed_a100_queue_count", "value": consumed_a100_queue_count},
         ],
-        artifacts=[str(index_path), str(manifest_result["manifest_path"]), str(manifest_result["management_table_path"]), str(manifest_result["handoff_path"])],
+        artifacts=[str(index_path), *[str(path) for path in related_item_paths], str(manifest_result["manifest_path"]), str(manifest_result["management_table_path"]), str(manifest_result["handoff_path"])],
         recommendation="pass" if result_rows else "retry_current",
         score=max(45.0, 93.0 - len(failures) * 10.0),
         issues=failures,
@@ -381,6 +546,8 @@ def execute(config_path: Path) -> List[Path]:
             "contamination_llm_region": postprocess_settings.get("contamination_llm_region"),
             "allow_pdf_text_fallback_on_parse_failure": allow_pdf_text_fallback_on_parse_failure,
             "allow_unparsed_deep_read_bypass": allow_unparsed_deep_read_bypass,
+            "input_mode": input_mode,
+            "consumed_a100_queue_count": consumed_a100_queue_count,
         },
     )
     gate_path = output_dir / OUTPUT_GATE
@@ -388,7 +555,7 @@ def execute(config_path: Path) -> List[Path]:
 
     if legacy_output_dir != output_dir:
         legacy_output_dir.mkdir(parents=True, exist_ok=True)
-        for artifact_path in [index_path, gate_path]:
+        for artifact_path in [index_path, *related_item_paths, gate_path]:
             legacy_target = legacy_output_dir / artifact_path.name
             legacy_target.write_text(artifact_path.read_text(encoding="utf-8"), encoding="utf-8")
 
@@ -400,15 +567,15 @@ def execute(config_path: Path) -> List[Path]:
             handler_name="文献精解析资产化",
             agent_names=["ar_A100_文献精解析资产化事务智能体_v6"],
             skill_names=[],
-            reasoning_summary="消费 literature_reading_state.pending_deep_read=1，仅完成 non_review_deep 解析资产准备并移交 A105。",
+            reasoning_summary="优先消费 A100 正式阶段队列，并按文献主表 current_parse/结构化摘要决定深度解析与旁路准备。",
             gate_review=gate_review,
             gate_review_path=gate_path,
-            artifact_paths=[str(index_path), str(manifest_result["manifest_path"]), str(manifest_result["management_table_path"]), str(manifest_result["handoff_path"])],
+            artifact_paths=[str(index_path), *[str(path) for path in related_item_paths], str(manifest_result["manifest_path"]), str(manifest_result["management_table_path"]), str(manifest_result["handoff_path"])],
         )
     except Exception:
         pass
 
-    return [index_path, gate_path, manifest_result["manifest_path"], manifest_result["management_table_path"], manifest_result["batch_report_path"], manifest_result["handoff_path"]]
+    return [index_path, *related_item_paths, gate_path, manifest_result["manifest_path"], manifest_result["management_table_path"], manifest_result["batch_report_path"], manifest_result["handoff_path"]]
 
 
 

@@ -17,18 +17,19 @@ from pathlib import Path
 from typing import Any, Callable
 
 from autodokit.path_compat import resolve_portable_path
+from autodokit.tools.config_contract_utils import normalize_to_legacy_contract
 
 def load_json_or_py(config_path: str | Path) -> Any:
     config_path = resolve_portable_path(config_path, base=Path.cwd())
     if config_path.suffix.lower() == ".json":
-        return json.loads(config_path.read_text(encoding="utf-8-sig"))
+        return normalize_to_legacy_contract(json.loads(config_path.read_text(encoding="utf-8-sig")))
     if config_path.suffix.lower() == ".py":
         namespace = ast.parse(config_path.read_text(encoding="utf-8"))
         for node in namespace.body:
             if isinstance(node, ast.Assign):
                 for target in node.targets:
                     if isinstance(target, ast.Name) and target.id == "CONFIG":
-                        return ast.literal_eval(node.value)
+                        return normalize_to_legacy_contract(ast.literal_eval(node.value))
         raise ValueError(f"Python 配置文件缺少 CONFIG 变量: {config_path}")
     raise ValueError(f"不支持的配置文件类型: {config_path.suffix}")
 
@@ -223,6 +224,94 @@ def incremental_import_bib_into_content_db(*args: Any, **kwargs: Any) -> dict[st
     return impl(*args, **kwargs)
 
 
+def load_literature_attachments_df(*args: Any, **kwargs: Any) -> Any:
+    """延迟加载文献附件总视图读取工具，避免入口模块循环导入。"""
+
+    module = importlib.import_module("autodokit.tools.contentdb_sqlite")
+    impl = getattr(module, "load_literature_attachments_df")
+    return impl(*args, **kwargs)
+
+
+def register_a040_retrieval_request(*args: Any, **kwargs: Any) -> dict[str, Any]:
+    """延迟加载 A040 请求登记工具，避免入口模块循环导入。"""
+
+    module = importlib.import_module("autodokit.tools.affair_request_bus")
+    impl = getattr(module, "register_a040_retrieval_request")
+    return impl(*args, **kwargs)
+
+
+def register_a020_import_request(*args: Any, **kwargs: Any) -> dict[str, Any]:
+    """延迟加载 A020 请求登记工具，避免入口模块循环导入。"""
+
+    module = importlib.import_module("autodokit.tools.affair_request_bus")
+    impl = getattr(module, "register_a020_import_request")
+    return impl(*args, **kwargs)
+
+
+def register_a040_requests_from_feedback(*args: Any, **kwargs: Any) -> list[dict[str, Any]]:
+    """延迟加载批量 A040 请求登记工具，避免入口模块循环导入。"""
+
+    module = importlib.import_module("autodokit.tools.affair_request_bus")
+    impl = getattr(module, "register_a040_requests_from_feedback")
+    return impl(*args, **kwargs)
+
+
+def register_a045_download_request(*args: Any, **kwargs: Any) -> dict[str, Any]:
+    """延迟加载 A045 请求登记工具，避免入口模块循环导入。"""
+
+    module = importlib.import_module("autodokit.tools.affair_request_bus")
+    impl = getattr(module, "register_a045_download_request")
+    return impl(*args, **kwargs)
+
+
+def register_a050_preprocess_request(*args: Any, **kwargs: Any) -> dict[str, Any]:
+    """延迟加载 A050 请求登记工具，避免入口模块循环导入。"""
+
+    module = importlib.import_module("autodokit.tools.affair_request_bus")
+    impl = getattr(module, "register_a050_preprocess_request")
+    return impl(*args, **kwargs)
+
+
+def register_a055_preprocess_request(*args: Any, **kwargs: Any) -> dict[str, Any]:
+    """延迟加载 A055 请求登记工具，避免入口模块循环导入。"""
+
+    module = importlib.import_module("autodokit.tools.affair_request_bus")
+    impl = getattr(module, "register_a055_preprocess_request")
+    return impl(*args, **kwargs)
+
+
+def build_affair_request_runtime_config(*args: Any, **kwargs: Any) -> dict[str, Any]:
+    """延迟加载事务请求运行时配置生成工具，避免入口模块循环导入。"""
+
+    module = importlib.import_module("autodokit.tools.affair_request_bus")
+    impl = getattr(module, "build_affair_request_runtime_config")
+    return impl(*args, **kwargs)
+
+
+def load_affair_request_payload(*args: Any, **kwargs: Any) -> dict[str, Any]:
+    """延迟加载事务请求负载读取工具，避免入口模块循环导入。"""
+
+    module = importlib.import_module("autodokit.tools.affair_request_bus")
+    impl = getattr(module, "load_affair_request_payload")
+    return impl(*args, **kwargs)
+
+
+def dispatch_affair_request(*args: Any, **kwargs: Any) -> dict[str, Any]:
+    """延迟加载事务请求执行工具，避免入口模块循环导入。"""
+
+    module = importlib.import_module("autodokit.tools.affair_request_bus")
+    impl = getattr(module, "dispatch_affair_request")
+    return impl(*args, **kwargs)
+
+
+def dispatch_pending_affair_requests(*args: Any, **kwargs: Any) -> list[dict[str, Any]]:
+    """延迟加载待处理事务请求批量执行工具，避免入口模块循环导入。"""
+
+    module = importlib.import_module("autodokit.tools.affair_request_bus")
+    impl = getattr(module, "dispatch_pending_affair_requests")
+    return impl(*args, **kwargs)
+
+
 def convert_zotero_rdf_to_a020_incremental_package(*args: Any, **kwargs: Any) -> dict[str, Any]:
     """延迟加载 Zotero RDF 转 A020 增量输入包工具。"""
 
@@ -252,6 +341,22 @@ def refresh_author_entities(payload: dict[str, Any]) -> dict[str, Any]:
 
     module = importlib.import_module("autodokit.tools.literature_author_cleanup_tools")
     impl = getattr(module, "refresh_author_entities")
+    return impl(payload)
+
+
+def preprocess_author_names_with_aliyun(payload: dict[str, Any]) -> dict[str, Any]:
+    """延迟加载作者姓名阿里百炼预处理工具。"""
+
+    module = importlib.import_module("autodokit.tools.author_name_llm_preprocess_tools")
+    impl = getattr(module, "preprocess_author_names_with_aliyun")
+    return impl(payload)
+
+
+def normalize_content_db_author_names_with_aliyun(payload: dict[str, Any]) -> dict[str, Any]:
+    """延迟加载 content.db 作者姓名阿里百炼回填工具。"""
+
+    module = importlib.import_module("autodokit.tools.author_name_llm_preprocess_tools")
+    impl = getattr(module, "normalize_content_db_author_names_with_aliyun")
     return impl(payload)
 
 
@@ -347,247 +452,49 @@ def lint_affairs(affairs_root: str | Path | None = None) -> list[dict[str, Any]]
         if not report["valid"]:
             findings.append({"affair_uid": item.get("affair_uid"), "errors": report["errors"]})
     return findings
-from autodokit.tools.affair_result import ensure_absolute_output_dir, write_affair_json_result
-from autodokit.tools.atomic.path.windows_long_filename_tools import (
-    WindowsShortPathAlias,
-    build_short_alias_name,
-    materialize_short_alias,
-    needs_short_alias,
-)
-from autodokit.tools.aob_tools import (
-    run_aob_aoc,
-    run_aob_deploy,
-    run_aob_library,
-    run_aob_regression_opencode_deploy_check,
-    run_aob_workflow_deploy,
-    run_aob_items_sync,
-    run_aob_external_templates_import,
-    run_aob_workspace_convert,
-)
-from autodokit.tools.cnki_affair_helpers import build_cnki_result
-from autodokit.tools.bibliodb import (
-    parse_reference_text,
-    insert_placeholder_from_reference,
-    literature_upsert,
-    literature_insert_placeholder,
-    literature_match,
-    literature_attach_file,
-    literature_bind_standard_note,
-    literature_get,
-)
-from autodokit.tools.reference_citation_tools import (
-    build_reference_quality_summary,
-    build_online_lookup_placeholder_fields,
-    ensure_reference_citation_cite_key,
-    extract_reference_lines_from_attachment,
-    generate_reference_cite_key,
-    match_reference_citation_record,
-    parse_reference_text_with_llm,
-    process_reference_citation,
-    refine_reference_lines_with_llm,
-    upsert_reference_citation_placeholder,
-    writeback_reference_citation_record,
-)
-from autodokit.tools.literature_main_table_tools import build_literature_main_table
-from autodokit.tools.literature_attachment_tools import build_literature_attachment_inverted_index
-from autodokit.tools.literature_tag_tools import build_literature_tag_inverted_index
-from autodokit.tools.literature_audit_table_tools import (
-    build_entity_to_literatures_csv,
-    build_literature_main_audit_csv,
-)
-from autodokit.tools.knowledgedb import (
-    generate_knowledge_uid,
-    init_empty_knowledge_index_table,
-    init_empty_knowledge_attachments_table,
-    knowledge_upsert,
-    knowledge_note_register,
-    knowledge_note_validate_obsidian,
-    knowledge_bind_literature_standard_note,
-    knowledge_base_generate,
-    knowledge_index_sync_from_note,
-    knowledge_attachment_register,
-    knowledge_sync_note,
-    knowledge_attach_file,
-    knowledge_get,
-    knowledge_find_by_literature,
-)
-from autodokit.tools.obsidian_note_timezone_tools import (
-    DEFAULT_OBSIDIAN_NOTE_TIMEZONE,
-    DEFAULT_OBSIDIAN_TIME_FIELDS,
-    batch_rewrite_obsidian_note_timestamps,
-    convert_timestamp_to_timezone,
-    get_current_time_iso,
-    rewrite_obsidian_note_timestamps,
-)
-from autodokit.tools.affair_entry_registry_tools import (
-    MAINLINE_AFFAIR_ENTRY_MAP,
-    build_mainline_affair_entry_registry,
-    resolve_mainline_affair_entry,
-    write_mainline_affair_entry_registry,
-)
-from autodokit.tools.bibliodb_sqlite import (
-    build_stable_attachment_uid,
-    init_db as init_references_db,
-    load_literatures_df,
-    load_attachments_df as load_literature_attachments_df,
-    load_reading_queue_df,
-    load_tags_df as load_literature_tags_df,
-    load_chunk_sets_df,
-    load_chunks_df,
-    replace_tags_for_namespace,
-    save_structured_state,
-    get_structured_state,
-    replace_chunk_set_records,
-    rebuild_reference_relation_tables,
-    rebuild_reference_relation_tables_from_config,
-    save_tables as save_reference_tables,
-    upsert_reading_queue_rows,
-)
-from autodokit.tools.knowledgedb_sqlite import (
-    init_db as init_knowledge_db,
-    load_index_df,
-    load_attachments_df as load_knowledge_attachments_df,
-    save_tables as save_knowledge_tables,
-)
-from autodokit.tools.contentdb_sqlite import (
-    init_content_db,
-    load_attachment_entities_df,
-    load_knowledge_evidence_links_df,
-    load_knowledge_literature_links_df,
-    load_literature_attachment_links_df,
-    resolve_content_db_path,
-)
-from autodokit.tools.literature_translation_tools import (
-    DEFAULT_TRANSLATION_POLICY,
-    run_literature_translation,
-    translate_literature_metadata,
-    translate_parse_asset_text,
-    translate_standard_note,
-)
-from autodokit.tools.storage_backend import (
-    load_reference_tables,
-    persist_reference_tables,
-    load_knowledge_tables,
-    persist_knowledge_tables,
-)
-from autodokit.tools.atomic.task_aok import (
-    bootstrap_aok_taskdb,
-    create_task_ledger_readonly_views,
-    init_empty_task_artifacts_table,
-    init_empty_task_gate_decisions_table,
-    init_empty_task_handoffs_table,
-    init_empty_task_knowledge_bindings_table,
-    init_empty_task_literature_bindings_table,
-    init_empty_task_relations_table,
-    init_empty_task_releases_table,
-    init_empty_task_round_views_table,
-    init_empty_task_status_log_table,
-    init_empty_tasks_table,
-    normalize_affair_receipt,
-    run_unified_postprocess,
-    task_artifact_register,
-    task_bind_knowledges,
-    task_bind_literatures,
-    task_bundle_export,
-    task_create_or_update,
-    task_gate_decision_record,
-    task_get,
-    task_handoff_record,
-    task_knowledge_binding_register,
-    task_literature_binding_register,
-    task_relation_upsert,
-    task_release_promote,
-    task_release_register,
-    task_round_snapshot_register,
-    task_status_append,
-    validate_aok_taskdb,
-)
-from autodokit.tools.atomic.log_aok import (
-    DEFAULT_AOK_LOG_DB_FILENAME,
-    DEFAULT_AOK_LOG_EVENT_COLUMNS,
-    append_aok_log_event,
-    bootstrap_aok_logdb,
-    create_aok_log_readonly_views,
-    init_empty_log_events_table,
-    list_aok_log_events,
-    record_aok_gate_review,
-    record_aok_human_decision,
-    record_aok_log_artifact,
-    validate_aok_logdb,
-)
-from autodokit.tools.research_workflow_tools import (
-    init_empty_candidate_view_table,
-    init_empty_reading_batch_table,
-    init_empty_innovation_pool_table,
-    build_candidate_view_index,
-    build_candidate_readable_view,
-    build_review_candidate_views,
-    build_non_review_candidate_views,
-    allocate_reading_batches,
-    extract_review_candidates,
-    build_research_trajectory,
-    build_gate_review,
-    score_gate_review,
-    merge_human_gate_decision,
-    innovation_pool_upsert,
-    innovation_feasibility_score,
-)
-from autodokit.tools.review_synthesis_tools import (
-    build_review_consensus_rows,
-    build_review_controversy_rows,
-    build_review_future_rows,
-    build_review_general_reading_list,
-    build_review_must_read_originals,
-    extract_review_state_from_attachment,
-    extract_review_state_from_structured_file,
-    refine_review_state_with_llm,
-    sentence_line_from_review_state,
-)
-from autodokit.tools.review_reading_packet_tools import (
-    build_review_reading_packet,
-    resolve_review_text_by_priority,
-)
-from autodokit.tools.ocr.classic.pdf_structured_data_tools import (
-    build_chunk_entries_from_structured_data,
-    build_doc_record_from_structured_data,
-    build_structured_data_payload,
-    extract_reference_lines_from_structured_data,
-    iter_chunk_files_from_manifest,
-    load_document_records_from_structured_source,
-    load_single_document_record,
-    load_structured_data,
-    write_chunk_shards,
-)
-from autodokit.tools.ocr.babeldoc.pdf_structured_element_extractor_from_babeldoc import (
-    extract_pdf_elements_from_structured_data,
-    extract_pdf_elements_from_structured_file,
-)
-from autodokit.tools.ocr.classic.pdf_page_image_tools import (
-    crop_image_by_normalized_bbox,
-    render_pdf_pages_to_png,
-)
-from autodokit.tools.ocr.monkeyocr.monkeyocr_windows_tools import (
-    prepare_monkeyocr_windows_runtime,
-    run_monkeyocr_windows_batch_folder,
-    run_monkeyocr_windows_single_pdf,
-    update_monkeyocr_batch_status_csv,
-)
-from autodokit.tools.workspace_path_migration import (
-    PathMapping,
-    migrate_workspace_paths,
-)
-from autodokit.tools.tex_dag_tools import (
-    export_tex_graph,
-    rewire_tex_reference,
-    scan_tex_graph,
-    set_tex_root,
+
+_LAZY_TOOL_MODULES: tuple[str, ...] = (
+    "autodokit.tools.affair_result",
+    "autodokit.tools.atomic.path.windows_long_filename_tools",
+    "autodokit.tools.aob",
+    "autodokit.tools.cnki_affair_helpers",
+    "autodokit.tools.bibliodb",
+    "autodokit.tools.reference_citation_tools",
+    "autodokit.tools.literature_main_table_tools",
+    "autodokit.tools.literature_attachment_tools",
+    "autodokit.tools.literature_tag_tools",
+    "autodokit.tools.literature_audit_table_tools",
+    "autodokit.tools.knowledgedb",
+    "autodokit.tools.obsidian_note_timezone_tools",
+    "autodokit.tools.affair_entry_registry_tools",
+    "autodokit.tools.bibliodb_sqlite",
+    "autodokit.tools.knowledgedb_sqlite",
+    "autodokit.tools.contentdb_sqlite",
+    "autodokit.tools.literature_translation_tools",
+    "autodokit.tools.storage_backend",
+    "autodokit.tools.atomic.task_aok",
+    "autodokit.tools.atomic.log_aok",
+    "autodokit.tools.research_workflow_tools",
+    "autodokit.tools.review_synthesis_tools",
+    "autodokit.tools.review_reading_packet_tools",
+    "autodokit.tools.ocr.classic.pdf_structured_data_tools",
+    "autodokit.tools.ocr.babeldoc.pdf_structured_element_extractor_from_babeldoc",
+    "autodokit.tools.ocr.classic.pdf_page_image_tools",
+    "autodokit.tools.ocr.monkeyocr.monkeyocr_windows_tools",
+    "autodokit.tools.workspace_path_migration",
+    "autodokit.tools.tex_dag_tools",
+    "autodokit.tools.math_delimiter_converter",
 )
 
-from autodokit.tools.math_delimiter_converter import (
-    convert_text as convert_math_delimiters,
-    process_file as process_math_file,
-    collect_unescaped_dollar_lines as collect_unescaped_dollar_lines,
-)
+
+def _load_lazy_tool_symbol(name: str) -> Any:
+    for module_path in _LAZY_TOOL_MODULES:
+        module = importlib.import_module(module_path)
+        if hasattr(module, name):
+            symbol = getattr(module, name)
+            globals()[name] = symbol
+            return symbol
+    raise AttributeError(f"module 'autodokit.tools' has no attribute {name!r}")
 def run_online_retrieval_router(payload: dict[str, Any]) -> dict[str, Any]:
     """延迟加载在线检索路由器并执行路由调用。
 
@@ -604,6 +511,14 @@ def run_online_retrieval_from_bib(payload: dict[str, Any]) -> dict[str, Any]:
 
     module = importlib.import_module("autodokit.tools.bib_online_retrieval_tool")
     runner = getattr(module, "run_online_retrieval_from_bib")
+    return runner(payload)
+
+
+def manage_online_retrieval_daily_usage(payload: dict[str, Any]) -> dict[str, Any]:
+    """延迟加载在线检索每日用量统计工具。"""
+
+    module = importlib.import_module("autodokit.tools.online_retrieval_literatures.online_retrieval_usage_tools")
+    runner = getattr(module, "manage_online_retrieval_daily_usage")
     return runner(payload)
 
 
@@ -629,6 +544,16 @@ _用户公开工具 = [
     "build_online_lookup_placeholder_fields",
     "local_reference_lookup_and_materialize",
     "incremental_import_bib_into_content_db",
+    "register_a020_import_request",
+    "register_a040_retrieval_request",
+    "register_a040_requests_from_feedback",
+    "register_a045_download_request",
+    "register_a050_preprocess_request",
+    "register_a055_preprocess_request",
+    "load_affair_request_payload",
+    "build_affair_request_runtime_config",
+    "dispatch_affair_request",
+    "dispatch_pending_affair_requests",
     "convert_zotero_rdf_to_a020_incremental_package",
     "generate_knowledge_uid",
     "init_empty_knowledge_index_table",
@@ -701,12 +626,26 @@ _用户公开工具 = [
     "write_chunk_shards",
     "iter_chunk_files_from_manifest",
     "build_cnki_result",
+    "aob_validate_content",
+    "aob_sync_items",
+    "aob_aggregate_user_content",
+    "aob_backup_user_content",
+    "aob_publish_user_content",
+    "aob_update_user_content",
+    "aob_import_external_templates",
+    "aob_convert_workspace",
+    "aob_deploy_workflow",
+    "aob_check_opencode_deploy_regression",
     "run_aob_aoc",
     "run_aob_deploy",
     "run_aob_library",
     "run_aob_regression_opencode_deploy_check",
     "run_aob_workflow_deploy",
     "run_aob_items_sync",
+    "run_aob_aggregate_user_content",
+    "run_aob_backup_user_content",
+    "run_aob_publish_user_content",
+    "run_aob_update_user_content",
     "run_aob_external_templates_import",
     "run_aob_workspace_convert",
     "ensure_absolute_output_dir",
@@ -735,8 +674,11 @@ _用户公开工具 = [
     "normalize_primary_fulltext_attachment_names",
     "resolve_primary_attachment_normalization_settings",
     "refresh_author_entities",
+    "preprocess_author_names_with_aliyun",
+    "normalize_content_db_author_names_with_aliyun",
     "detect_and_clean_literature_title_braces",
     "isolate_unmatched_attachments",
+    "manage_online_retrieval_daily_usage",
 ]
 
 _开发者工具 = [
@@ -803,12 +745,26 @@ _开发者工具 = [
     "translate_parse_asset_text",
     "run_literature_translation",
     "build_cnki_result",
+    "aob_validate_content",
+    "aob_sync_items",
+    "aob_aggregate_user_content",
+    "aob_backup_user_content",
+    "aob_publish_user_content",
+    "aob_update_user_content",
+    "aob_import_external_templates",
+    "aob_convert_workspace",
+    "aob_deploy_workflow",
+    "aob_check_opencode_deploy_regression",
     "run_aob_aoc",
     "run_aob_deploy",
     "run_aob_library",
     "run_aob_regression_opencode_deploy_check",
     "run_aob_workflow_deploy",
     "run_aob_items_sync",
+    "run_aob_aggregate_user_content",
+    "run_aob_backup_user_content",
+    "run_aob_publish_user_content",
+    "run_aob_update_user_content",
     "run_aob_external_templates_import",
     "run_aob_workspace_convert",
     "PathMapping",
@@ -831,14 +787,26 @@ _开发者工具 = [
     "ensure_reference_citation_cite_key",
     "local_reference_lookup_and_materialize",
     "incremental_import_bib_into_content_db",
+    "register_a040_retrieval_request",
+    "register_a040_requests_from_feedback",
+    "register_a045_download_request",
+    "register_a050_preprocess_request",
+    "register_a055_preprocess_request",
+    "load_affair_request_payload",
+    "build_affair_request_runtime_config",
+    "dispatch_affair_request",
+    "dispatch_pending_affair_requests",
     "convert_zotero_rdf_to_a020_incremental_package",
     "normalize_primary_fulltext_attachment_names",
     "resolve_primary_attachment_normalization_settings",
     "refresh_author_entities",
+    "preprocess_author_names_with_aliyun",
+    "normalize_content_db_author_names_with_aliyun",
     "detect_and_clean_literature_title_braces",
     "isolate_unmatched_attachments",
     "build_reference_quality_summary",
     "build_online_lookup_placeholder_fields",
+    "register_a020_import_request",
     "generate_knowledge_uid",
     "init_empty_knowledge_index_table",
     "init_empty_knowledge_attachments_table",
@@ -951,6 +919,7 @@ _开发者工具 = [
     "update_monkeyocr_batch_status_csv",
     "run_online_retrieval_router",
     "run_online_retrieval_from_bib",
+    "manage_online_retrieval_daily_usage",
 ]
 
 
@@ -1012,12 +981,29 @@ def get_tool(tool_name: str, *, scope: str = "user") -> Callable[..., Any]:
     else:
         allowed = set(_用户公开工具) | set(_开发者工具)
 
-    if target not in allowed or target not in globals():
+    if target not in allowed:
         raise KeyError(f"工具不存在或未在范围[{scope}]内公开：{target}")
-    symbol = globals()[target]
+
+    symbol = globals().get(target)
+    if symbol is None:
+        try:
+            symbol = _load_lazy_tool_symbol(target)
+        except AttributeError as exc:
+            raise KeyError(f"工具不存在或未在范围[{scope}]内公开：{target}") from exc
+
     if not callable(symbol):
         raise KeyError(f"目标不是可调用工具：{target}")
     return symbol
+
+
+def __getattr__(name: str) -> Any:
+    if name.startswith("__"):
+        raise AttributeError(name)
+    return _load_lazy_tool_symbol(name)
+
+
+def __dir__() -> list[str]:
+    return sorted(set(globals()) | set(_用户公开工具) | set(_开发者工具))
 
 
 __all__ = list(_用户公开工具)

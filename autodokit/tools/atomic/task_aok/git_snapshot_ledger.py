@@ -1,16 +1,8 @@
-"""AOK 本地 Git 快照与极简任务账本工具。
-
-本模块只提供最小闭环能力：
-1. 初始化独立 SQLite 任务账本；
-2. 记录节点运行、Git 快照与回滚记录；
-3. 对 workspace 执行本地 Git 初始化、提交、打 tag 与回滚查询。
-"""
+"""AOK 本地 Git 快照与极简任务账本工具。"""
 
 from __future__ import annotations
 
-from datetime import datetime
 import json
-import os
 import sqlite3
 import subprocess
 from pathlib import Path
@@ -22,7 +14,11 @@ from ...time_utils import now_iso
 DEFAULT_TASK_LEDGER_DIR_NAME = "tasks"
 DEFAULT_TASK_LEDGER_DB_NAME = "tasks.db"
 DEFAULT_GIT_SNAPSHOT_LOG_DIR_NAME = "git_snapshots"
-DEFAULT_GITIGNORE_LOG_DB_ENTRY = "database/logs/aok_log.db"
+DEFAULT_GITIGNORE_LOG_DB_ENTRY = "database/logs/log.db"
+TASK_RUN_TABLE_NAME = "任务运行"
+GIT_SNAPSHOT_TABLE_NAME = "版本快照"
+ROLLBACK_RECORD_TABLE_NAME = "回滚记录"
+AFFAIR_REQUEST_TABLE_NAME = "事务请求"
 
 
 def _utc_now_iso() -> str:
@@ -47,6 +43,10 @@ def _connect(db_path: Path) -> sqlite3.Connection:
     return connection
 
 
+def _quote_identifier(name: str) -> str:
+    return '"' + name.replace('"', '""') + '"'
+
+
 def _ensure_gitignore_entry(workspace_root: Path, entry: str = DEFAULT_GITIGNORE_LOG_DB_ENTRY) -> Path:
     gitignore_path = workspace_root / ".gitignore"
     normalized_entry = entry.strip().replace("\\", "/")
@@ -69,65 +69,39 @@ def create_task_ledger_readonly_views(
     *,
     ledger_db_path: str | Path | None = None,
 ) -> dict[str, Any]:
-    """创建任务账本中文只读视图。
-
-    Args:
-        workspace_root: workspace 根目录。
-        ledger_db_path: 可选自定义账本路径。
-
-    Returns:
-        dict[str, Any]: 视图初始化结果。
-    """
-
     db_path = _resolve_ledger_db_path(workspace_root, ledger_db_path)
     statements = [
-        """
+        f'''
         CREATE VIEW IF NOT EXISTS "任务运行总览" AS
-        SELECT
-            task_uid AS 任务UID,
-            workflow_uid AS 工作流UID,
-            node_code AS 节点代号,
-            gate_code AS Gate代号,
-            decision AS 建议动作,
-            status AS 运行状态,
-            workspace_root AS 工作区根路径,
-            started_at AS 开始时间,
-            ended_at AS 结束时间,
-            operator_name AS 操作人,
-            note AS 备注
-        FROM task_runs
-        ORDER BY ended_at DESC, task_uid DESC
-        """,
-        """
+        SELECT uid_任务 AS 任务UID, uid_工作流 AS 工作流UID, 节点编码, 闸门编码, 动作决策, 运行状态,
+               工作区根路径, 开始时间, 结束时间, 操作人, 备注
+        FROM {_quote_identifier(TASK_RUN_TABLE_NAME)}
+        ORDER BY 结束时间 DESC, uid_任务 DESC
+        ''',
+        f'''
         CREATE VIEW IF NOT EXISTS "任务快照总览" AS
-        SELECT
-            gs.task_uid AS 任务UID,
-            gs.snapshot_uid AS 快照UID,
-            gs.commit_hash AS 提交哈希,
-            gs.parent_commit_hash AS 父提交哈希,
-            gs.commit_message AS 提交信息,
-            gs.tag_name AS 标签名,
-            gs.changed_files_count AS 变更文件数,
-            gs.includes_attachments AS 含附件变更,
-            gs.created_at AS 创建时间
-        FROM git_snapshots gs
-        ORDER BY gs.created_at DESC, gs.snapshot_uid DESC
-        """,
-        """
+        SELECT gs.uid_任务 AS 任务UID, gs.uid_快照 AS 快照UID, gs.提交哈希, gs.父提交哈希,
+               gs.提交信息, gs.标签名, gs.变更文件数, gs.是否包含附件 AS 含附件变更, gs.创建时间
+        FROM {_quote_identifier(GIT_SNAPSHOT_TABLE_NAME)} gs
+        ORDER BY gs.创建时间 DESC, gs.uid_快照 DESC
+        ''',
+        f'''
         CREATE VIEW IF NOT EXISTS "待人工处理任务清单" AS
-        SELECT
-            task_uid AS 任务UID,
-            workflow_uid AS 工作流UID,
-            node_code AS 节点代号,
-            decision AS 建议动作,
-            status AS 运行状态,
-            ended_at AS 最近结束时间,
-            note AS 异常说明
-        FROM task_runs
-        WHERE lower(status) IN ('failed', 'blocked', 'human_gate', 'fail')
-           OR lower(decision) IN ('pause_current', 'stop_workflow')
-        ORDER BY ended_at DESC, task_uid DESC
-        """,
+        SELECT uid_任务 AS 任务UID, uid_工作流 AS 工作流UID, 节点编码, 动作决策 AS 建议动作,
+               运行状态, 结束时间 AS 最近结束时间, 备注 AS 异常说明
+        FROM {_quote_identifier(TASK_RUN_TABLE_NAME)}
+        WHERE lower(运行状态) IN ('failed', 'blocked', 'human_gate', 'fail')
+           OR lower(动作决策) IN ('pause_current', 'stop_workflow')
+        ORDER BY 结束时间 DESC, uid_任务 DESC
+         ''',
+         f'''
+         CREATE VIEW IF NOT EXISTS "待处理事务请求清单" AS
+         SELECT uid_请求 AS 请求UID, 请求类型, 目标节点, 请求状态, 来源节点,
+             来源任务UID, 请求原因码, 优先级, 创建时间
+         FROM {_quote_identifier(AFFAIR_REQUEST_TABLE_NAME)}
+         WHERE lower(请求状态) IN ('pending', '待分发', 'dispatched', '已分发', 'running', '运行中')
+         ORDER BY 创建时间 DESC, uid_请求 DESC
+         ''',
     ]
     with _connect(db_path) as connection:
         with connection:
@@ -136,72 +110,82 @@ def create_task_ledger_readonly_views(
     return {
         "status": "PASS",
         "ledger_db_path": str(db_path),
-        "created_views": ["任务运行总览", "任务快照总览", "待人工处理任务清单"],
+        "created_views": ["任务运行总览", "任务快照总览", "待人工处理任务清单", "待处理事务请求清单"],
     }
 
 
 def ledger_init(workspace_root: str | Path, ledger_db_path: str | Path | None = None) -> dict[str, Any]:
-    """初始化极简任务账本。
-
-    Args:
-        workspace_root: workspace 根目录。
-        ledger_db_path: 可选自定义账本路径。
-
-    Returns:
-        初始化结果摘要。
-
-    Examples:
-        >>> result = ledger_init('.tmp')
-        >>> result['status']
-        'PASS'
-    """
-
     root = _resolve_workspace_root(workspace_root)
     db_path = _resolve_ledger_db_path(root, ledger_db_path)
     with _connect(db_path) as connection:
         connection.executescript(
-            """
+            '''
             PRAGMA journal_mode=WAL;
-            CREATE TABLE IF NOT EXISTS task_runs (
-                task_uid TEXT PRIMARY KEY,
-                workflow_uid TEXT NOT NULL,
-                node_code TEXT NOT NULL,
-                gate_code TEXT NOT NULL,
-                decision TEXT NOT NULL,
-                status TEXT NOT NULL,
-                workspace_root TEXT NOT NULL,
-                input_summary_json TEXT NOT NULL DEFAULT '{}',
-                output_summary_json TEXT NOT NULL DEFAULT '{}',
-                started_at TEXT NOT NULL,
-                ended_at TEXT NOT NULL,
-                operator_name TEXT NOT NULL DEFAULT '',
-                note TEXT NOT NULL DEFAULT ''
+            CREATE TABLE IF NOT EXISTS "任务运行" (
+                uid_任务 TEXT PRIMARY KEY,
+                uid_工作流 TEXT NOT NULL,
+                节点编码 TEXT NOT NULL,
+                闸门编码 TEXT NOT NULL,
+                动作决策 TEXT NOT NULL,
+                运行状态 TEXT NOT NULL,
+                工作区根路径 TEXT NOT NULL,
+                输入摘要 TEXT NOT NULL DEFAULT '{}',
+                输出摘要 TEXT NOT NULL DEFAULT '{}',
+                开始时间 TEXT NOT NULL,
+                结束时间 TEXT NOT NULL,
+                操作人 TEXT NOT NULL DEFAULT '',
+                备注 TEXT NOT NULL DEFAULT ''
             );
-            CREATE TABLE IF NOT EXISTS git_snapshots (
-                snapshot_uid TEXT PRIMARY KEY,
-                task_uid TEXT NOT NULL,
-                commit_hash TEXT NOT NULL UNIQUE,
-                parent_commit_hash TEXT NOT NULL DEFAULT '',
-                commit_message TEXT NOT NULL,
-                tag_name TEXT NOT NULL DEFAULT '',
-                changed_files_count INTEGER NOT NULL DEFAULT 0,
-                includes_attachments INTEGER NOT NULL DEFAULT 0,
-                created_at TEXT NOT NULL,
-                FOREIGN KEY (task_uid) REFERENCES task_runs(task_uid)
+            CREATE TABLE IF NOT EXISTS "版本快照" (
+                uid_快照 TEXT PRIMARY KEY,
+                uid_任务 TEXT NOT NULL,
+                提交哈希 TEXT NOT NULL UNIQUE,
+                父提交哈希 TEXT NOT NULL DEFAULT '',
+                提交信息 TEXT NOT NULL,
+                标签名 TEXT NOT NULL DEFAULT '',
+                变更文件数 INTEGER NOT NULL DEFAULT 0,
+                是否包含附件 INTEGER NOT NULL DEFAULT 0,
+                创建时间 TEXT NOT NULL,
+                FOREIGN KEY (uid_任务) REFERENCES "任务运行"(uid_任务)
             );
-            CREATE TABLE IF NOT EXISTS rollback_records (
-                rollback_uid TEXT PRIMARY KEY,
-                source_task_uid TEXT NOT NULL,
-                target_task_uid TEXT NOT NULL,
-                target_commit_hash TEXT NOT NULL,
-                safeguard_commit_hash TEXT NOT NULL DEFAULT '',
-                mode TEXT NOT NULL,
-                status TEXT NOT NULL,
-                created_at TEXT NOT NULL,
-                completed_at TEXT NOT NULL DEFAULT '',
-                note TEXT NOT NULL DEFAULT ''
+            CREATE TABLE IF NOT EXISTS "回滚记录" (
+                uid_回滚 TEXT PRIMARY KEY,
+                uid_来源任务 TEXT NOT NULL,
+                uid_目标任务 TEXT NOT NULL,
+                目标提交哈希 TEXT NOT NULL,
+                保护提交哈希 TEXT NOT NULL DEFAULT '',
+                回滚模式 TEXT NOT NULL,
+                状态 TEXT NOT NULL,
+                创建时间 TEXT NOT NULL,
+                完成时间 TEXT NOT NULL DEFAULT '',
+                备注 TEXT NOT NULL DEFAULT ''
             );
-            """
+            CREATE TABLE IF NOT EXISTS "事务请求" (
+                uid_请求 TEXT PRIMARY KEY,
+                请求类型 TEXT NOT NULL,
+                目标节点 TEXT NOT NULL,
+                请求状态 TEXT NOT NULL,
+                来源节点 TEXT NOT NULL DEFAULT '',
+                来源任务UID TEXT NOT NULL DEFAULT '',
+                来源文献UID TEXT NOT NULL DEFAULT '',
+                来源cite_key TEXT NOT NULL DEFAULT '',
+                请求原因码 TEXT NOT NULL DEFAULT '',
+                请求原因 TEXT NOT NULL DEFAULT '',
+                请求负载路径 TEXT NOT NULL DEFAULT '',
+                结果摘要路径 TEXT NOT NULL DEFAULT '',
+                uid_目标任务 TEXT NOT NULL DEFAULT '',
+                优先级 TEXT NOT NULL DEFAULT '中',
+                幂等键 TEXT NOT NULL DEFAULT '',
+                决策状态 TEXT NOT NULL DEFAULT '正常',
+                uid_决策 TEXT NOT NULL DEFAULT '',
+                属性向量JSON TEXT NOT NULL DEFAULT '{}',
+                创建时间 TEXT NOT NULL,
+                分发时间 TEXT NOT NULL DEFAULT '',
+                完成时间 TEXT NOT NULL DEFAULT '',
+                创建器类型 TEXT NOT NULL DEFAULT '',
+                创建器标识 TEXT NOT NULL DEFAULT ''
+            );
+            '''
         )
     view_bootstrap = create_task_ledger_readonly_views(workspace_root=root, ledger_db_path=db_path)
     return {
@@ -229,53 +213,83 @@ def ledger_record_task_run(
     note: str = "",
     ledger_db_path: str | Path | None = None,
 ) -> dict[str, Any]:
-    """登记一次节点运行结果。"""
-
     db_path = _resolve_ledger_db_path(workspace_root, ledger_db_path)
     started = started_at or _utc_now_iso()
     ended = ended_at or started
     input_payload = json.dumps(input_summary_json or {}, ensure_ascii=False) if not isinstance(input_summary_json, str) else input_summary_json
     output_payload = json.dumps(output_summary_json or {}, ensure_ascii=False) if not isinstance(output_summary_json, str) else output_summary_json
     row = {
-        "task_uid": str(task_uid).strip(),
-        "workflow_uid": str(workflow_uid).strip(),
-        "node_code": str(node_code).strip(),
-        "gate_code": str(gate_code).strip(),
-        "decision": str(decision).strip(),
-        "status": str(status).strip(),
-        "workspace_root": str(_resolve_workspace_root(workspace_root)),
-        "input_summary_json": input_payload,
-        "output_summary_json": output_payload,
-        "started_at": started,
-        "ended_at": ended,
-        "operator_name": str(operator_name).strip(),
-        "note": str(note).strip(),
+        "uid_任务": str(task_uid).strip(),
+        "uid_工作流": str(workflow_uid).strip(),
+        "节点编码": str(node_code).strip(),
+        "闸门编码": str(gate_code).strip(),
+        "动作决策": str(decision).strip(),
+        "运行状态": str(status).strip(),
+        "工作区根路径": str(_resolve_workspace_root(workspace_root)),
+        "输入摘要": input_payload,
+        "输出摘要": output_payload,
+        "开始时间": started,
+        "结束时间": ended,
+        "操作人": str(operator_name).strip(),
+        "备注": str(note).strip(),
     }
     with _connect(db_path) as connection:
-        connection.execute(
-            """
-            INSERT INTO task_runs (
-                task_uid, workflow_uid, node_code, gate_code, decision, status,
-                workspace_root, input_summary_json, output_summary_json,
-                started_at, ended_at, operator_name, note
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            ON CONFLICT(task_uid) DO UPDATE SET
-                workflow_uid=excluded.workflow_uid,
-                node_code=excluded.node_code,
-                gate_code=excluded.gate_code,
-                decision=excluded.decision,
-                status=excluded.status,
-                workspace_root=excluded.workspace_root,
-                input_summary_json=excluded.input_summary_json,
-                output_summary_json=excluded.output_summary_json,
-                started_at=excluded.started_at,
-                ended_at=excluded.ended_at,
-                operator_name=excluded.operator_name,
-                note=excluded.note
-            """,
-            tuple(row.values()),
+        cursor = connection.execute(
+            '''
+            UPDATE "任务运行"
+            SET
+                uid_工作流 = ?,
+                节点编码 = ?,
+                闸门编码 = ?,
+                动作决策 = ?,
+                运行状态 = ?,
+                工作区根路径 = ?,
+                输入摘要 = ?,
+                输出摘要 = ?,
+                开始时间 = ?,
+                结束时间 = ?,
+                操作人 = ?,
+                备注 = ?
+            WHERE uid_任务 = ?
+            ''',
+            (
+                row["uid_工作流"],
+                row["节点编码"],
+                row["闸门编码"],
+                row["动作决策"],
+                row["运行状态"],
+                row["工作区根路径"],
+                row["输入摘要"],
+                row["输出摘要"],
+                row["开始时间"],
+                row["结束时间"],
+                row["操作人"],
+                row["备注"],
+                row["uid_任务"],
+            ),
         )
-    return row
+        if int(cursor.rowcount or 0) == 0:
+            connection.execute(
+                '''
+                INSERT INTO "任务运行" (
+                    uid_任务, uid_工作流, 节点编码, 闸门编码, 动作决策, 运行状态,
+                    工作区根路径, 输入摘要, 输出摘要, 开始时间, 结束时间, 操作人, 备注
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ''',
+                tuple(row.values()),
+            )
+    return {
+        "task_uid": row["uid_任务"],
+        "uid_任务": row["uid_任务"],
+        "workflow_uid": row["uid_工作流"],
+        "uid_工作流": row["uid_工作流"],
+        "node_code": row["节点编码"],
+        "gate_code": row["闸门编码"],
+        "decision": row["动作决策"],
+        "status": row["运行状态"],
+        "input_summary_json": input_payload,
+        "output_summary_json": output_payload,
+    }
 
 
 def ledger_record_git_snapshot(
@@ -292,40 +306,45 @@ def ledger_record_git_snapshot(
     created_at: str | None = None,
     ledger_db_path: str | Path | None = None,
 ) -> dict[str, Any]:
-    """登记 Git 快照。"""
-
     db_path = _resolve_ledger_db_path(workspace_root, ledger_db_path)
     row = {
-        "snapshot_uid": str(snapshot_uid).strip(),
-        "task_uid": str(task_uid).strip(),
-        "commit_hash": str(commit_hash).strip(),
-        "parent_commit_hash": str(parent_commit_hash).strip(),
-        "commit_message": str(commit_message).strip(),
-        "tag_name": str(tag_name).strip(),
-        "changed_files_count": int(changed_files_count),
-        "includes_attachments": 1 if includes_attachments else 0,
-        "created_at": created_at or _utc_now_iso(),
+        "uid_快照": str(snapshot_uid).strip(),
+        "uid_任务": str(task_uid).strip(),
+        "提交哈希": str(commit_hash).strip(),
+        "父提交哈希": str(parent_commit_hash).strip(),
+        "提交信息": str(commit_message).strip(),
+        "标签名": str(tag_name).strip(),
+        "变更文件数": int(changed_files_count),
+        "是否包含附件": 1 if includes_attachments else 0,
+        "创建时间": created_at or _utc_now_iso(),
     }
     with _connect(db_path) as connection:
         connection.execute(
-            """
-            INSERT INTO git_snapshots (
-                snapshot_uid, task_uid, commit_hash, parent_commit_hash,
-                commit_message, tag_name, changed_files_count, includes_attachments, created_at
+            '''
+            INSERT INTO "版本快照" (
+                uid_快照, uid_任务, 提交哈希, 父提交哈希, 提交信息, 标签名, 变更文件数, 是否包含附件, 创建时间
             ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-            ON CONFLICT(snapshot_uid) DO UPDATE SET
-                task_uid=excluded.task_uid,
-                commit_hash=excluded.commit_hash,
-                parent_commit_hash=excluded.parent_commit_hash,
-                commit_message=excluded.commit_message,
-                tag_name=excluded.tag_name,
-                changed_files_count=excluded.changed_files_count,
-                includes_attachments=excluded.includes_attachments,
-                created_at=excluded.created_at
-            """,
+            ON CONFLICT(uid_快照) DO UPDATE SET
+                uid_任务=excluded.uid_任务,
+                提交哈希=excluded.提交哈希,
+                父提交哈希=excluded.父提交哈希,
+                提交信息=excluded.提交信息,
+                标签名=excluded.标签名,
+                变更文件数=excluded.变更文件数,
+                是否包含附件=excluded.是否包含附件,
+                创建时间=excluded.创建时间
+            ''',
             tuple(row.values()),
         )
-    return row
+    return {
+        "snapshot_uid": row["uid_快照"],
+        "uid_快照": row["uid_快照"],
+        "task_uid": row["uid_任务"],
+        "uid_任务": row["uid_任务"],
+        "commit_hash": row["提交哈希"],
+        "commit_message": row["提交信息"],
+        "tag_name": row["标签名"],
+    }
 
 
 def ledger_record_rollback(
@@ -343,42 +362,153 @@ def ledger_record_rollback(
     note: str = "",
     ledger_db_path: str | Path | None = None,
 ) -> dict[str, Any]:
-    """登记回滚记录。"""
-
     db_path = _resolve_ledger_db_path(workspace_root, ledger_db_path)
     row = {
-        "rollback_uid": str(rollback_uid).strip(),
-        "source_task_uid": str(source_task_uid).strip(),
-        "target_task_uid": str(target_task_uid).strip(),
-        "target_commit_hash": str(target_commit_hash).strip(),
-        "safeguard_commit_hash": str(safeguard_commit_hash).strip(),
-        "mode": str(mode).strip(),
-        "status": str(status).strip(),
-        "created_at": created_at or _utc_now_iso(),
-        "completed_at": completed_at,
-        "note": str(note).strip(),
+        "uid_回滚": str(rollback_uid).strip(),
+        "uid_来源任务": str(source_task_uid).strip(),
+        "uid_目标任务": str(target_task_uid).strip(),
+        "目标提交哈希": str(target_commit_hash).strip(),
+        "保护提交哈希": str(safeguard_commit_hash).strip(),
+        "回滚模式": str(mode).strip(),
+        "状态": str(status).strip(),
+        "创建时间": created_at or _utc_now_iso(),
+        "完成时间": completed_at,
+        "备注": str(note).strip(),
     }
     with _connect(db_path) as connection:
         connection.execute(
-            """
-            INSERT INTO rollback_records (
-                rollback_uid, source_task_uid, target_task_uid, target_commit_hash,
-                safeguard_commit_hash, mode, status, created_at, completed_at, note
+            '''
+            INSERT INTO "回滚记录" (
+                uid_回滚, uid_来源任务, uid_目标任务, 目标提交哈希, 保护提交哈希, 回滚模式, 状态, 创建时间, 完成时间, 备注
             ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            ON CONFLICT(rollback_uid) DO UPDATE SET
-                source_task_uid=excluded.source_task_uid,
-                target_task_uid=excluded.target_task_uid,
-                target_commit_hash=excluded.target_commit_hash,
-                safeguard_commit_hash=excluded.safeguard_commit_hash,
-                mode=excluded.mode,
-                status=excluded.status,
-                created_at=excluded.created_at,
-                completed_at=excluded.completed_at,
-                note=excluded.note
-            """,
+            ON CONFLICT(uid_回滚) DO UPDATE SET
+                uid_来源任务=excluded.uid_来源任务,
+                uid_目标任务=excluded.uid_目标任务,
+                目标提交哈希=excluded.目标提交哈希,
+                保护提交哈希=excluded.保护提交哈希,
+                回滚模式=excluded.回滚模式,
+                状态=excluded.状态,
+                创建时间=excluded.创建时间,
+                完成时间=excluded.完成时间,
+                备注=excluded.备注
+            ''',
             tuple(row.values()),
         )
-    return row
+    return {
+        "rollback_uid": row["uid_回滚"],
+        "uid_回滚": row["uid_回滚"],
+        "source_task_uid": row["uid_来源任务"],
+        "target_task_uid": row["uid_目标任务"],
+        "target_commit_hash": row["目标提交哈希"],
+        "mode": row["回滚模式"],
+        "status": row["状态"],
+    }
+
+
+def ledger_record_affair_request(
+    workspace_root: str | Path,
+    *,
+    request_uid: str,
+    request_type: str,
+    target_node: str,
+    request_status: str,
+    source_node: str = "",
+    source_task_uid: str = "",
+    source_literature_uid: str = "",
+    source_cite_key: str = "",
+    reason_code: str = "",
+    reason_text: str = "",
+    payload_path: str = "",
+    result_summary_path: str = "",
+    target_task_uid: str = "",
+    priority: str = "中",
+    idempotency_key: str = "",
+    decision_status: str = "正常",
+    decision_uid: str = "",
+    attribute_vector_json: str | dict[str, Any] | None = None,
+    created_at: str | None = None,
+    dispatched_at: str = "",
+    completed_at: str = "",
+    creator_type: str = "",
+    creator_id: str = "",
+    ledger_db_path: str | Path | None = None,
+) -> dict[str, Any]:
+    db_path = _resolve_ledger_db_path(workspace_root, ledger_db_path)
+    attribute_payload = (
+        attribute_vector_json
+        if isinstance(attribute_vector_json, str)
+        else json.dumps(attribute_vector_json or {}, ensure_ascii=False)
+    )
+    row = {
+        "uid_请求": str(request_uid).strip(),
+        "请求类型": str(request_type).strip(),
+        "目标节点": str(target_node).strip(),
+        "请求状态": str(request_status).strip(),
+        "来源节点": str(source_node).strip(),
+        "来源任务UID": str(source_task_uid).strip(),
+        "来源文献UID": str(source_literature_uid).strip(),
+        "来源cite_key": str(source_cite_key).strip(),
+        "请求原因码": str(reason_code).strip(),
+        "请求原因": str(reason_text).strip(),
+        "请求负载路径": str(payload_path).strip(),
+        "结果摘要路径": str(result_summary_path).strip(),
+        "uid_目标任务": str(target_task_uid).strip(),
+        "优先级": str(priority).strip() or "中",
+        "幂等键": str(idempotency_key).strip(),
+        "决策状态": str(decision_status).strip() or "正常",
+        "uid_决策": str(decision_uid).strip(),
+        "属性向量JSON": attribute_payload,
+        "创建时间": created_at or _utc_now_iso(),
+        "分发时间": str(dispatched_at).strip(),
+        "完成时间": str(completed_at).strip(),
+        "创建器类型": str(creator_type).strip(),
+        "创建器标识": str(creator_id).strip(),
+    }
+    with _connect(db_path) as connection:
+        connection.execute(
+            '''
+            INSERT INTO "事务请求" (
+                uid_请求, 请求类型, 目标节点, 请求状态, 来源节点, 来源任务UID, 来源文献UID,
+                来源cite_key, 请求原因码, 请求原因, 请求负载路径, 结果摘要路径, uid_目标任务,
+                优先级, 幂等键, 决策状态, uid_决策, 属性向量JSON, 创建时间, 分发时间,
+                完成时间, 创建器类型, 创建器标识
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(uid_请求) DO UPDATE SET
+                请求类型=excluded.请求类型,
+                目标节点=excluded.目标节点,
+                请求状态=excluded.请求状态,
+                来源节点=excluded.来源节点,
+                来源任务UID=excluded.来源任务UID,
+                来源文献UID=excluded.来源文献UID,
+                来源cite_key=excluded.来源cite_key,
+                请求原因码=excluded.请求原因码,
+                请求原因=excluded.请求原因,
+                请求负载路径=excluded.请求负载路径,
+                结果摘要路径=excluded.结果摘要路径,
+                uid_目标任务=excluded.uid_目标任务,
+                优先级=excluded.优先级,
+                幂等键=excluded.幂等键,
+                决策状态=excluded.决策状态,
+                uid_决策=excluded.uid_决策,
+                属性向量JSON=excluded.属性向量JSON,
+                创建时间=excluded.创建时间,
+                分发时间=excluded.分发时间,
+                完成时间=excluded.完成时间,
+                创建器类型=excluded.创建器类型,
+                创建器标识=excluded.创建器标识
+            ''',
+            tuple(row.values()),
+        )
+    return {
+        "request_uid": row["uid_请求"],
+        "uid_请求": row["uid_请求"],
+        "request_type": row["请求类型"],
+        "target_node": row["目标节点"],
+        "request_status": row["请求状态"],
+        "payload_path": row["请求负载路径"],
+        "result_summary_path": row["结果摘要路径"],
+        "idempotency_key": row["幂等键"],
+    }
 
 
 def ledger_get_snapshot_by_task_uid(
@@ -387,117 +517,54 @@ def ledger_get_snapshot_by_task_uid(
     task_uid: str,
     ledger_db_path: str | Path | None = None,
 ) -> dict[str, Any] | None:
-    """按 task_uid 查询快照记录。"""
-
     db_path = _resolve_ledger_db_path(workspace_root, ledger_db_path)
     with _connect(db_path) as connection:
-        task_row = connection.execute(
-            "SELECT * FROM task_runs WHERE task_uid = ?",
-            (str(task_uid).strip(),),
-        ).fetchone()
+        task_row = connection.execute('SELECT * FROM "任务运行" WHERE uid_任务 = ?', (str(task_uid).strip(),)).fetchone()
         snapshot_row = connection.execute(
-            "SELECT * FROM git_snapshots WHERE task_uid = ? ORDER BY created_at DESC, snapshot_uid DESC LIMIT 1",
+            'SELECT * FROM "版本快照" WHERE uid_任务 = ? ORDER BY 创建时间 DESC, uid_快照 DESC LIMIT 1',
             (str(task_uid).strip(),),
         ).fetchone()
     if snapshot_row is None:
         return None
     return {
         "task_run": dict(task_row) if task_row is not None else None,
-        "git_snapshot": dict(snapshot_row),
+        "git_snapshot": {
+            **dict(snapshot_row),
+            "commit_hash": snapshot_row["提交哈希"],
+            "task_uid": snapshot_row["uid_任务"],
+            "snapshot_uid": snapshot_row["uid_快照"],
+        },
     }
 
 
-def _sanitize_email_localpart(value: str) -> str:
-    cleaned = "".join(ch for ch in value.lower() if ch.isascii() and (ch.isalnum() or ch in {".", "_", "-"}))
-    return cleaned or "project"
+def ledger_get_snapshot_by_uid_任务(
+    workspace_root: str | Path,
+    *,
+    uid_任务: str,
+    ledger_db_path: str | Path | None = None,
+) -> dict[str, Any] | None:
+    return ledger_get_snapshot_by_task_uid(workspace_root, task_uid=uid_任务, ledger_db_path=ledger_db_path)
 
 
-def _sanitize_email_domain(value: str) -> str:
-    cleaned = "".join(ch for ch in value.lower() if ch.isascii() and (ch.isalnum() or ch in {".", "-"})).strip(".-")
-    return cleaned or "localhost"
-
-
-def _normalize_git_email(email_value: str, fallback_name: str) -> str:
-    raw = str(email_value or "").strip()
-    if not raw:
-        return f"{_sanitize_email_localpart(fallback_name)}@localhost"
-    if "@" not in raw:
-        return f"{_sanitize_email_localpart(raw)}@localhost"
-    local_part, domain_part = raw.split("@", 1)
-    return f"{_sanitize_email_localpart(local_part)}@{_sanitize_email_domain(domain_part)}"
-
-
-def _resolve_git_identity(workspace_root: Path) -> dict[str, str]:
-    config_path = workspace_root / "config" / "config.json"
-    payload: dict[str, Any] = {}
-    if config_path.exists():
-        try:
-            loaded = json.loads(config_path.read_text(encoding="utf-8-sig"))
-            if isinstance(loaded, dict):
-                payload = loaded
-        except Exception:
-            payload = {}
-
-    project_cfg = payload.get("project") if isinstance(payload.get("project"), dict) else {}
-    git_cfg = payload.get("git") if isinstance(payload.get("git"), dict) else {}
-    project_name = str(project_cfg.get("project_name") or "").strip() or "project"
-    author_name = str(git_cfg.get("author_name") or project_name).strip() or project_name
-    author_email = _normalize_git_email(str(git_cfg.get("author_email") or f"{author_name}@localhost"), author_name)
-    committer_name = str(git_cfg.get("committer_name") or author_name).strip() or author_name
-    committer_email = _normalize_git_email(str(git_cfg.get("committer_email") or author_email), committer_name)
-    return {
-        "author_name": author_name,
-        "author_email": author_email,
-        "committer_name": committer_name,
-        "committer_email": committer_email,
-    }
-
-
-def _run_git(workspace_root: Path, args: list[str]) -> subprocess.CompletedProcess[str]:
-    env = os.environ.copy()
-    identity = _resolve_git_identity(workspace_root)
-    env.setdefault("GIT_AUTHOR_NAME", identity.get("author_name") or "project")
-    env.setdefault("GIT_AUTHOR_EMAIL", identity.get("author_email") or "project@localhost")
-    env.setdefault("GIT_COMMITTER_NAME", identity.get("committer_name") or identity.get("author_name") or "project")
-    env.setdefault("GIT_COMMITTER_EMAIL", identity.get("committer_email") or identity.get("author_email") or "project@localhost")
+def _run_git(workspace_root: Path, *args: str, check: bool = True) -> subprocess.CompletedProcess[str]:
     return subprocess.run(
         ["git", *args],
-        cwd=str(workspace_root),
-        check=False,
-        capture_output=True,
+        cwd=workspace_root,
         text=True,
-        env=env,
+        capture_output=True,
+        check=check,
     )
 
 
 def git_workspace_init(workspace_root: str | Path, *, branch: str = "main") -> dict[str, Any]:
-    """初始化 workspace 的本地 Git 仓库。"""
-
     root = _resolve_workspace_root(workspace_root)
-    git_dir = root / ".git"
+    root.mkdir(parents=True, exist_ok=True)
+    if not (root / ".git").exists():
+        _run_git(root, "init", "-b", branch)
+    _run_git(root, "config", "user.name", "AOK Local")
+    _run_git(root, "config", "user.email", "aok-local@localhost")
     gitignore_path = _ensure_gitignore_entry(root)
-    created = False
-    if not git_dir.exists():
-        result = _run_git(root, ["init", "-b", branch])
-        if result.returncode != 0:
-            raise RuntimeError((result.stderr or result.stdout or "git init 失败").strip())
-        created = True
-
-    identity = _resolve_git_identity(root)
-    set_name_result = _run_git(root, ["config", "user.name", identity.get("author_name") or "project"])
-    if set_name_result.returncode != 0:
-        raise RuntimeError((set_name_result.stderr or set_name_result.stdout or "git config user.name 失败").strip())
-    set_email_result = _run_git(root, ["config", "user.email", identity.get("author_email") or "project@localhost"])
-    if set_email_result.returncode != 0:
-        raise RuntimeError((set_email_result.stderr or set_email_result.stdout or "git config user.email 失败").strip())
-
-    return {
-        "status": "PASS",
-        "workspace_root": str(root),
-        "git_dir": str(git_dir),
-        "gitignore_path": str(gitignore_path),
-        "created": created,
-    }
+    return {"status": "PASS", "workspace_root": str(root), "gitignore_path": str(gitignore_path)}
 
 
 def git_create_snapshot_for_task(
@@ -512,64 +579,21 @@ def git_create_snapshot_for_task(
     includes_attachments: bool = False,
     ledger_db_path: str | Path | None = None,
 ) -> dict[str, Any]:
-    """为任务创建本地 Git 快照并写入账本。"""
-
     root = _resolve_workspace_root(workspace_root)
-    ledger_init(root, ledger_db_path=ledger_db_path)
     git_workspace_init(root)
+    ledger_init(root, ledger_db_path=ledger_db_path)
+    _run_git(root, "add", "-A")
+    status_output = _run_git(root, "status", "--porcelain", check=False).stdout.strip()
     message = commit_message or f"AOK {workflow_uid} {node_code} {gate_code} {task_uid} PASS"
-    add_result = _run_git(root, ["add", "-A"])
-    if add_result.returncode != 0:
-        raise RuntimeError((add_result.stderr or add_result.stdout or "git add 失败").strip())
-    status_result = _run_git(root, ["status", "--porcelain"])
-    changed_lines = [line for line in status_result.stdout.splitlines() if line.strip()]
-    if not changed_lines:
-        ledger_record_task_run(
-            root,
-            task_uid=task_uid,
-            workflow_uid=workflow_uid,
-            node_code=node_code,
-            gate_code=gate_code,
-            decision="pass_next",
-            status="pass_no_changes",
-            ledger_db_path=ledger_db_path,
-        )
-        return {
-            "status": "PASS",
-            "git_snapshot": None,
-            "summary_path": "",
-            "commit_hash": "",
-            "created": False,
-            "reason": "no_changes",
-        }
-    commit_result = _run_git(root, ["commit", "-m", message])
-    if commit_result.returncode != 0:
-        raise RuntimeError((commit_result.stderr or commit_result.stdout or "git commit 失败").strip())
-    rev_result = _run_git(root, ["rev-parse", "HEAD"])
-    if rev_result.returncode != 0:
-        raise RuntimeError((rev_result.stderr or rev_result.stdout or "git rev-parse 失败").strip())
-    commit_hash = rev_result.stdout.strip()
-    parent_result = _run_git(root, ["rev-parse", "HEAD^"])
-    parent_commit_hash = parent_result.stdout.strip() if parent_result.returncode == 0 else ""
-    files_result = _run_git(root, ["diff-tree", "--no-commit-id", "--name-only", "-r", "HEAD"])
-    changed_files_count = len([line for line in files_result.stdout.splitlines() if line.strip()])
+    if status_output:
+        _run_git(root, "commit", "-m", message)
+    commit_hash = _run_git(root, "rev-parse", "HEAD").stdout.strip()
+    parent_commit_hash = _run_git(root, "rev-parse", "HEAD^", check=False).stdout.strip()
     resolved_tag_name = tag_name or f"aok/task/{task_uid}"
-    tag_result = _run_git(root, ["tag", "-f", resolved_tag_name, commit_hash])
-    if tag_result.returncode != 0:
-        raise RuntimeError((tag_result.stderr or tag_result.stdout or "git tag 失败").strip())
-    snapshot_uid = f"snapshot-{task_uid}"
-    snapshot_row = ledger_record_git_snapshot(
-        root,
-        snapshot_uid=snapshot_uid,
-        task_uid=task_uid,
-        commit_hash=commit_hash,
-        parent_commit_hash=parent_commit_hash,
-        commit_message=message,
-        tag_name=resolved_tag_name,
-        changed_files_count=changed_files_count,
-        includes_attachments=includes_attachments,
-        ledger_db_path=ledger_db_path,
-    )
+    existing_tags = _run_git(root, "tag", "-l", resolved_tag_name, check=False).stdout.strip().splitlines()
+    if resolved_tag_name not in existing_tags:
+        _run_git(root, "tag", resolved_tag_name)
+
     ledger_record_task_run(
         root,
         task_uid=task_uid,
@@ -580,23 +604,39 @@ def git_create_snapshot_for_task(
         status="pass",
         ledger_db_path=ledger_db_path,
     )
+    snapshot_uid = f"snapshot-{task_uid}"
+    snapshot_row = ledger_record_git_snapshot(
+        root,
+        snapshot_uid=snapshot_uid,
+        task_uid=task_uid,
+        commit_hash=commit_hash,
+        parent_commit_hash=parent_commit_hash,
+        commit_message=message,
+        tag_name=resolved_tag_name,
+        changed_files_count=len([line for line in status_output.splitlines() if line.strip()]),
+        includes_attachments=includes_attachments,
+        ledger_db_path=ledger_db_path,
+    )
+
     summary_dir = root / "logs" / DEFAULT_GIT_SNAPSHOT_LOG_DIR_NAME
     summary_dir.mkdir(parents=True, exist_ok=True)
     summary_path = summary_dir / f"{task_uid}.json"
     summary_payload = {
-        "workspace_root": str(root),
         "task_uid": task_uid,
         "workflow_uid": workflow_uid,
         "node_code": node_code,
         "gate_code": gate_code,
         "commit_hash": commit_hash,
         "tag_name": resolved_tag_name,
-        "changed_files_count": changed_files_count,
-        "includes_attachments": includes_attachments,
-        "created_at": _utc_now_iso(),
     }
     summary_path.write_text(json.dumps(summary_payload, ensure_ascii=False, indent=2), encoding="utf-8")
-    return {"status": "PASS", "git_snapshot": snapshot_row, "summary_path": str(summary_path), "commit_hash": commit_hash}
+    return {
+        "status": "PASS",
+        "task_uid": task_uid,
+        "git_snapshot": snapshot_row,
+        "summary_path": str(summary_path),
+        "commit_hash": commit_hash,
+    }
 
 
 def git_rollback_by_task_uid(
@@ -607,22 +647,26 @@ def git_rollback_by_task_uid(
     mode: str = "preview",
     ledger_db_path: str | Path | None = None,
 ) -> dict[str, Any]:
-    """根据 task_uid 查询回滚目标。"""
-
     root = _resolve_workspace_root(workspace_root)
     snapshot = ledger_get_snapshot_by_task_uid(root, task_uid=target_task_uid, ledger_db_path=ledger_db_path)
     if snapshot is None:
         raise KeyError(f"未找到目标快照: {target_task_uid}")
-    commit_hash = snapshot["git_snapshot"]["commit_hash"]
+    target_commit_hash = str(snapshot["git_snapshot"]["commit_hash"])
     rollback_uid = f"rollback-{source_task_uid}-to-{target_task_uid}"
-    ledger_record_rollback(
+    rollback_row = ledger_record_rollback(
         root,
         rollback_uid=rollback_uid,
         source_task_uid=source_task_uid,
         target_task_uid=target_task_uid,
-        target_commit_hash=commit_hash,
+        target_commit_hash=target_commit_hash,
         mode=mode,
         status="planned" if mode == "preview" else "done",
         ledger_db_path=ledger_db_path,
     )
-    return {"status": "PASS", "mode": mode, "target_task_uid": target_task_uid, "target_commit_hash": commit_hash}
+    return {
+        "status": "PASS",
+        "source_task_uid": source_task_uid,
+        "target_task_uid": target_task_uid,
+        "target_commit_hash": target_commit_hash,
+        "rollback": rollback_row,
+    }

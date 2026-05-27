@@ -10,9 +10,11 @@ import pandas as pd
 
 from autodokit.tools.bibliodb_sqlite import (
     get_structured_state,
+    load_flow_state_df,
     load_reading_queue_df,
     load_reading_state_df,
     load_review_state_df,
+    upsert_flow_state_rows,
     upsert_reading_state_rows,
     upsert_review_state_rows,
 )
@@ -448,3 +450,102 @@ def test_a060_affair_should_enqueue_a065_from_manifest_runner(monkeypatch, tmp_p
     queue_df = load_reading_queue_df(content_db, stage="A065", only_current=True)
     assert not queue_df.empty
     assert "demo-001" in queue_df["cite_key"].astype(str).tolist()
+
+
+def test_a050_affair_should_consume_flow_state_when_legacy_flags_missing(monkeypatch, tmp_path: Path) -> None:
+    module = importlib.import_module("autodokit.affairs.统一文献预处理解析.affair")
+    workspace_root, content_db, pdf_path = _prepare_workspace(tmp_path)
+    output_dir = tmp_path / "outputs_a050"
+    output_dir.mkdir(parents=True, exist_ok=True)
+
+    upsert_flow_state_rows(
+        content_db,
+        [
+            {
+                "uid_literature": "lit-001",
+                "cite_key": "demo-001",
+                "文献角色": "普通候选文献",
+                "流程轨道": "普通主链",
+                "当前阶段": "普通文献预处理",
+                "当前阶段组": "预处理",
+                "当前状态": "待处理",
+                "下一阶段": "普通文献泛读",
+                "来源阶段": "A075",
+                "来源类型": "review_export",
+                "推荐原因": "flow seeded",
+                "主题关系": "demo-theme",
+                "阅读目标": "demo objective",
+                "人工提示": "demo guidance",
+                "是否当前有效": 1,
+                "是否可执行": 1,
+                "stage_code": "non_review_preprocess",
+                "node_code": "A050",
+            }
+        ],
+    )
+
+    manifest_df = pd.DataFrame(
+        [
+            {
+                "uid_literature": "lit-001",
+                "cite_key": "demo-001",
+                "title": "Demo Paper",
+                "pdf_path": str(pdf_path),
+                "source_stage": "A050_NON_REVIEW",
+                "recommended_reason": "flow seeded",
+                "theme_relation": "demo-theme",
+                "source_origin": "review_export",
+                "reading_objective": "demo objective",
+                "manual_guidance": "demo guidance",
+                "manifest_status": "succeeded",
+                "normalized_structured_path": str(workspace_root / "references" / "structured_monkeyocr_full" / "demo-001" / "normalized.structured.json"),
+                "reconstructed_markdown_path": str(workspace_root / "references" / "structured_monkeyocr_full" / "demo-001" / "reconstructed_content.md"),
+                "asset_dir": str(workspace_root / "references" / "structured_monkeyocr_full" / "demo-001"),
+                "postprocess_ok": 1,
+                "postprocess_llm_basic_cleanup_status": "ok",
+                "postprocess_llm_structure_status": "ok",
+                "postprocess_contamination_removed_block_count": 0,
+                "failure_reason": "",
+            }
+        ]
+    )
+
+    def _fake_runner(**kwargs):
+        artifacts = _write_runner_artifacts(Path(kwargs["output_dir"]), manifest_df)
+        return {
+            "manifest_df": manifest_df,
+            **artifacts,
+            "readable_manifest_path": artifacts["manifest_path"],
+            "failures": [],
+            "counts": {"total": 1, "succeeded": 1, "skipped": 0, "failed": 0},
+            "lock_error": "",
+        }
+
+    monkeypatch.setattr(module, "run_parse_manifest", _fake_runner)
+
+    config_path = tmp_path / "a050.json"
+    _write_json(
+        config_path,
+        {
+            "workspace_root": str(workspace_root),
+            "content_db": str(content_db),
+            "output_dir": str(output_dir),
+            "profile": "non_review",
+        },
+    )
+
+    outputs = module.execute(config_path)
+    assert any(path.name == "a050_unified_preprocess_index.csv" for path in outputs)
+
+    queue_df = load_reading_queue_df(content_db, stage="A050_NON_REVIEW", only_current=True)
+    assert not queue_df.empty
+    assert "demo-001" in queue_df["cite_key"].astype(str).tolist()
+
+    flow_df = load_flow_state_df(content_db, flag_filters={"uid_literature": "lit-001"})
+    assert not flow_df.empty
+
+    state_df = load_reading_state_df(content_db, flag_filters={"uid_literature": "lit-001"})
+    row = state_df[state_df["uid_literature"].astype(str) == "lit-001"].iloc[0]
+    assert int(row["pending_preprocess"]) == 0
+    assert int(row["preprocessed"]) == 1
+    assert int(row["pending_rough_read"]) == 1

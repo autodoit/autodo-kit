@@ -25,6 +25,10 @@ _FALLBACK_CAPABILITY_MATRIX: dict[tuple[str, str, str], dict[str, Any]] = {
     ("en_open_access", "batch", "html_extract"): {"layer": "orchestrator", "stable": True},
     ("en_open_access", "retry", "chaoxing_portal"): {"layer": "orchestrator", "stable": True},
 
+    ("deepxiv", "search", "metadata"): {"layer": "executor", "stable": True},
+    ("deepxiv", "single", "download"): {"layer": "executor", "stable": True},
+    ("deepxiv", "batch", "download"): {"layer": "orchestrator", "stable": True},
+
     ("spis", "search", "metadata"): {"layer": "executor", "stable": True},
     ("spis", "single", "download"): {"layer": "executor", "stable": True},
     ("spis", "single", "html_extract"): {"layer": "executor", "stable": True},

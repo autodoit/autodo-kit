@@ -73,6 +73,18 @@ def load_api_key_from_config(
     if not isinstance(payload, dict):
         return ""
 
+    def _resolve_path(raw_path: str) -> Path:
+        p = Path(raw_path)
+        if not p.is_absolute():
+            p = (path.parent / p).resolve()
+        return p
+
+    def _load_from_key_file(raw_path: Any) -> str:
+        file_text = str(raw_path or "").strip()
+        if not file_text:
+            return ""
+        return _load_api_key_from_file(_resolve_path(file_text), env_api_key_name=env_name)
+
     candidate_keys: List[str] = []
     if config_key:
         candidate_keys.append(str(config_key))
@@ -97,12 +109,34 @@ def load_api_key_from_config(
         if value:
             return value
 
+    llm_payload = payload.get("llm") if isinstance(payload.get("llm"), dict) else {}
+    llm_candidate_keys = [
+        "aliyun_api_key",
+        "dashscope_api_key",
+        "bailian_api_key",
+        "api_key",
+        "key",
+    ]
+    for key in llm_candidate_keys:
+        value = str(llm_payload.get(key) or "").strip()
+        if value:
+            return value
+
+    for key in ["aliyun_api_key_file", "api_key_file", "dashscope_api_key_file", "bailian_api_key_file"]:
+        loaded = _load_from_key_file(llm_payload.get(key))
+        if loaded:
+            return loaded
+
     secrets_file = str(payload.get("secrets_file") or "").strip()
     if secrets_file:
-        secret_path = Path(secrets_file)
-        if not secret_path.is_absolute():
-            secret_path = (path.parent / secret_path).resolve()
-        return _load_api_key_from_file(secret_path, env_api_key_name=env_name)
+        loaded = _load_from_key_file(secrets_file)
+        if loaded:
+            return loaded
+
+    for key in ["aliyun_api_key_file", "api_key_file", "dashscope_api_key_file", "bailian_api_key_file"]:
+        loaded = _load_from_key_file(payload.get(key))
+        if loaded:
+            return loaded
     return ""
 
 

@@ -81,6 +81,17 @@ def _normalize_language_tag(value: Any) -> str:
     return token
 
 
+def _normalize_bib_field_column_name(field_name: Any) -> str:
+    """把 Bib 原始字段统一改写为允许持久化的列名前缀。"""
+
+    normalized = str(field_name or "").strip()
+    if not normalized:
+        return ""
+    if normalized.startswith("bib_") or _has_cjk(normalized):
+        return normalized
+    return f"bib_{normalized}"
+
+
 def _infer_literature_language(*, fields: Mapping[str, Any], title: str, abstract: str, keywords: str, authors: str) -> str:
     """推断并返回文献语种。"""
 
@@ -121,16 +132,16 @@ def _merge_duplicate_row(existing: Dict[str, Any], candidate: Dict[str, Any]) ->
         "authors",
         "abstract",
         "keywords",
-        "journal",
-        "author",
-        "note",
-        "url",
-        "doi",
-        "publisher",
-        "booktitle",
     ):
         if text_field in merged or text_field in candidate:
             merged[text_field] = _pick_better_text(str(merged.get(text_field) or ""), str(candidate.get(text_field) or ""))
+
+    for text_field in sorted(
+        key
+        for key in {*merged.keys(), *candidate.keys()}
+        if str(key).startswith("bib_")
+    ):
+        merged[text_field] = _pick_better_text(str(merged.get(text_field) or ""), str(candidate.get(text_field) or ""))
 
     if not str(merged.get("entry_type") or ""):
         merged["entry_type"] = str(candidate.get("entry_type") or "")
@@ -171,7 +182,10 @@ def build_literature_main_table(
 
         row: Dict[str, Any] = {}
         for key, value in getattr(record, "fields", {}).items():
-            row[key] = value
+            normalized_key = _normalize_bib_field_column_name(key)
+            if not normalized_key:
+                continue
+            row[normalized_key] = value
 
         title_text = str(getattr(record, "fields", {}).get("title", ""))
         title_norm = normalize_text_fn(title_text)
@@ -227,7 +241,6 @@ def build_literature_main_table(
             row["source_lang"] = literature_language
         row["source_type"] = "imported_bibtex"
         row["origin_path"] = ""
-        row["source"] = "imported"
         row["pdf_path"] = pdf_path
         existing_index = dedup_map.get(dedup_identity)
         if existing_index is None:

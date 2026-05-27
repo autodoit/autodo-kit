@@ -9,6 +9,7 @@
 1. `content_db`：统一内容主库绝对路径。A05 直接从 `content.db` 读取文献主表；旧 `literature_csv` / `input_csv` 仅作兼容。
 2. `research_topic`、`topic_terms`、`topic_keyword_groups`、`required_topic_group_indices`、`recent_years` 等主题直筛参数。
 3. 主题筛选参数用于 A050 直题筛选，结构化解析和参考文献处理在 A060/A065 执行。
+4. `persist_review_views_to_content_db`：默认 `false`。关闭时仅输出 CSV 产物并推进中文状态链，不把 `review_*` 英文中间表写入 `content.db`。
 
 ## 输出
 
@@ -27,3 +28,4 @@
 1. A05 前半段允许绕开 A03，直接按研究主题、关键词组和年份窗口从内容主库筛出综述候选。
 2. A05 不再负责逐篇 parse 预热、reference 清洗、占位映射与标准笔记骨架生成，这些职责已下沉到 A060/A065。
 3. AOK 日志是否写入由 `workspace/config/config.json` 的 `logging.enabled` 控制；关闭时不得影响 A05 主流程。
+4. 如需兼容旧链路，可显式将 `persist_review_views_to_content_db=true`，此时才会写入 legacy `review_*` 表。

@@ -11,6 +11,12 @@ from typing import Any, Iterable
 import pandas as pd
 
 from autodokit.tools import bibliodb_sqlite
+from autodokit.path_compat import resolve_portable_path
+from autodokit.tools.contentdb_sqlite import (
+    build_relative_path_from_workspace,
+    infer_workspace_root_from_content_db,
+    resolve_content_path_candidates,
+)
 from autodokit.tools.time_utils import now_iso
 
 
@@ -135,6 +141,18 @@ def _same_file(left: Path, right: Path) -> bool:
         return False
 
 
+def _resolve_existing_attachment_path(row: dict[str, Any], workspace_root: Path) -> Path | None:
+    candidates = resolve_content_path_candidates(
+        workspace_root=workspace_root,
+        relative_path=_stringify(row.get("path_rel")),
+        absolute_or_legacy_path=_stringify(row.get("storage_path") or row.get("source_path")),
+    )
+    for candidate in candidates:
+        if candidate.exists() and candidate.is_file():
+            return candidate
+    return None
+
+
 def _resolve_output_dir(payload: dict[str, Any], workspace_root: Path | None) -> Path:
     output_dir_raw = _stringify(payload.get("output_dir"))
     if output_dir_raw:
@@ -256,7 +274,7 @@ def normalize_primary_fulltext_attachment_names(payload: dict[str, Any]) -> dict
 
     content_db_raw = _stringify(payload.get("content_db"))
     workspace_root_raw = _stringify(payload.get("workspace_root"))
-    workspace_root = Path(workspace_root_raw).expanduser().resolve() if workspace_root_raw else None
+    workspace_root = resolve_portable_path(workspace_root_raw, base=Path.cwd()) if workspace_root_raw else None
     output_dir = _resolve_output_dir(payload, workspace_root)
     output_dir.mkdir(parents=True, exist_ok=True)
     audit_path = output_dir / "primary_attachment_name_normalization.json"
@@ -278,7 +296,7 @@ def normalize_primary_fulltext_attachment_names(payload: dict[str, Any]) -> dict
         audit_path.write_text(json.dumps(summary, ensure_ascii=False, indent=2), encoding="utf-8")
         return summary
 
-    content_db = Path(content_db_raw).expanduser().resolve()
+    content_db = resolve_portable_path(content_db_raw, base=Path.cwd())
     if not content_db.exists():
         summary = {
             "status": "SKIPPED",
@@ -295,6 +313,9 @@ def normalize_primary_fulltext_attachment_names(payload: dict[str, Any]) -> dict
         }
         audit_path.write_text(json.dumps(summary, ensure_ascii=False, indent=2), encoding="utf-8")
         return summary
+
+    if workspace_root is None:
+        workspace_root = infer_workspace_root_from_content_db(content_db)
 
     rename_mode = _stringify(payload.get("rename_mode") or "preview").lower()
     if rename_mode not in {"preview", "apply"}:
@@ -339,13 +360,15 @@ def normalize_primary_fulltext_attachment_names(payload: dict[str, Any]) -> dict
         uid_literature = _stringify(literature_row.get("uid_literature"))
         cite_key = _stringify(literature_row.get("cite_key"))
         attachment_rows = attachment_rows_by_literature.get(uid_literature, [])
-        eligible_rows = [
-            row
-            for row in attachment_rows
-            if int(pd.to_numeric(row.get("is_primary"), errors="coerce") or 0) == 1
-            and _is_allowed_attachment(row, allowed_attachment_types)
-            and Path(_stringify(row.get("storage_path"))).expanduser().exists()
-        ]
+        eligible_rows = []
+        for row in attachment_rows:
+            if int(pd.to_numeric(row.get("is_primary"), errors="coerce") or 0) != 1:
+                continue
+            if not _is_allowed_attachment(row, allowed_attachment_types):
+                continue
+            if _resolve_existing_attachment_path(row, workspace_root) is None:
+                continue
+            eligible_rows.append(row)
         if len(eligible_rows) != 1:
             preview_rows.append(
                 {
@@ -372,6 +395,18 @@ def normalize_primary_fulltext_attachment_names(payload: dict[str, Any]) -> dict
         attachment_row = eligible_rows[0]
         current_uid_attachment = _stringify(attachment_row.get("uid_attachment"))
         current_path = Path(_stringify(attachment_row.get("storage_path"))).expanduser().resolve()
+        current_path = _resolve_existing_attachment_path(attachment_row, workspace_root)
+        if current_path is None:
+            preview_rows.append(
+                {
+                    "uid_literature": uid_literature,
+                    "cite_key": cite_key,
+                    "status": "skipped",
+                    "reason": "attachment_not_found_after_path_resolution",
+                    "eligible_count": 0,
+                }
+            )
+            continue
         source_path = _stringify(attachment_row.get("source_path")) or str(current_path)
         file_ext = current_path.suffix or (f".{_stringify(attachment_row.get('file_ext')).lstrip('.')}" if _stringify(attachment_row.get("file_ext")) else "")
         stable_uid = current_uid_attachment or (
@@ -432,6 +467,10 @@ def normalize_primary_fulltext_attachment_names(payload: dict[str, Any]) -> dict
                 attachments_df.loc[attachment_indices, "source_path"] = effective_source_path
                 attachments_df.loc[attachment_indices, "file_ext"] = file_ext.lstrip(".")
                 attachments_df.loc[attachment_indices, "updated_at"] = now_text
+                attachments_df.loc[attachment_indices, "path_rel"] = build_relative_path_from_workspace(
+                    effective_path,
+                    workspace_root=workspace_root,
+                )
                 attachment_indices_by_key[(uid_literature, stable_uid)] = attachment_indices_by_key.pop(
                     (uid_literature, current_uid_attachment),
                     attachment_indices,
@@ -442,6 +481,10 @@ def normalize_primary_fulltext_attachment_names(payload: dict[str, Any]) -> dict
                 literatures_df.loc[literature_indices, "primary_attachment_name"] = target_name
                 literatures_df.loc[literature_indices, "pdf_path"] = str(effective_path)
                 literatures_df.loc[literature_indices, "updated_at"] = now_text
+                literatures_df.loc[literature_indices, "pdf_rel_path"] = build_relative_path_from_workspace(
+                    effective_path,
+                    workspace_root=workspace_root,
+                )
 
             if update_parse_assets and not parse_assets_df.empty and current_uid_attachment != stable_uid:
                 parse_mask = parse_assets_df.get("uid_attachment", pd.Series(dtype=str)).astype(str) == current_uid_attachment

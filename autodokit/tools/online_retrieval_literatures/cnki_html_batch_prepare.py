@@ -66,7 +66,7 @@ def _build_prepare_config(args: argparse.Namespace) -> dict[str, Any]:
     browser_config = dict(defaults.get("cnki_browser_config") or {})
     return {
         "query": str(args.query or defaults.get("zh_query") or "系统性风险"),
-        "entry_url": str(args.entry_url or defaults.get("cnki_entry_url") or "https://kns.cnki.net/kns8s/search"),
+        "entry_url": str(args.entry_url or defaults.get("cnki_entry_url") or "https://ai.cnki.net/aisearch"),
         "cdp_url": str(args.cdp_url or defaults.get("cnki_cdp_url") or f"http://127.0.0.1:{int(defaults.get('cnki_cdp_port') or 9222)}"),
         "cdp_port": int(args.cdp_port or defaults.get("cnki_cdp_port") or 9222),
         "skip_launch": bool(args.skip_launch),

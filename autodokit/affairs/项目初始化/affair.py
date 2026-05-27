@@ -17,6 +17,7 @@ from autodokit.tools import (
     load_json_or_py,
     write_mainline_affair_entry_registry,
 )
+from autodokit.tools.a010_skill_bootstrap_runner import execute as run_a010_skill_bootstrap
 from autodokit.tools.atomic.task_aok.git_snapshot_ledger import git_workspace_init
 from autodokit.tools.atomic.task_aok.post_affair_git_commit import affair_auto_git_commit
 from autodokit.tools.atomic.task_aok.task_instance_dir import resolve_legacy_output_dir
@@ -39,10 +40,12 @@ class ProjectInitializationEngine:
         "A020",
         "A030",
         "A040",
+        "A045",
         "A050",
         "A060",
         "A065",
         "A070",
+        "A075",
         "A080",
         "A090",
         "A095",
@@ -251,8 +254,6 @@ class ProjectInitializationEngine:
             "config",
             "config/scheduler",
             "database/content",
-            "database/literature",
-            "database/knowledge",
             "database/logs",
             "database/tasks",
             "references",
@@ -261,6 +262,7 @@ class ProjectInitializationEngine:
             "references/structured_monkeyocr_full",
             "steps",
             "views",
+            "views/literature",
             "tasks",
             "batches",
             "docs",
@@ -315,7 +317,7 @@ class ProjectInitializationEngine:
             "checked_at": datetime.now().astimezone().isoformat(timespec="seconds"),
             "required_dirs": result.get("required_dirs_created", []),
             "tasks_db_path": str(workspace_root / "database" / "tasks" / "tasks.db"),
-            "log_db_path": str(workspace_root / "database" / "logs" / "aok_log.db"),
+            "log_db_path": str(workspace_root / "database" / "logs" / "log.db"),
             "registry_path": result.get("affair_entry_registry_path", ""),
         }
         target_path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
@@ -403,51 +405,55 @@ class ProjectInitializationEngine:
         with sqlite3.connect(str(tasks_db_path)) as connection:
             connection.executescript(
                 """
-                CREATE TABLE IF NOT EXISTS task_runs (
+                CREATE TABLE IF NOT EXISTS "任务运行" (
                     task_uid TEXT PRIMARY KEY,
                     workflow_uid TEXT NOT NULL,
-                    node_code TEXT NOT NULL,
-                    gate_code TEXT NOT NULL,
-                    task_status TEXT NOT NULL DEFAULT '',
-                    workspace_root TEXT NOT NULL DEFAULT '',
-                    started_at TEXT NOT NULL DEFAULT '',
-                    ended_at TEXT NOT NULL DEFAULT '',
-                    note TEXT NOT NULL DEFAULT ''
+                    "节点编码" TEXT NOT NULL,
+                    "闸门编码" TEXT NOT NULL,
+                    "运行状态" TEXT NOT NULL DEFAULT '',
+                    "工作区根路径" TEXT NOT NULL DEFAULT '',
+                    "开始时间" TEXT NOT NULL DEFAULT '',
+                    "结束时间" TEXT NOT NULL DEFAULT '',
+                    "备注" TEXT NOT NULL DEFAULT ''
                 );
                 """
             )
             existing_columns = {
                 str(row[1])
-                for row in connection.execute("PRAGMA table_info(task_runs)").fetchall()
+                for row in connection.execute('PRAGMA table_info("任务运行")').fetchall()
                 if len(row) > 1
             }
             required_columns: dict[str, str] = {
-                "task_status": "TEXT NOT NULL DEFAULT ''",
-                "workspace_root": "TEXT NOT NULL DEFAULT ''",
-                "started_at": "TEXT NOT NULL DEFAULT ''",
-                "ended_at": "TEXT NOT NULL DEFAULT ''",
-                "note": "TEXT NOT NULL DEFAULT ''",
+                "动作决策": "TEXT NOT NULL DEFAULT ''",
+                "运行状态": "TEXT NOT NULL DEFAULT ''",
+                "工作区根路径": "TEXT NOT NULL DEFAULT ''",
+                "输入摘要JSON": "TEXT NOT NULL DEFAULT '{}'",
+                "输出摘要JSON": "TEXT NOT NULL DEFAULT '{}'",
+                "开始时间": "TEXT NOT NULL DEFAULT ''",
+                "结束时间": "TEXT NOT NULL DEFAULT ''",
+                "操作人": "TEXT NOT NULL DEFAULT ''",
+                "备注": "TEXT NOT NULL DEFAULT ''",
             }
             for column_name, column_def in required_columns.items():
                 if column_name in existing_columns:
                     continue
-                connection.execute(f"ALTER TABLE task_runs ADD COLUMN {column_name} {column_def}")
+                connection.execute(f'ALTER TABLE "任务运行" ADD COLUMN "{column_name}" {column_def}')
+                existing_columns.add(column_name)
 
             row_values: dict[str, Any] = {
                 "task_uid": "task-a010-project-bootstrap",
                 "workflow_uid": "wf-a010-bootstrap",
-                "node_code": "A010",
-                "gate_code": "G010",
-                "decision": "auto",
-                "status": "initialized",
-                "task_status": "initialized",
-                "workspace_root": str(project_root),
-                "input_summary_json": "{}",
-                "output_summary_json": "{}",
-                "started_at": "",
-                "ended_at": "",
-                "operator_name": "",
-                "note": "project initialization task",
+                "节点编码": "A010",
+                "闸门编码": "G010",
+                "动作决策": "auto",
+                "运行状态": "initialized",
+                "工作区根路径": str(project_root),
+                "输入摘要JSON": "{}",
+                "输出摘要JSON": "{}",
+                "开始时间": "",
+                "结束时间": "",
+                "操作人": "",
+                "备注": "project initialization task",
             }
             insert_columns = [col for col in existing_columns if col in row_values]
             if "task_uid" not in insert_columns:
@@ -455,10 +461,11 @@ class ProjectInitializationEngine:
             insert_values = [row_values.get(col, "") for col in insert_columns]
             update_columns = [col for col in insert_columns if col != "task_uid"]
             placeholders = ", ".join("?" for _ in insert_columns)
-            update_clause = ", ".join(f"{col}=excluded.{col}" for col in update_columns)
+            quoted_insert_columns = [f'"{col}"' for col in insert_columns]
+            update_clause = ", ".join(f'"{col}"=excluded."{col}"' for col in update_columns)
             connection.execute(
                 f"""
-                INSERT INTO task_runs ({", ".join(insert_columns)})
+                INSERT INTO "任务运行" ({", ".join(quoted_insert_columns)})
                 VALUES ({placeholders})
                 ON CONFLICT(task_uid) DO UPDATE SET
                     {update_clause}
@@ -670,7 +677,7 @@ class ProjectInitializationEngine:
                 str(root / "database" / "references"),
                 str(root / "database" / "knowledge"),
                 str(root / "database" / "logs"),
-                str(root / "database" / "logs" / "aok_log.db"),
+                str(root / "database" / "logs" / "log.db"),
                 str(root / "references"),
                 *[str(path) for path in build_pdf_structured_variant_dir_map(root / "references").values()],
                 str(root / "config" / "scheduler"),
@@ -682,48 +689,6 @@ class ProjectInitializationEngine:
 
 @affair_auto_git_commit("A010")
 def execute(config_path: Path) -> List[Path]:
-    """事务执行入口。"""
+    """兼容入口：统一委托到 A010 技能桥接 runner。"""
 
-    raw_cfg = load_json_or_py(config_path)
-    if not isinstance(raw_cfg, dict):
-        raise ValueError("A010 配置必须为字典")
-    result = ProjectInitializationEngine().run(config_path=config_path, raw_cfg=raw_cfg)
-
-    try:
-        workspace_root = Path(str(result.get("workspace_root") or "")).resolve()
-        content_db = workspace_root / "database" / CONTENT_DB_DIRECTORY_NAME / DEFAULT_CONTENT_DB_NAME
-        upsert_workspace_node_state_rows(
-            content_db,
-            [
-                {
-                    "node_code": "A010",
-                    "node_name": "项目初始化",
-                    "pending_run": 0,
-                    "in_progress": 0,
-                    "completed": 1,
-                    "gate_status": "pass_next",
-                    "last_task_uid": str(result.get("task_instance_name") or ""),
-                    "current_task_uid": "",
-                    "summary": "A010 初始化完成",
-                    "next_node_code": "A020",
-                    "failure_reason": "",
-                    "retry_count": 0,
-                }
-            ],
-        )
-    except Exception:
-        # 节点状态写入失败不阻断初始化主流程。
-        pass
-
-    output_dir = resolve_legacy_output_dir(raw_cfg, config_path)
-
-    task_instance_dir = Path(str(result.get("task_instance_dir") or (output_dir / "task_instance")))
-    task_instance_dir.mkdir(parents=True, exist_ok=True)
-    task_out_path = task_instance_dir / "project_initialization_result.json"
-    task_out_path.write_text(json.dumps(result, ensure_ascii=False, indent=2), encoding="utf-8")
-
-    out_path = output_dir / "project_initialization_result.json"
-    if out_path != task_out_path:
-        out_path.write_text(json.dumps(result, ensure_ascii=False, indent=2), encoding="utf-8")
-        return [task_out_path, out_path]
-    return [task_out_path]
+    return run_a010_skill_bootstrap(config_path)

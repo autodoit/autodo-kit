@@ -201,6 +201,8 @@ acs-*.bib
 
 # Ignore local third-party tylax installation
 third_party/tylax/
+# Ignore all local third-party runtimes, models, and vendor checkouts.
+third_party/
 *.[1-9][0-9]
 *.[1-9][0-9][0-9]
 *.[1-9]R

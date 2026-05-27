@@ -8,6 +8,11 @@ from pathlib import Path
 from typing import Any
 
 from autodokit.tools import bibliodb_sqlite
+from autodokit.tools.contentdb_sqlite import (
+    LITERATURE_TABLE_NAME,
+    PARSE_ASSET_TABLE_NAME,
+    resolve_content_physical_column,
+)
 from autodokit.tools.time_utils import now_compact, now_iso
 
 
@@ -69,12 +74,20 @@ def _fetch_current_parse_rows(content_db: Path, parse_level: str) -> list[dict[s
     conn.row_factory = sqlite3.Row
     try:
         rows = conn.execute(
-            """
-            SELECT id, asset_uid, uid_literature, cite_key, uid_attachment, backend,
-                   asset_dir, normalized_structured_path, parse_status, updated_at
-            FROM literature_parse_assets
-            WHERE parse_level = ? AND is_current = 1
-            ORDER BY updated_at DESC, id DESC
+            f"""
+             SELECT "内部编号" AS id,
+                 "uid_资产" AS asset_uid,
+                 "uid_文献" AS uid_literature,
+                 cite_key,
+                 "uid_附件" AS uid_attachment,
+                 "解析后端" AS backend,
+                 "资产目录" AS asset_dir,
+                 "结构化正文路径" AS normalized_structured_path,
+                 "解析状态" AS parse_status,
+                 "更新时间" AS updated_at
+            FROM "{PARSE_ASSET_TABLE_NAME}"
+             WHERE "解析层级" = ? AND "是否当前有效" = 1
+             ORDER BY "更新时间" DESC, "内部编号" DESC
             """,
             (parse_level,),
         ).fetchall()
@@ -94,10 +107,10 @@ def _mark_rows_not_current(content_db: Path, row_ids: list[int]) -> int:
         placeholders = ",".join(["?"] * len(row_ids))
         result = conn.execute(
             f"""
-            UPDATE literature_parse_assets
-            SET is_current = 0,
-                updated_at = ?
-            WHERE id IN ({placeholders})
+            UPDATE "{PARSE_ASSET_TABLE_NAME}"
+            SET "是否当前有效" = 0,
+                "更新时间" = ?
+            WHERE "内部编号" IN ({placeholders})
             """,
             [now, *row_ids],
         )
@@ -124,14 +137,14 @@ def _update_literatures_structured_fields(content_db: Path, rows: list[dict[str,
             if not uid_literature or not structured_abs_path:
                 continue
             cursor = conn.execute(
-                """
-                UPDATE literatures
-                SET structured_status = ?,
-                    structured_abs_path = ?,
-                    structured_backend = ?,
-                    structured_task_type = ?,
-                    structured_updated_at = ?
-                WHERE uid_literature = ?
+                f"""
+                UPDATE "{LITERATURE_TABLE_NAME}"
+                SET "结构化状态" = ?,
+                    "结构化正文路径" = ?,
+                    "结构化后端" = ?,
+                    "结构化任务类型" = ?,
+                    "结构化更新时间" = ?
+                WHERE "uid_文献" = ?
                 """,
                 (
                     "ready",
@@ -150,7 +163,7 @@ def _update_literatures_structured_fields(content_db: Path, rows: list[dict[str,
 
 
 def _repair_nonstandard_promoted_review_state(content_db: Path, rows: list[dict[str, Any]]) -> int:
-    """把非标准导入误推进的综述主链状态降回中性态。"""
+    """把非标准导入误推进的综述主链流程状态降回中性态。"""
 
     if not rows:
         return 0
@@ -159,25 +172,27 @@ def _repair_nonstandard_promoted_review_state(content_db: Path, rows: list[dict[
     repaired = 0
     conn = sqlite3.connect(content_db)
     try:
+        uid_literature_column = resolve_content_physical_column(LITERATURE_TABLE_NAME, "uid_literature")
+        flow_source_stage_column = resolve_content_physical_column(LITERATURE_TABLE_NAME, "flow_source_stage")
+        flow_recommended_reason_column = resolve_content_physical_column(LITERATURE_TABLE_NAME, "flow_recommended_reason")
+        flow_current_status_column = resolve_content_physical_column(LITERATURE_TABLE_NAME, "flow_current_status")
+        flow_updated_at_column = resolve_content_physical_column(LITERATURE_TABLE_NAME, "flow_updated_at")
+        flow_track_column = resolve_content_physical_column(LITERATURE_TABLE_NAME, "flow_track")
+        flow_source_type_column = resolve_content_physical_column(LITERATURE_TABLE_NAME, "flow_source_type")
         for row in rows:
             uid_literature = _stringify(row.get("uid_literature"))
             if not uid_literature:
                 continue
             cursor = conn.execute(
-                """
-                UPDATE literature_review_state
-                SET source_stage = ?,
-                    recommended_reason = ?,
-                    pending_review_parse = 0,
-                    review_parse_ready = 0,
-                    pending_reference_preprocess = 0,
-                    reference_preprocessed = 0,
-                    pending_review_read = 0,
-                    in_review_read = 0,
-                    review_read_done = 0,
-                    updated_at = ?
-                WHERE uid_literature = ?
-                  AND COALESCE(source_origin, '') = 'nonstandard_parse_migration'
+                f"""
+                    UPDATE "{LITERATURE_TABLE_NAME}"
+                       SET "{flow_source_stage_column}" = ?,
+                           "{flow_recommended_reason_column}" = ?,
+                           "{flow_current_status_column}" = '待处理',
+                           "{flow_updated_at_column}" = ?
+                     WHERE "{uid_literature_column}" = ?
+                       AND COALESCE("{flow_track_column}", '') = '综述主链'
+                       AND COALESCE("{flow_source_type_column}", '') = 'nonstandard_parse_migration'
                 """,
                 (
                     "ASSET_REGISTRY",
@@ -203,22 +218,29 @@ def _demote_nonstandard_a065_queue_rows(content_db: Path, rows: list[dict[str, A
     affected = 0
     conn = sqlite3.connect(content_db)
     try:
+        uid_literature_column = resolve_content_physical_column(LITERATURE_TABLE_NAME, "uid_literature")
+        cite_key_column = resolve_content_physical_column(LITERATURE_TABLE_NAME, "cite_key")
+        queue_is_current_column = resolve_content_physical_column(LITERATURE_TABLE_NAME, "queue_is_current")
+        queue_status_column = resolve_content_physical_column(LITERATURE_TABLE_NAME, "queue_status")
+        queue_updated_at_column = resolve_content_physical_column(LITERATURE_TABLE_NAME, "queue_updated_at")
+        queue_stage_column = resolve_content_physical_column(LITERATURE_TABLE_NAME, "queue_stage")
+        queue_bucket_column = resolve_content_physical_column(LITERATURE_TABLE_NAME, "queue_bucket")
         for row in rows:
             uid_literature = _stringify(row.get("uid_literature"))
             cite_key = _stringify(row.get("cite_key"))
             if not uid_literature and not cite_key:
                 continue
             cursor = conn.execute(
-                """
-                UPDATE literature_reading_queue
-                SET is_current = 0,
-                    queue_status = 'superseded',
-                    updated_at = ?
-                WHERE stage = 'A065'
-                  AND is_current = 1
-                  AND COALESCE(scope_key, '') = 'nonstandard_a060_backfill'
-                  AND COALESCE(uid_literature, '') = ?
-                  AND COALESCE(cite_key, '') = ?
+                f"""
+                    UPDATE "{LITERATURE_TABLE_NAME}"
+                       SET "{queue_is_current_column}" = 0,
+                           "{queue_status_column}" = 'superseded',
+                           "{queue_updated_at_column}" = ?
+                     WHERE COALESCE("{queue_stage_column}", '') = 'A065'
+                       AND COALESCE("{queue_is_current_column}", 1) = 1
+                       AND COALESCE("{queue_bucket_column}", '') = 'nonstandard_a060_backfill'
+                       AND COALESCE("{uid_literature_column}", '') = ?
+                       AND COALESCE("{cite_key_column}", '') = ?
                 """,
                 (now, uid_literature, cite_key),
             )

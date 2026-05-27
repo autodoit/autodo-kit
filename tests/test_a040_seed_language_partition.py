@@ -12,7 +12,7 @@ def _prepare_db(db_path: Path) -> None:
     with sqlite3.connect(str(db_path)) as conn:
         conn.execute(
             """
-            CREATE TABLE literatures (
+            CREATE TABLE "文献主表" (
                 uid_literature TEXT,
                 cite_key TEXT,
                 title TEXT,
@@ -23,7 +23,7 @@ def _prepare_db(db_path: Path) -> None:
             """
         )
         conn.executemany(
-            "INSERT INTO literatures(uid_literature, cite_key, title, language, source_lang, \"文献语种\") VALUES (?, ?, ?, ?, ?, ?)",
+            'INSERT INTO "文献主表"(uid_literature, cite_key, title, language, source_lang, "文献语种") VALUES (?, ?, ?, ?, ?, ?)',
             [
                 ("uid-zh", "ck-zh", "中文标题A", "zh", "zh", "zh-cn"),
                 ("uid-fr", "ck-fr", "Titre Francais", "fr", "fr", "fr"),
@@ -54,5 +54,5 @@ def test_partition_seed_items_should_follow_canonical_language_first(tmp_path: P
 
     zh_titles = {str(item.get("title") or "") for item in zh_items}
     foreign_titles = {str(item.get("title") or "") for item in foreign_items}
-    assert "银行系统性风险与房地产" in zh_titles
-    assert "Systemic risk and real estate cycle" in foreign_titles
+    assert "科研协作网络与学科演化" in zh_titles
+    assert "Collaboration networks and disciplinary evolution" in foreign_titles

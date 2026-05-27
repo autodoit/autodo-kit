@@ -6,6 +6,8 @@ import sqlite3
 from pathlib import Path
 from typing import Any
 
+from autodokit.tools.contentdb_sqlite import LITERATURE_TABLE_NAME
+
 
 def normalize_text(value: Any) -> str:
     return str(value or "").strip()
@@ -50,13 +52,25 @@ def _fetch_literature_rows(content_db_path: str, *, cite_keys: list[str], pdf_pa
     with sqlite3.connect(str(db_path)) as conn:
         conn.row_factory = sqlite3.Row
         cursor = conn.cursor()
+        column_rows = cursor.execute(f'PRAGMA table_info("{LITERATURE_TABLE_NAME}")').fetchall()
+        available_columns = {str(row[1]) for row in column_rows}
 
-        if cite_keys:
+        cite_key_column = "cite_key" if "cite_key" in available_columns else ""
+        title_column = "title" if "title" in available_columns else ("标题" if "标题" in available_columns else "")
+        pdf_path_column = "pdf_path" if "pdf_path" in available_columns else ("PDF路径" if "PDF路径" in available_columns else "")
+
+        select_parts = [
+            f'COALESCE("{cite_key_column}", "") AS cite_key' if cite_key_column else '"" AS cite_key',
+            f'COALESCE("{title_column}", "") AS title' if title_column else '"" AS title',
+            f'COALESCE("{pdf_path_column}", "") AS pdf_path' if pdf_path_column else '"" AS pdf_path',
+        ]
+
+        if cite_keys and cite_key_column:
             placeholders = ",".join("?" for _ in cite_keys)
             query = f"""
-                SELECT cite_key, title, pdf_path
-                FROM literatures
-                WHERE cite_key IN ({placeholders})
+                SELECT {", ".join(select_parts)}
+                FROM "{LITERATURE_TABLE_NAME}"
+                WHERE "{cite_key_column}" IN ({placeholders})
             """
             for row in cursor.execute(query, cite_keys):
                 rows.append(
@@ -67,12 +81,12 @@ def _fetch_literature_rows(content_db_path: str, *, cite_keys: list[str], pdf_pa
                     }
                 )
 
-        if pdf_paths:
+        if pdf_paths and pdf_path_column:
             placeholders = ",".join("?" for _ in pdf_paths)
             query = f"""
-                SELECT cite_key, title, pdf_path
-                FROM literatures
-                WHERE pdf_path IN ({placeholders})
+                SELECT {", ".join(select_parts)}
+                FROM "{LITERATURE_TABLE_NAME}"
+                WHERE "{pdf_path_column}" IN ({placeholders})
             """
             for row in cursor.execute(query, pdf_paths):
                 rows.append(

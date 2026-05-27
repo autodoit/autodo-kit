@@ -13,7 +13,7 @@ from autodokit.path_compat import resolve_portable_path
 from autodokit.tools.atomic.log_aok import append_aok_log_event, resolve_aok_log_db_path
 from autodokit.tools.bibliodb import build_cite_key, clean_title_text, literature_insert_placeholder, literature_match, parse_reference_text
 from autodokit.tools.bibliodb_sqlite import load_literatures_df
-from autodokit.tools.contentdb_sqlite import connect_sqlite, infer_workspace_root_from_content_db, init_content_db, resolve_content_db_path
+from autodokit.tools.contentdb_sqlite import LITERATURE_TABLE_NAME, connect_sqlite, infer_workspace_root_from_content_db, init_content_db, resolve_content_db_path
 from autodokit.tools.reference_citation_tools import build_reference_quality_summary
 
 
@@ -122,7 +122,7 @@ def _upsert_literatures_rows(content_db_path: Path, rows: List[Dict[str, Any]]) 
     with connect_sqlite(content_db_path) as conn:
         table_columns = {
             str(item[1]).strip()
-            for item in conn.execute("PRAGMA table_info(literatures)").fetchall()
+            for item in conn.execute(f'PRAGMA table_info("{LITERATURE_TABLE_NAME}")').fetchall()
             if len(item) >= 2
         }
         for row in _iter_upsert_rows(rows, table_columns):
@@ -133,12 +133,12 @@ def _upsert_literatures_rows(content_db_path: Path, rows: List[Dict[str, Any]]) 
             if update_columns:
                 update_clause = ", ".join(f'"{column}"=excluded."{column}"' for column in update_columns)
                 sql = (
-                    f"INSERT INTO literatures ({quoted_columns}) VALUES ({placeholders}) "
+                    f'INSERT INTO "{LITERATURE_TABLE_NAME}" ({quoted_columns}) VALUES ({placeholders}) '
                     f"ON CONFLICT(uid_literature) DO UPDATE SET {update_clause}"
                 )
             else:
                 sql = (
-                    f"INSERT INTO literatures ({quoted_columns}) VALUES ({placeholders}) "
+                    f'INSERT INTO "{LITERATURE_TABLE_NAME}" ({quoted_columns}) VALUES ({placeholders}) '
                     "ON CONFLICT(uid_literature) DO NOTHING"
                 )
             conn.execute(sql, tuple(row[column] for column in columns))

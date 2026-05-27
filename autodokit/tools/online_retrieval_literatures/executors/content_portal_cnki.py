@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from concurrent.futures import ThreadPoolExecutor
 from typing import Any
 
 from autodokit.tools.online_retrieval_literatures.zh_cnki_search_metadata import search_metadata as zh_search_metadata
@@ -16,7 +17,9 @@ def execute_cnki_metadata(payload: dict[str, Any]) -> dict[str, Any]:
 
 def execute_cnki_single_download(payload: dict[str, Any]) -> dict[str, Any]:
     resolved_payload = resolve_content_single_payload(payload, query_field="zh_query")
-    return zh_single_download(resolved_payload)
+    with ThreadPoolExecutor(max_workers=1) as executor:
+        future = executor.submit(zh_single_download, resolved_payload)
+        return dict(future.result())
 
 
 def execute_cnki_single_structured(payload: dict[str, Any]) -> dict[str, Any]:

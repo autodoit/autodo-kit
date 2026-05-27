@@ -1,4 +1,4 @@
-# AOL 与 AOC 设计说明（v0.2）
+# AOL 与 AOC 设计说明
 
 本文档定义当前生效的 AOL（autodo-lang）与 AOC（autodo compiler）方案。
 
@@ -9,6 +9,7 @@
 - 部署时只做 AOL -> 目标引擎编译，不维护多份并行元数据。
 - 不保留过时兼容路径。
 - AOL 是统一语义层，不直接绑定任一引擎目录语法。
+- canonical dump 是 AOB 转换过程中的 JSON 快照，用于报告、审计和回放，不作为人工维护的 AOL 源码格式。
 
 ### 1.1 统一语义层与适配层边界
 
@@ -91,32 +92,69 @@ Skill frontmatter 语义字段：
 - `id`
 - 正文即规则文本
 
+### 2.4 根对象字段
+
+AOC 在从引擎办公区反编译 AOL 时，会把以下跨引擎配置提升为 AOL 根对象字段：
+
+- `project_instruction`：项目级指令文本。
+- `commands`：命令定义列表，主要来自引擎命令目录或可迁移命令载体。
+- `hooks`：生命周期 hook 载体列表，结构与附加载体一致，包含 `relative_path` 与 `content`。
+- `mcp_servers`：MCP 服务注册表，统一从 `mcpServers`、`mcp_servers` 或 `mcp.servers` 抽取。
+- `settings`：源引擎配置快照，包含 `sourceEngine` 与 `sourceConfigs`。
+- `policies`：权限、审批、安全与沙箱策略，覆盖 `permission`、`permissions`、`approval`、`approval_policy`、`sandbox`、`sandbox_mode`、`security` 等键。
+- `engine_native`：引擎原生逃生口，用于保留目标引擎可直接消费或不可无损通用化的字段。
+- `extra_assets`：prompts、workflows、templates、context、docs、instructions、governance、modes、plugins、tools、themes、plans 等可迁移附加载体。
+
+这些字段共同构成 AOB `convert_workspace` 的 canonical AOL dump。目标引擎无法完整承接的字段不会静默丢弃，必须在 capability report 中呈现为 `downgraded` 或 `unsupported`。
+
 ## 3. AOC 行为
 
 - `validate`：校验 AOL Markdown 源码目录或单文件。
-- `compile`：将 AOL 编译为 OpenCode / Claude / Copilot 目标目录。
+- `compile`：将 AOL 编译为 OpenCode、Claude、Copilot、Gemini、Codex 目标目录。
 - OpenCode 阻断策略默认严格执行，不提供放行开关。
 - `validate` 会提示潜在引擎专有内容泄漏（作为治理告警）。
 - `compile` 到 OpenCode 时会执行颜色标准化适配（命名色 -> Hex）。
+- 从办公区反编译 AOL 时，AOC 会读取五类办公区目录：`.opencode`、`.claude`、`.github`、`.gemini`、`.codex`。
+- 编译到 Claude/Gemini/Codex 等目标时，AOC 会在目标配置中写入 MCP、hooks、settings、policies 与 `aolCanonical` 摘要；Copilot 无等价公开配置面时，会把这些字段保存在 `.github/autodo.engine.config.json`。
+
+### 3.1 能力分层
+
+AOB capability report 使用以下分层：
+
+- `L1` 基础通用层：`project_instruction`、`rules`、`skills`、`agents`、`commands`。
+- `L2` 扩展能力层：`hooks`、`mcp`、`settings`、`policies`。
+- `L3` 引擎逃生口：`modes`、`plugins`、`tools`、`themes`、`plans`、`engine_overrides`。
+
+支持结果使用三种状态：
+
+- `full`：目标引擎可按语义完整承接。
+- `partial`：目标引擎可保留或近似投影，但语义可能降级。
+- `unsupported`：目标引擎无法承接且不能安全保留，请求该能力时会阻断转换。
 
 ## 4. 使用方式
 
-```powershell
+```bash
 # 校验 AOL 源码目录（libs 原位）
-python tools/aoc.py validate --input libs
+python scripts/aob_tools/aoc.py validate --input libs
 
 # 编译到 OpenCode
-python tools/aoc.py compile --input libs --engine opencode --output-dir /home/ethan/DemoProject
+python scripts/aob_tools/aoc.py compile --input libs --engine opencode --output-dir /home/ethan/DemoProject
 
 # 编译到 Claude
-python tools/aoc.py compile --input libs --engine claude --output-dir /home/ethan/DemoProject
+python scripts/aob_tools/aoc.py compile --input libs --engine claude --output-dir /home/ethan/DemoProject
 
 # 编译到 Copilot
-python tools/aoc.py compile --input libs --engine copilot --output-dir /home/ethan/DemoProject
+python scripts/aob_tools/aoc.py compile --input libs --engine copilot --output-dir /home/ethan/DemoProject
+
+# 编译到 Gemini
+python scripts/aob_tools/aoc.py compile --input libs --engine gemini --output-dir /home/ethan/DemoProject
+
+# 编译到 Codex
+python scripts/aob_tools/aoc.py compile --input libs --engine codex --output-dir /home/ethan/DemoProject
 ```
 
 ## 5. 与同步/部署的关系
 
-- `python tools/library.py items sync` 会把 `libs/` 原位文件归一化为 AOL DSL。
-- `python tools/deploy.py workflow ...` 会直接从 `libs/` 原位内容编译并部署到指定引擎。
+- `python scripts/aob_tools/library.py items sync` 会把 `libs/` 原位文件归一化为 AOL DSL。
+- `python scripts/aob_tools/deploy.py workflow ...` 会直接从 `libs/` 原位内容编译并部署到指定引擎。
 - 可通过 `items sync --dry-run` 查看本次归一化统计（`agents_converted`、`skills_converted`、`rules_converted`）。

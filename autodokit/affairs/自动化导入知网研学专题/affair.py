@@ -11,7 +11,7 @@
 1) 初始准备（在你运行脚本前请执行）
    - 在本地确保已安装 Playwright：
 
-     ```powershell
+     ```bash
      python -m pip install playwright
      python -m playwright install
      ```
@@ -61,15 +61,15 @@
    - 本脚本采用多候选定位器策略（文本、role、常见 class/id），但网站前端随时可能变化，调试时可能需要根据页面 DOM 微调定位器。
    - 如果你希望我把 `DRY_RUN` 或进度保存功能加入脚本，请告诉我，我可以在不运行任何操作的前提下更新代码并交付给你。
 
-使用示例（在 PowerShell 中）
+使用示例（在 Git Bash 中）
 
-```powershell
+```bash
 # 安装 Playwright（若尚未安装）
 python -m pip install playwright
 python -m playwright install
 
 # 运行脚本（会打开一个新的 Chrome 窗口）
-python .\autodo-kit\affairs\自动化导入知网研学专题.py
+python ./autodo-kit/affairs/自动化导入知网研学专题.py
 ```
 
 模块其余部分实现自动化逻辑：定位器、验证码检测、点击重试与循环控制（见下文代码）。

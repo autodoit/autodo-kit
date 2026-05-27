@@ -90,6 +90,7 @@ def _build_review_pool_from_state(content_db: Path, literature_table: pd.DataFra
 
 @affair_auto_git_commit("A065")
 def execute(config_path: Path) -> List[Path]:
+    config_path = Path(config_path)
     raw_cfg = load_json_or_py(config_path)
     if not isinstance(raw_cfg, dict):
         raise ValueError("A065 配置必须是字典")
@@ -108,7 +109,7 @@ def execute(config_path: Path) -> List[Path]:
     global_cfg = _load_global_config(global_config_path)
     logging_enabled = _resolve_logging_enabled(global_cfg)
 
-    content_db, db_input_key = _resolve_content_db_path(raw_cfg, global_cfg)
+    content_db, db_input_key = _resolve_content_db_path(raw_cfg, global_cfg, config_path)
     if content_db is None:
         raise ValueError("A065 需要 content_db（可由节点配置或 config.paths.content_db_path 提供）")
 
@@ -123,6 +124,9 @@ def execute(config_path: Path) -> List[Path]:
         review_read_pool = _safe_read_csv(review_read_pool_path)
     if review_read_pool.empty:
         raise FileNotFoundError("未找到可用的综述阅读池（A065 队列或 review_read_pool.csv）。")
+    max_review_items = int(raw_cfg.get("max_review_items") or 0)
+    if max_review_items > 0:
+        review_read_pool = review_read_pool.head(max_review_items).copy()
 
     review_reading_batches_path = workspace_root / "batches" / "review_candidates" / "review_reading_batches.csv"
     review_reading_batches = _safe_read_csv(review_reading_batches_path)

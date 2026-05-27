@@ -1,0 +1,12 @@
+{
+  "target_paths": [],
+  "home_dir": "",
+  "engine_vendors": [],
+  "ide_vendors": [],
+  "include_missing": false,
+  "backup_dir": "",
+  "dry_run": true,
+  "skip_backup": false,
+  "skip_items_sync": false,
+  "repo_root": ""
+}

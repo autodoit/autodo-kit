@@ -1,9 +1,7 @@
 ﻿"""A080 非综述文献预处理事务。
 
-A080 仅消费 literature_reading_state.pending_preprocess=1 当前态，完成：
-1. MonkeyOCR 解析资产准备。
-2. 标准文献笔记骨架创建与绑定。
-3. 状态推进到 pending_rough_read。
+A080 优先消费正式 `A080` 阶段队列，并结合 `文献主表.current_parse_*`
+与结构化摘要字段完成统一预处理；旧 reading_state 仅保留兼容回写。
 """
 
 from __future__ import annotations
@@ -28,8 +26,11 @@ from autodokit.tools.atomic.task_aok.task_instance_dir import (
     resolve_legacy_output_dir,
 )
 from autodokit.tools.bibliodb_sqlite import (
+    READING_QUEUE_COLUMNS,
+    READING_QUEUE_STORAGE_TABLE,
     load_reading_queue_df,
     load_reading_state_df,
+    upsert_reading_queue_rows,
     upsert_reading_state_rows,
 )
 from autodokit.tools.contentdb_sqlite import CONTENT_DB_DIRECTORY_NAME, DEFAULT_CONTENT_DB_NAME, resolve_content_db_config
@@ -46,6 +47,8 @@ from autodokit.tools.storage_backend import (
 
 OUTPUT_INDEX = "a080_preprocess_index.csv"
 OUTPUT_GATE = "gate_review.json"
+OUTPUT_RELATED_ITEMS_CSV = "related_literature_items.csv"
+OUTPUT_RELATED_ITEMS_MD = "related_literature_items.md"
 
 
 def _stringify(value: Any) -> str:
@@ -75,6 +78,52 @@ def _resolve_global_config_path(workspace_root: Path) -> Path | None:
     if candidate.exists() and candidate.is_file():
         return candidate
     return None
+
+
+def _load_preprocess_pool(
+    content_db: Path,
+    *,
+    literature_df: pd.DataFrame,
+    state_df: pd.DataFrame,
+) -> tuple[pd.DataFrame, str]:
+    """优先从正式 A080 阶段队列构建输入池，必要时兼容旧 reading_state。"""
+
+    queue_df = load_reading_queue_df(
+        content_db,
+        stage="A080",
+        only_current=True,
+        queue_statuses=["queued", "candidate", "in_progress"],
+    )
+    if not queue_df.empty:
+        literature_by_uid = {
+            _stringify(row.get("uid_literature")): row.to_dict()
+            for _, row in literature_df.fillna("").iterrows()
+            if _stringify(row.get("uid_literature"))
+        }
+        state_by_uid = {
+            _stringify(row.get("uid_literature")): row.to_dict()
+            for _, row in state_df.fillna("").iterrows()
+            if _stringify(row.get("uid_literature"))
+        }
+        merged_rows: list[dict[str, Any]] = []
+        for _, row in queue_df.fillna("").iterrows():
+            queue_row = row.to_dict()
+            uid_literature = _stringify(queue_row.get("uid_literature"))
+            combined: dict[str, Any] = {}
+            if uid_literature:
+                combined.update(literature_by_uid.get(uid_literature, {}))
+                combined.update(state_by_uid.get(uid_literature, {}))
+            combined.update(queue_row)
+            combined["cite_key"] = _stringify(combined.get("cite_key")) or uid_literature
+            merged_rows.append(combined)
+        return pd.DataFrame(merged_rows).fillna(""), "queue"
+
+    legacy_df = state_df.loc[
+        pd.to_numeric(state_df.get("pending_preprocess", 0), errors="coerce").fillna(0).astype(int) == 1
+    ].copy()
+    if legacy_df.empty:
+        return pd.DataFrame(), "queue"
+    return legacy_df.fillna(""), "reading_state"
 
 
 def _seed_state_from_legacy_queue(content_db: Path) -> int:
@@ -136,27 +185,81 @@ def _consume_current_stage_queue_rows(content_db: Path, *, stage: str, ready_df:
     if not identities:
         return 0
 
+    queue_df = load_reading_queue_df(content_db).copy()
+    if queue_df.empty:
+        return 0
     now_iso = datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
-    affected = 0
-    with sqlite3.connect(content_db) as conn:
-        for uid_literature, cite_key in identities:
-            cursor = conn.execute(
-                """
-                UPDATE literature_reading_queue
-                   SET is_current = 0,
-                       queue_status = 'completed',
-                       updated_at = ?
-                 WHERE stage = ?
-                   AND is_current = 1
-                   AND COALESCE(uid_literature, '') = ?
-                   AND COALESCE(cite_key, '') = ?
-                """,
-                (now_iso, stage, uid_literature, cite_key),
-            )
-            if cursor.rowcount and cursor.rowcount > 0:
-                affected += int(cursor.rowcount)
-        conn.commit()
+    identity_set = set(identities)
+    mask = (
+        queue_df.get("stage", pd.Series(dtype=str)).astype(str).eq(stage)
+        & queue_df.get("is_current", pd.Series(dtype=int)).fillna(0).astype(int).eq(1)
+        & pd.Series(
+            [(_stringify(row.get("uid_literature")), _stringify(row.get("cite_key"))) in identity_set for _, row in queue_df.fillna("").iterrows()],
+            index=queue_df.index,
+        )
+    )
+    affected = int(mask.sum())
+    if affected <= 0:
+        return 0
+    queue_df.loc[mask, "is_current"] = 0
+    queue_df.loc[mask, "queue_status"] = "completed"
+    queue_df.loc[mask, "updated_at"] = now_iso
+    if "id" in queue_df.columns:
+        queue_df = queue_df.drop(columns=["id"])
+    queue_df = queue_df[[column for column in READING_QUEUE_COLUMNS if column in queue_df.columns]].copy()
+    upsert_reading_queue_rows(content_db, queue_df)
     return affected
+
+
+def _write_related_literature_items(output_dir: Path, frame: pd.DataFrame) -> list[Path]:
+    snapshot_columns = [
+        "uid_literature",
+        "cite_key",
+        "title",
+        "manifest_status",
+        "pdf_path",
+        "recommended_reason",
+        "theme_relation",
+        "source_origin",
+        "reading_objective",
+        "manual_guidance",
+        "failure_reason",
+    ]
+    available_columns = [column for column in snapshot_columns if column in frame.columns]
+    snapshot_df = frame[available_columns].copy() if available_columns else pd.DataFrame()
+
+    csv_path = output_dir / OUTPUT_RELATED_ITEMS_CSV
+    md_path = output_dir / OUTPUT_RELATED_ITEMS_MD
+    snapshot_df.to_csv(csv_path, index=False, encoding="utf-8-sig")
+
+    label_map = {
+        "uid_literature": "文献 UID",
+        "cite_key": "题录键",
+        "title": "标题",
+        "manifest_status": "处理状态",
+        "pdf_path": "PDF 路径",
+        "recommended_reason": "推荐原因",
+        "theme_relation": "主题关系",
+        "source_origin": "来源口径",
+        "reading_objective": "阅读目标",
+        "manual_guidance": "人工提示",
+        "failure_reason": "失败原因",
+    }
+    lines = ["# A080 相关文献条目", "", f"共 {len(snapshot_df)} 条。", ""]
+    if snapshot_df.empty:
+        lines.append("当前任务没有产出可记录的相关文献条目。")
+    else:
+        for index, row in snapshot_df.fillna("").iterrows():
+            title = _stringify(row.get("title")) or _stringify(row.get("cite_key")) or _stringify(row.get("uid_literature")) or f"条目 {index + 1}"
+            lines.append(f"## {index + 1}. {title}")
+            for column in available_columns:
+                value = _stringify(row.get(column))
+                if not value:
+                    continue
+                lines.append(f"- {label_map.get(column, column)}：{value}")
+            lines.append("")
+    md_path.write_text("\n".join(lines).rstrip() + "\n", encoding="utf-8")
+    return [csv_path, md_path]
 
 
 @affair_auto_git_commit("A080")
@@ -182,12 +285,23 @@ def execute(config_path: Path) -> List[Path]:
     )
     assert content_db is not None
 
-    state_df = load_reading_state_df(content_db, flag_filters={"pending_preprocess": 1})
+    literatures_df, attachments_df, _ = load_reference_tables(db_path=content_db)
+    existing_state_df = load_reading_state_df(content_db)
+    state_df, input_mode = _load_preprocess_pool(
+        content_db,
+        literature_df=literatures_df,
+        state_df=existing_state_df,
+    )
     legacy_seeded_count = 0
     if state_df.empty:
         legacy_seeded_count = _seed_state_from_legacy_queue(content_db)
         if legacy_seeded_count > 0:
-            state_df = load_reading_state_df(content_db, flag_filters={"pending_preprocess": 1})
+            existing_state_df = load_reading_state_df(content_db)
+            state_df, input_mode = _load_preprocess_pool(
+                content_db,
+                literature_df=literatures_df,
+                state_df=existing_state_df,
+            )
     failed_preprocess_statuses = {"missing_attachment", "parse_failed", "note_skeleton_failed"}
     if not state_df.empty and "preprocess_status" in state_df.columns:
         state_df = state_df.loc[
@@ -223,8 +337,6 @@ def execute(config_path: Path) -> List[Path]:
     )
 
     manifest_df = manifest_result["manifest_df"].fillna("")
-    literatures_df, attachments_df, _ = load_reference_tables(db_path=content_db)
-    existing_state_df = load_reading_state_df(content_db)
     existing_state_by_uid = {
         _stringify(row.get("uid_literature")): row.to_dict()
         for _, row in existing_state_df.fillna("").iterrows()
@@ -328,6 +440,7 @@ def execute(config_path: Path) -> List[Path]:
                 "cite_key": cite_key,
                 "title": title,
                 "manifest_status": manifest_status,
+                "pdf_path": _stringify(row_dict.get("pdf_path")),
                 "normalized_structured_path": _stringify(row_dict.get("normalized_structured_path")),
                 "reconstructed_markdown_path": _stringify(row_dict.get("reconstructed_markdown_path")),
                 "asset_dir": _stringify(row_dict.get("asset_dir")),
@@ -358,12 +471,13 @@ def execute(config_path: Path) -> List[Path]:
     result_df = pd.DataFrame(result_rows)
     index_path = output_dir / OUTPUT_INDEX
     result_df.to_csv(index_path, index=False, encoding="utf-8-sig")
+    related_item_paths = _write_related_literature_items(output_dir, result_df)
 
     gate_review = build_gate_review(
         node_uid="A080",
         node_name="非综述文献预处理",
         summary=(
-            f"消费 pending_preprocess {len(state_df)} 条；"
+            f"消费 A080 输入池 {len(state_df)} 条（mode={input_mode}）；"
             f"legacy queue 补种 {legacy_seeded_count} 条；"
             f"解析就绪 {ready_count} 条；"
             f"失败 {failed_count} 条；"
@@ -371,7 +485,8 @@ def execute(config_path: Path) -> List[Path]:
             f"消费 A080 兼容队列 {consumed_a080_queue_count} 条。"
         ),
         checks=[
-            {"name": "pending_preprocess_input_count", "value": len(state_df)},
+            {"name": "a080_input_count", "value": len(state_df)},
+            {"name": "a080_input_mode", "value": input_mode},
             {"name": "legacy_queue_seeded_count", "value": legacy_seeded_count},
             {"name": "preprocess_ready_count", "value": ready_count},
             {"name": "preprocess_failed_count", "value": failed_count},
@@ -380,6 +495,7 @@ def execute(config_path: Path) -> List[Path]:
         ],
         artifacts=[
             str(index_path),
+            *[str(path) for path in related_item_paths],
             str(manifest_result["manifest_path"]),
             str(manifest_result["management_table_path"]),
             str(manifest_result["handoff_path"]),
@@ -397,6 +513,7 @@ def execute(config_path: Path) -> List[Path]:
             "batch_report_path": str(manifest_result["batch_report_path"]),
             "parse_runtime": parse_runtime,
             "postprocess_enabled": bool(postprocess_settings.get("enabled", False)),
+            "input_mode": input_mode,
             "upstream_stage": "A075",
             "downstream_stage": "A090",
             "allow_unparsed_read_bypass": allow_unparsed_read_bypass,
@@ -409,6 +526,7 @@ def execute(config_path: Path) -> List[Path]:
     artifact_paths = [
         index_path,
         gate_path,
+        *related_item_paths,
         Path(manifest_result["manifest_path"]),
         Path(manifest_result["management_table_path"]),
         Path(manifest_result["handoff_path"]),
@@ -424,12 +542,13 @@ def execute(config_path: Path) -> List[Path]:
             handler_name="非综述文献预处理",
             agent_names=["ar_A080_非综述文献预处理事务智能体_v6"],
             skill_names=["a080-nonreview-preprocess-v6"],
-            reasoning_summary="仅消费 pending_preprocess 当前态，完成 MonkeyOCR 解析与 pending_rough_read 推进。",
+            reasoning_summary="优先消费 A080 正式阶段队列，并按文献主表 current_parse/结构化摘要执行统一预处理与粗读推进。",
             gate_review=gate_review,
             gate_review_path=gate_path,
             artifact_paths=artifact_paths,
             payload={
                 "input_count": len(state_df),
+                "input_mode": input_mode,
                 "legacy_queue_seeded_count": legacy_seeded_count,
                 "ready_count": ready_count,
                 "failed_count": failed_count,

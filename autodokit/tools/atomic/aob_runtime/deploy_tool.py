@@ -34,7 +34,9 @@ try:
         校验_aol,
         编译_aol到引擎办公区,
         编译到_claude,
+        编译到_codex,
         编译到_copilot,
+        编译到_gemini,
         编译到_opencode,
     )
 except Exception:  # pragma: no cover
@@ -44,7 +46,9 @@ except Exception:  # pragma: no cover
     收集_opencode阻断错误 = None
     校验_aol = None
     编译到_claude = None
+    编译到_codex = None
     编译到_copilot = None
+    编译到_gemini = None
     编译到_opencode = None
     从libs构建_aol = None
 
@@ -155,7 +159,6 @@ node_modules/
 默认_gitattributes模板 = """* text=auto eol=lf
 *.bat text eol=crlf
 *.cmd text eol=crlf
-*.ps1 text eol=crlf
 *.sh text eol=lf
 *.py text eol=lf
 *.md text eol=lf
@@ -373,6 +376,8 @@ def 引擎映射(root: Path) -> dict[str, 引擎规格]:
         "claude": 引擎规格("claude", templates / "claude" / ".claude", ".claude"),
         "opencode": 引擎规格("opencode", templates / "opencode" / ".opencode", ".opencode"),
         "copilot": 引擎规格("copilot", templates / "copilot" / ".copilot", ".copilot"),
+        "gemini": 引擎规格("gemini", templates / "gemini" / ".gemini", ".gemini"),
+        "codex": 引擎规格("codex", templates / "codex" / ".codex", ".codex"),
         "custom": 引擎规格("custom", templates / "custom" / ".engine", ".engine"),
     }
 
@@ -643,6 +648,42 @@ def 初始化_通用引擎配置(
         dry_run=dry_run,
         allow_project_root_changes=allow_project_root_changes,
     )
+
+    engine_dirs: dict[str, list[str]] = {
+        "claude": ["agents", "skills", "commands", "rules"],
+        "copilot": ["agents", "skills", "commands", "rules"],
+        "gemini": ["agents", "skills", "commands", "rules", "hooks"],
+        "codex": ["skills", "commands", "rules", "modes", "plugins", "tools", "themes", "plans"],
+    }
+    engine_root_name = {
+        "claude": ".claude",
+        "copilot": ".copilot",
+        "gemini": ".gemini",
+        "codex": ".codex",
+    }.get(engine_id, ".engine")
+    engine_root = target_root / engine_root_name
+    for subdir in engine_dirs.get(engine_id, []):
+        确保目录(engine_root / subdir, dry_run=dry_run)
+
+    if not allow_project_root_changes:
+        return
+
+    if engine_id == "gemini":
+        写文本文件(
+            dst=target_root / "GEMINI.md",
+            content="# 项目规则（GEMINI.md）\n\n本项目已安装 autodo-lib 工作流到 Gemini。\n",
+            target_root=target_root,
+            on_conflict=on_conflict,
+            dry_run=dry_run,
+        )
+    elif engine_id == "codex":
+        写文本文件(
+            dst=target_root / "AGENTS.md",
+            content="# 项目规则（AGENTS.md）\n\n本项目已安装 autodo-lib 工作流到 Codex。\n",
+            target_root=target_root,
+            on_conflict=on_conflict,
+            dry_run=dry_run,
+        )
 
 
 def 写文本文件(*, dst: Path, content: str, target_root: Path, on_conflict: str, dry_run: bool) -> None:
@@ -938,9 +979,9 @@ def 从aol部署到引擎(
         bool: 是否执行了 AOL 部署。
     """
 
-    if engine_id not in {"opencode", "claude", "copilot"}:
+    if engine_id not in {"opencode", "claude", "copilot", "gemini", "codex"}:
         return False
-    if any(x is None for x in [从libs构建_aol, 校验_aol, 编译到_opencode, 编译到_claude, 编译到_copilot]):
+    if any(x is None for x in [从libs构建_aol, 校验_aol, 编译到_opencode, 编译到_claude, 编译到_copilot, 编译到_gemini, 编译到_codex]):
         print("[WARN] aoc 模块不可用，跳过 AOL 部署")
         return False
 
@@ -983,6 +1024,10 @@ def 从aol部署到引擎(
             编译到_claude(aol, compile_root)
         elif engine_id == "copilot":
             编译到_copilot(aol, compile_root)
+        elif engine_id == "gemini":
+            编译到_gemini(aol, compile_root)
+        elif engine_id == "codex":
+            编译到_codex(aol, compile_root)
 
         if engine_id == "opencode":
             for root_name in ["opencode.json", "AGENTS.md"]:
@@ -991,6 +1036,18 @@ def 从aol部署到引擎(
                     print(f"[INFO] 保留项目根配置，跳过 AOL 产物：{generated_root_file}")
                     if not dry_run:
                         generated_root_file.unlink()
+        elif engine_id == "gemini":
+            generated_root_file = compile_root / "GEMINI.md"
+            if generated_root_file.exists() and generated_root_file.is_file():
+                print(f"[INFO] 保留项目根配置，跳过 AOL 产物：{generated_root_file}")
+                if not dry_run:
+                    generated_root_file.unlink()
+        elif engine_id == "codex":
+            generated_root_file = compile_root / "AGENTS.md"
+            if generated_root_file.exists() and generated_root_file.is_file():
+                print(f"[INFO] 保留项目根配置，跳过 AOL 产物：{generated_root_file}")
+                if not dry_run:
+                    generated_root_file.unlink()
 
         合并目录(
             src=compile_root,
@@ -1050,6 +1107,8 @@ def 执行引擎健康检查(*, engine_id: str, target_root: Path, profile_db: d
         "opencode": ".opencode",
         "claude": ".claude",
         "copilot": ".copilot",
+        "gemini": ".gemini",
+        "codex": ".codex",
         "custom": ".engine",
     }
     engine_root = target_root / engine_root_mapping.get(engine_id, ".engine")
@@ -1089,6 +1148,14 @@ def 执行引擎健康检查(*, engine_id: str, target_root: Path, profile_db: d
 
     if engine_id == "opencode":
         errors.extend(健康检查_opencode_agents颜色(opencode_root=engine_root))
+    elif engine_id == "gemini":
+        project_instruction = target_root / "GEMINI.md"
+        if not project_instruction.exists():
+            errors.append(f"缺少项目级说明文件：{project_instruction}")
+    elif engine_id == "codex":
+        project_instruction = target_root / "AGENTS.md"
+        if not project_instruction.exists():
+            errors.append(f"缺少项目级说明文件：{project_instruction}")
 
     return errors
 
@@ -1103,14 +1170,9 @@ def 执行_workflow(argv: list[str]) -> int:
         int: 退出码。
     """
 
-    root = 仓库根目录()
-    workflows = 工作流映射(root)
-    engines = 引擎映射(root)
-    profile_db = 读取引擎配置数据库(root)
-    supported_tags = [str(tag) for tag in profile_db.get("supported_tags", 默认支持标签)]
-
     parser = argparse.ArgumentParser(description="按工作流部署到目标项目")
-    parser.add_argument("--workflow", required=True, choices=sorted(workflows.keys()))
+    parser.add_argument("--repo-root", default="")
+    parser.add_argument("--workflow", required=True)
     parser.add_argument("--engine", required=True, action="append")
     parser.add_argument("--target", required=True)
     parser.add_argument("--project-name", default=None)
@@ -1127,6 +1189,17 @@ def 执行_workflow(argv: list[str]) -> int:
     parser.add_argument("--git-write-ignore", action=argparse.BooleanOptionalAction, default=True)
     parser.add_argument("--git-write-attributes", action=argparse.BooleanOptionalAction, default=True)
     args = parser.parse_args(argv)
+
+    root = Path(str(args.repo_root).strip()).expanduser().resolve() if str(args.repo_root).strip() else 仓库根目录()
+    workflows = 工作流映射(root)
+    engines = 引擎映射(root)
+    profile_db = 读取引擎配置数据库(root)
+    supported_tags = [str(tag) for tag in profile_db.get("supported_tags", 默认支持标签)]
+
+    if args.workflow not in workflows:
+        print(f"[ERROR] 未知 workflow: {args.workflow}", file=sys.stderr)
+        return 2
+
     git_config = 构建_git初始化配置(args=args)
 
     selected_tags = 解析标签参数(raw_tags=str(args.tags), supported_tags=supported_tags)
@@ -1329,20 +1402,17 @@ def 执行_workspace_convert(argv: list[str]) -> int:
         int: 退出码。
     """
 
-    if (
-        读取引擎办公区目录名 is None
-        or 从引擎办公区构建_aol is None
-        or 编译_aol到引擎办公区 is None
-        or 校验_aol is None
-        or 收集_opencode阻断错误 is None
-    ):
-        print("[ERROR] AOC 翻译内核不可用，无法执行 workspace-convert", file=sys.stderr)
-        return 2
+    from autodokit.tools.aob.aob_workspace_pipeline import execute_workspace_conversion_pipeline
 
     parser = argparse.ArgumentParser(description="在模板项目内执行办公区跨引擎转换")
     parser.add_argument("--project-dir", required=True, help="模板项目目录")
-    parser.add_argument("--source-engine", required=True, choices=["opencode", "claude", "copilot"])
-    parser.add_argument("--target-engine", required=True, choices=["opencode", "claude", "copilot"])
+    parser.add_argument("--source-engine", required=True, choices=["opencode", "claude", "copilot", "gemini", "codex"])
+    parser.add_argument("--target-engine", required=True, choices=["opencode", "claude", "copilot", "gemini", "codex"])
+    parser.add_argument("--source-ide", default="", help="可选：来源 IDE")
+    parser.add_argument("--target-ide", default="", help="可选：目标 IDE")
+    parser.add_argument("--source-os", default="", help="可选：来源操作系统族")
+    parser.add_argument("--target-os", default="", help="可选：目标操作系统族")
+    parser.add_argument("--repo-root", default="", help="可选：AOB 仓库根目录")
     parser.add_argument("--title", default="", help="可选：转换过程的 AOL 标题")
     parser.add_argument("--dry-run", action="store_true", help="仅预览，不写入目标办公区")
     args = parser.parse_args(argv)
@@ -1351,65 +1421,24 @@ def 执行_workspace_convert(argv: list[str]) -> int:
         print("[ERROR] --source-engine 与 --target-engine 不能相同", file=sys.stderr)
         return 2
 
-    project_dir = Path(args.project_dir).expanduser().resolve()
-    if not project_dir.exists() or not project_dir.is_dir():
-        print(f"[ERROR] 模板项目目录不存在：{project_dir}", file=sys.stderr)
-        return 2
-
-    source_workspace_name = 读取引擎办公区目录名(engine=args.source_engine)
-    target_workspace_name = 读取引擎办公区目录名(engine=args.target_engine)
-    source_workspace_dir = (project_dir / source_workspace_name).resolve()
-    target_workspace_dir = (project_dir / target_workspace_name).resolve()
-
-    if source_workspace_dir.parent != project_dir or target_workspace_dir.parent != project_dir:
-        print("[ERROR] 办公区路径边界校验失败，已阻断", file=sys.stderr)
-        return 2
-
-    title = str(args.title).strip() or f"{project_dir.name} 办公区跨引擎转换"
     try:
-        aol, stats = 从引擎办公区构建_aol(
-            source_workspace_dir=source_workspace_dir,
-            source_engine=args.source_engine,
-            title=title,
+        result = execute_workspace_conversion_pipeline(
+            project_dir=str(args.project_dir).strip(),
+            source_engine=str(args.source_engine).strip(),
+            target_engine=str(args.target_engine).strip(),
+            source_ide=str(args.source_ide).strip(),
+            target_ide=str(args.target_ide).strip(),
+            source_os=str(args.source_os).strip(),
+            target_os=str(args.target_os).strip(),
+            title=str(args.title).strip(),
+            dry_run=bool(args.dry_run),
+            repo_root=str(args.repo_root).strip(),
         )
     except Exception as exc:
-        print(f"[ERROR] 构建 AOL 失败：{exc}", file=sys.stderr)
+        print(f"[ERROR] workspace-convert 执行失败：{exc}", file=sys.stderr)
         return 2
-
-    warnings = 校验_aol(aol)
-    for warning in warnings:
-        print(f"[WARN] {warning}")
-
-    if args.target_engine == "opencode":
-        blocking_errors = 收集_opencode阻断错误(aol)
-        if blocking_errors:
-            for item in blocking_errors:
-                print(f"[ERROR] {item}")
-            print("[ERROR] 目标为 OpenCode，编译已阻断。请先修复源办公区内容后重试。", file=sys.stderr)
-            return 2
-
-    if args.dry_run:
-        print("[DRY-RUN] 已完成转换预览，不写入文件")
-        print(f"[DRY-RUN] source={source_workspace_dir}")
-        print(f"[DRY-RUN] target={target_workspace_dir}")
-        print(f"[DRY-RUN] stats={stats}")
-        return 0
-
-    try:
-        编译_aol到引擎办公区(
-            aol=aol,
-            target_workspace_dir=target_workspace_dir,
-            target_engine=args.target_engine,
-        )
-    except Exception as exc:
-        print(f"[ERROR] 写入目标办公区失败：{exc}", file=sys.stderr)
-        return 2
-
-    print(f"[DONE] 已完成办公区转换：{args.source_engine} -> {args.target_engine}")
-    print(f"[DONE] source={source_workspace_dir}")
-    print(f"[DONE] target={target_workspace_dir}")
-    print(f"[DONE] stats={stats}")
-    return 0
+    print(json.dumps(result, ensure_ascii=False, indent=2))
+    return int(result.get("code", 1))
 
 
 def 构建解析器() -> argparse.ArgumentParser:

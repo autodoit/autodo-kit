@@ -24,6 +24,7 @@ import pandas as pd
 
 from autodokit.tools.bibliodb_sqlite import load_literatures_df, load_parse_assets_df
 from autodokit.tools.contentdb_sqlite import (
+    LITERATURE_TABLE_NAME,
     connect_sqlite,
     infer_workspace_root_from_content_db,
     resolve_content_db_path,
@@ -381,8 +382,8 @@ def _update_literature_translation_fields(
     now = _now_iso()
     with connect_sqlite(content_db) as conn:
         conn.execute(
-            """
-            UPDATE literatures
+            f"""
+            UPDATE "{LITERATURE_TABLE_NAME}"
             SET source_lang = ?,
                 "文献语种" = ?,
                 title_zh = ?,

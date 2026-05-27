@@ -10,7 +10,9 @@ import json
 import os
 import time
 import hashlib
+import sqlite3
 import subprocess
+import shutil
 from contextlib import contextmanager
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Mapping
@@ -18,10 +20,17 @@ from typing import Any, Dict, Iterable, List, Mapping
 import pandas as pd
 
 from autodokit.path_compat import detect_runtime_family, resolve_portable_path
-from autodokit.tools.bibliodb_sqlite import save_structured_state, upsert_parse_asset_rows
-from autodokit.tools.contentdb_sqlite import infer_workspace_root_from_content_db
+from autodokit.tools.bibliodb_sqlite import READING_QUEUE_TABLE_NAME, save_structured_state, upsert_parse_asset_rows
+from autodokit.tools.contentdb_sqlite import (
+    LITERATURE_TABLE_NAME,
+    READING_QUEUE_TO_LITERATURE_COLUMN_MAP,
+    derive_literature_parse_state,
+    infer_workspace_root_from_content_db,
+    resolve_content_physical_column,
+)
 from autodokit.tools.ocr.classic.pdf_parse_asset_manager import (
     _bootstrap_existing_asset,
+    _discover_existing_asset_dir,
     _load_global_config,
     _resolve_literature_row,
     _resolve_monkeyocr_model_name,
@@ -32,6 +41,7 @@ from autodokit.tools.ocr.classic.pdf_parse_asset_manager import (
     build_normalized_structured_from_multimodal_result,
 )
 from autodokit.tools.ocr.monkeyocr import run_monkeyocr_single_pdf
+from autodokit.tools.time_utils import now_iso
 
 
 MANIFEST_CSV_NAME = "parse_manifest.csv"
@@ -79,12 +89,227 @@ def _normalize_int(value: Any, default: int) -> int:
         return default
 
 
+def _resolve_queue_physical_column(logical_name: str) -> str:
+    return resolve_content_physical_column(READING_QUEUE_TABLE_NAME, logical_name)
+
+
+def _is_parse_asset_complete(asset_row: Mapping[str, Any]) -> tuple[bool, str]:
+    """判断解析资产是否具备可消费的关键产物。"""
+
+    asset_dir = Path(_stringify(asset_row.get("asset_dir"))).expanduser()
+    if not str(asset_dir):
+        return False, "asset_dir_missing"
+    if not asset_dir.exists() or not asset_dir.is_dir():
+        return False, f"asset_dir_not_found:{asset_dir}"
+
+    normalized_structured = Path(_stringify(asset_row.get("normalized_structured_path"))).expanduser()
+    reconstructed_markdown = Path(_stringify(asset_row.get("reconstructed_markdown_path"))).expanduser()
+    parse_record = Path(_stringify(asset_row.get("parse_record_path"))).expanduser()
+    quality_report = Path(_stringify(asset_row.get("quality_report_path"))).expanduser()
+
+    if not str(normalized_structured):
+        # 兼容历史资产：旧版使用 normalized.structured.json，新版使用 normalized_structured.json。
+        normalized_structured = asset_dir / "normalized_structured.json"
+        if not normalized_structured.exists():
+            normalized_structured = asset_dir / "normalized.structured.json"
+    if not str(reconstructed_markdown):
+        reconstructed_markdown = asset_dir / "reconstructed_content.md"
+    if not str(parse_record):
+        parse_record = asset_dir / "parse_record.json"
+    if not str(quality_report):
+        quality_report = asset_dir / "quality_report.json"
+
+    required_files = {
+        "normalized_structured": normalized_structured,
+        "reconstructed_markdown": reconstructed_markdown,
+        "parse_record": parse_record,
+        "quality_report": quality_report,
+    }
+    for key, path in required_files.items():
+        if not path.exists() or not path.is_file():
+            return False, f"missing_{key}:{path}"
+        if path.stat().st_size <= 0:
+            return False, f"empty_{key}:{path}"
+
+    return True, ""
+
+
+def _predict_output_name(row: Mapping[str, Any]) -> str:
+    uid_literature = _stringify(row.get("uid_literature"))
+    cite_key = _stringify(row.get("cite_key"))
+    pdf_path_text = _stringify(row.get("pdf_path"))
+    pdf_stem = Path(pdf_path_text).stem if pdf_path_text else ""
+    return _safe_stem(uid_literature or cite_key or pdf_stem or "untitled")
+
+
+def _cleanup_partial_parse_output(asset_dir: Path) -> None:
+    if asset_dir.exists() and asset_dir.is_dir():
+        shutil.rmtree(asset_dir, ignore_errors=True)
+
+
+def _update_preprocess_runtime_state(
+    *,
+    content_db: Path,
+    source_stage: str,
+    uid_literature: str,
+    cite_key: str,
+    preprocess_state: str,
+    preprocess_result_path: str = "",
+    preprocess_failure_reason: str = "",
+    preprocess_started_at: str | None = None,
+    preprocess_finished_at: str | None = None,
+    parse_state: str = "",
+) -> None:
+    """把 A055 运行态和解析状态写回文献主表摘要列。"""
+
+    uid_literature = _stringify(uid_literature)
+    cite_key = _stringify(cite_key)
+    if not uid_literature and not cite_key:
+        return
+
+    normalized_parse_state = derive_literature_parse_state(
+        parse_state=parse_state,
+        preprocess_state=preprocess_state,
+        has_parse_result=bool(_stringify(preprocess_result_path)),
+    )
+
+    updates: Dict[str, Any] = {
+        _resolve_queue_physical_column("preprocess_state"): _stringify(preprocess_state),
+        _resolve_queue_physical_column("preprocess_result_path"): _stringify(preprocess_result_path),
+        _resolve_queue_physical_column("preprocess_failure_reason"): _stringify(preprocess_failure_reason),
+        _resolve_queue_physical_column("updated_at"): now_iso(),
+    }
+    if preprocess_started_at is not None:
+        updates[_resolve_queue_physical_column("preprocess_started_at")] = _stringify(preprocess_started_at)
+    if preprocess_finished_at is not None:
+        updates[_resolve_queue_physical_column("preprocess_finished_at")] = _stringify(preprocess_finished_at)
+
+    set_sql = ", ".join(f'"{column}" = ?' for column in updates.keys())
+    params = list(updates.values())
+
+    stage_col = _resolve_queue_physical_column("stage")
+    is_current_col = _resolve_queue_physical_column("is_current")
+    uid_col = _resolve_queue_physical_column("uid_literature")
+    cite_col = _resolve_queue_physical_column("cite_key")
+
+    filters = [f'"{stage_col}" = ?', f'"{is_current_col}" = 1']
+    filter_params: list[Any] = [_stringify(source_stage)]
+    if uid_literature and cite_key:
+        filters.append(f'("{uid_col}" = ? OR "{cite_col}" = ?)')
+        filter_params.extend([uid_literature, cite_key])
+    elif uid_literature:
+        filters.append(f'"{uid_col}" = ?')
+        filter_params.append(uid_literature)
+    else:
+        filters.append(f'"{cite_col}" = ?')
+        filter_params.append(cite_key)
+
+    literature_updates: Dict[str, Any] = {
+        READING_QUEUE_TO_LITERATURE_COLUMN_MAP["preprocess_state"]: _stringify(preprocess_state),
+        READING_QUEUE_TO_LITERATURE_COLUMN_MAP["preprocess_result_path"]: _stringify(preprocess_result_path),
+        READING_QUEUE_TO_LITERATURE_COLUMN_MAP["preprocess_failure_reason"]: _stringify(preprocess_failure_reason),
+        READING_QUEUE_TO_LITERATURE_COLUMN_MAP["updated_at"]: now_iso(),
+        resolve_content_physical_column(LITERATURE_TABLE_NAME, "parse_state"): normalized_parse_state,
+    }
+    if preprocess_started_at is not None:
+        literature_updates[READING_QUEUE_TO_LITERATURE_COLUMN_MAP["preprocess_started_at"]] = _stringify(preprocess_started_at)
+    if preprocess_finished_at is not None:
+        literature_updates[READING_QUEUE_TO_LITERATURE_COLUMN_MAP["preprocess_finished_at"]] = _stringify(preprocess_finished_at)
+
+    literature_set_sql = ", ".join(f'"{column}" = ?' for column in literature_updates.keys())
+    literature_params = list(literature_updates.values())
+    literature_uid_col = resolve_content_physical_column(LITERATURE_TABLE_NAME, "uid_literature")
+    literature_cite_col = resolve_content_physical_column(LITERATURE_TABLE_NAME, "cite_key")
+    literature_filters: list[str] = []
+    literature_filter_params: list[Any] = []
+    if uid_literature and cite_key:
+        literature_filters.append(f"(COALESCE(\"{literature_uid_col}\", '') = ? OR COALESCE(\"{literature_cite_col}\", '') = ?)")
+        literature_filter_params.extend([uid_literature, cite_key])
+    elif uid_literature:
+        literature_filters.append(f"COALESCE(\"{literature_uid_col}\", '') = ?")
+        literature_filter_params.append(uid_literature)
+    else:
+        literature_filters.append(f"COALESCE(\"{literature_cite_col}\", '') = ?")
+        literature_filter_params.append(cite_key)
+
+    try:
+        with sqlite3.connect(content_db) as conn:
+            conn.execute(
+                f'UPDATE "{READING_QUEUE_TABLE_NAME}" SET {set_sql} WHERE ' + " AND ".join(filters),
+                [*params, *filter_params],
+            )
+            conn.commit()
+    except sqlite3.OperationalError:
+        # 兼容历史库：队列表摘要列缺失时不阻断主文献表回写。
+        pass
+
+    try:
+        with sqlite3.connect(content_db) as conn:
+            conn.execute(
+                f'UPDATE "{LITERATURE_TABLE_NAME}" SET {literature_set_sql} WHERE ' + " AND ".join(literature_filters),
+                [*literature_params, *literature_filter_params],
+            )
+            conn.commit()
+    except sqlite3.OperationalError:
+        # 兼容历史库：主表摘要列缺失时保留队列表推进，不阻断后续资产登记。
+        pass
+
+    result_path = Path(_stringify(preprocess_result_path)).expanduser()
+    if not _stringify(preprocess_result_path):
+        return
+    if not result_path.is_absolute():
+        result_path = result_path.resolve()
+    if not result_path.exists() or not result_path.is_dir():
+        return
+
+    parse_level = "review_deep" if _stringify(source_stage).upper() == "A050_REVIEW" else "non_review_rough"
+    try:
+        literature_row = _resolve_literature_row(content_db, uid_literature=uid_literature, cite_key=cite_key)
+        _bootstrap_existing_asset(
+            content_db_path=content_db,
+            parse_level=parse_level,
+            literature_row=dict(literature_row),
+            output_root=result_path.parent,
+            source_stage="A055_record",
+        )
+    except Exception:
+        return
+
+
 def _resolve_path(value: Any, *, base_dir: Path | None = None) -> str:
     text = _stringify(value)
     if not text:
         return ""
     resolved_base = base_dir if base_dir is not None else Path.cwd()
     return str(resolve_portable_path(text, base=resolved_base))
+
+
+def _resolve_path_list(value: Any, *, base_dir: Path) -> list[str]:
+    if value is None:
+        return []
+
+    raw_items: list[Any]
+    if isinstance(value, (list, tuple, set)):
+        raw_items = list(value)
+    else:
+        text = _stringify(value)
+        if not text:
+            return []
+        raw_items = [segment.strip() for segment in text.replace("\r", "\n").replace(";", "\n").split("\n") if segment.strip()]
+
+    resolved: list[str] = []
+    seen: set[str] = set()
+    for item in raw_items:
+        path_text = _stringify(item)
+        if not path_text:
+            continue
+        path = str(resolve_portable_path(path_text, base=base_dir))
+        key = path.lower()
+        if key in seen:
+            continue
+        seen.add(key)
+        resolved.append(path)
+    return resolved
 
 
 def _detect_nvidia_gpu_name() -> str:
@@ -203,6 +428,26 @@ def resolve_parse_runtime_settings(
     if not monkey_root_cfg.get("monkeyocr_model") and global_cfg.get("monkeyocr_model"):
         monkey_root_cfg["monkeyocr_model"] = global_cfg.get("monkeyocr_model")
 
+    monkeyocr_root_path = _resolve_monkeyocr_root(workspace_root=workspace_root, raw_cfg=monkey_root_cfg)
+    local_package_dirs = _resolve_path_list(
+        merged.get("local_package_dirs") or merged.get("local_package_dir"),
+        base_dir=workspace_root,
+    )
+    if not local_package_dirs:
+        default_candidates = [
+            workspace_root / "third_party",
+            monkeyocr_root_path.parent,
+            monkeyocr_root_path / "third_party",
+        ]
+        seen_defaults: set[str] = set()
+        for candidate in default_candidates:
+            candidate_text = str(candidate.resolve())
+            key = candidate_text.lower()
+            if key in seen_defaults:
+                continue
+            seen_defaults.add(key)
+            local_package_dirs.append(candidate_text)
+
     runtime_root = _resolve_path(
         merged.get("runtime_root") or workspace_root / "runtime" / "monkeyocr",
         base_dir=workspace_root,
@@ -231,7 +476,11 @@ def resolve_parse_runtime_settings(
         "gpu_visible_devices": device_settings["gpu_visible_devices"],
         "max_retries": _normalize_int(merged.get("max_retries"), 2),
         "skip_existing": _normalize_bool(merged.get("skip_existing"), True),
-        "ensure_runtime": _normalize_bool(merged.get("ensure_runtime"), True),
+        "ensure_runtime": _normalize_bool(merged.get("ensure_runtime"), False),
+        "auto_install_triton_windows": _normalize_bool(
+            merged.get("auto_install_triton_windows"),
+            _normalize_bool(merged.get("install_triton_windows"), False),
+        ),
         "download_source": _stringify(merged.get("download_source")) or "huggingface",
         "pip_index_url": _stringify(merged.get("pip_index_url")) or None,
         "runtime_root": runtime_root,
@@ -240,7 +489,8 @@ def resolve_parse_runtime_settings(
         "models_dir": models_dir,
         "config_path": config_path,
         "python_executable": python_executable,
-        "monkeyocr_root": str(_resolve_monkeyocr_root(workspace_root=workspace_root, raw_cfg=monkey_root_cfg)),
+        "local_package_dirs": local_package_dirs,
+        "monkeyocr_root": str(monkeyocr_root_path),
         "model_name": _stringify(merged.get("model_name")) or _resolve_monkeyocr_model_name(raw_cfg=monkey_root_cfg),
         "detected_accelerator_name": device_settings["detected_accelerator_name"],
         "detected_accelerator_vendor": device_settings["detected_accelerator_vendor"],
@@ -453,12 +703,9 @@ def _run_single_manifest_item(
     uid_literature = _stringify(row.get("uid_literature"))
     cite_key = _stringify(row.get("cite_key"))
     literature_row = _resolve_literature_row(content_db, uid_literature=uid_literature, cite_key=cite_key)
-    existing = None
-    if not overwrite_existing:
-        existing = _select_existing_asset(content_db, parse_level=parse_level, uid_literature=uid_literature, cite_key=cite_key)
-        if existing is not None:
-            return "skipped", dict(existing), True
     output_root = _resolve_output_root(content_db, parse_level)
+    predicted_output_name = _predict_output_name(literature_row)
+    predicted_output_dir = (output_root / predicted_output_name).resolve()
     bootstrapped = _bootstrap_existing_asset(
         content_db_path=content_db,
         parse_level=parse_level,
@@ -467,21 +714,70 @@ def _run_single_manifest_item(
         source_stage=source_stage,
     )
     if bootstrapped is not None and not overwrite_existing:
+        bootstrapped_row = dict(bootstrapped)
+        is_complete, _ = _is_parse_asset_complete(bootstrapped_row)
+        if is_complete:
+            return "skipped", bootstrapped_row, True
+        asset_dir = Path(_stringify(bootstrapped_row.get("asset_dir"))).expanduser()
+        if str(asset_dir):
+            _cleanup_partial_parse_output(asset_dir)
+
+    discovered_asset_dir = _discover_existing_asset_dir(output_root, dict(literature_row))
+    if discovered_asset_dir is not None and discovered_asset_dir.is_dir():
+        probe_row = {
+            "asset_dir": str(discovered_asset_dir),
+            "normalized_structured_path": str(discovered_asset_dir / "normalized_structured.json"),
+            "reconstructed_markdown_path": str(discovered_asset_dir / "reconstructed_content.md"),
+            "parse_record_path": str(discovered_asset_dir / "parse_record.json"),
+            "quality_report_path": str(discovered_asset_dir / "quality_report.json"),
+        }
+        is_complete, _ = _is_parse_asset_complete(probe_row)
+        if is_complete and not overwrite_existing:
+            bootstrapped_row = _bootstrap_existing_asset(
+                content_db_path=content_db,
+                parse_level=parse_level,
+                literature_row=dict(literature_row),
+                output_root=output_root,
+                source_stage=source_stage,
+            )
+            if bootstrapped_row is not None:
+                return "skipped", dict(bootstrapped_row), True
+        _cleanup_partial_parse_output(discovered_asset_dir)
+
+    existing = None
+    if not overwrite_existing:
         existing = _select_existing_asset(content_db, parse_level=parse_level, uid_literature=uid_literature, cite_key=cite_key)
         if existing is not None:
-            return "skipped", dict(existing), True
+            existing_row = dict(existing)
+            asset_dir = Path(_stringify(existing_row.get("asset_dir"))).expanduser()
+            if str(asset_dir):
+                try:
+                    asset_dir.resolve().relative_to(output_root.resolve())
+                    inside_output_root = True
+                except Exception:
+                    inside_output_root = False
+                if inside_output_root:
+                    is_complete, _ = _is_parse_asset_complete(existing_row)
+                    if is_complete:
+                        return "skipped", existing_row, True
+                    _cleanup_partial_parse_output(asset_dir)
+
+    _cleanup_partial_parse_output(predicted_output_dir)
     pdf_path = _resolve_pdf_path(content_db, literature_row)
     # 优先使用 uid_literature，避免由长 cite_key 导致 Windows 路径超长。
     output_name = _safe_stem(uid_literature or cite_key or pdf_path.stem)
-    execution_mode = "remote" if (isinstance(runtime_settings, dict) and runtime_settings.get("remote_processing") and runtime_settings.get("remote_processing").get("enabled")) else "local"
+    remote_cfg = runtime_settings.get("remote_processing", {}) if isinstance(runtime_settings, dict) else {}
+    remote_enabled = _normalize_bool(remote_cfg.get("enabled"), False)
+    allow_local_fallback = _normalize_bool(remote_cfg.get("allow_local_fallback"), False)
     parse_result = run_monkeyocr_single_pdf(
         input_pdf=pdf_path,
         output_dir=output_root,
         runtime_settings=runtime_settings,
-        execution_mode=execution_mode,
-        timeout=int(runtime_settings.get("remote_processing", {}).get("timeout", 3600)),
-        poll_interval=int(runtime_settings.get("remote_processing", {}).get("poll_interval", 10)),
-        allow_local_fallback=True,
+        execution_mode="auto" if remote_enabled else "local",
+        output_name=output_name,
+        timeout=int(remote_cfg.get("timeout", 3600)),
+        poll_interval=int(remote_cfg.get("poll_interval", 10)),
+        allow_local_fallback=allow_local_fallback,
     )
     asset_row = _register_parse_asset(
         content_db=content_db,
@@ -490,6 +786,9 @@ def _run_single_manifest_item(
         literature_row=literature_row,
         parse_result=parse_result,
     )
+    is_complete, reason = _is_parse_asset_complete(asset_row)
+    if not is_complete:
+        raise RuntimeError(f"parse_asset_incomplete:{reason}")
     return "succeeded", asset_row, False
 
 
@@ -522,6 +821,7 @@ def run_parse_manifest(
         max_items=max_items,
     )
     manifest_path, readable_path = write_parse_manifest_artifacts(output_dir, manifest_df)
+    output_root_for_status = _resolve_output_root(content_db, parse_level)
     results: List[Dict[str, Any]] = []
     failures: List[str] = []
     succeeded_count = 0
@@ -538,12 +838,25 @@ def run_parse_manifest(
                 uid_literature = _stringify(row_dict.get("uid_literature"))
                 cite_key = _stringify(row_dict.get("cite_key")) or uid_literature
                 title = _stringify(row_dict.get("title")) or cite_key
+                predicted_output_name = _predict_output_name(row_dict)
+                predicted_output_dir = str((output_root_for_status / predicted_output_name).resolve())
                 manifest_status = _stringify(row_dict.get("manifest_status")) or "queued"
                 failure_reason = _stringify(row_dict.get("failure_reason"))
                 used_existing_asset = False
                 asset_row: Dict[str, Any] = {}
                 if manifest_status == "failed":
                     failed_count += 1
+                    _update_preprocess_runtime_state(
+                        content_db=content_db,
+                        source_stage=source_stage,
+                        uid_literature=uid_literature,
+                        cite_key=cite_key,
+                        preprocess_state="处理失败",
+                        preprocess_result_path="",
+                        preprocess_failure_reason=failure_reason or "manifest_precheck_failed",
+                        preprocess_finished_at=now_iso(),
+                        parse_state="未完成",
+                    )
                     results.append({
                         **row_dict,
                         "title": title,
@@ -556,6 +869,17 @@ def run_parse_manifest(
                     failures.append(f"{cite_key}: {failure_reason or 'manifest_precheck_failed'}")
                     continue
                 try:
+                    _update_preprocess_runtime_state(
+                        content_db=content_db,
+                        source_stage=source_stage,
+                        uid_literature=uid_literature,
+                        cite_key=cite_key,
+                        preprocess_state="正在处理",
+                        preprocess_result_path=predicted_output_dir,
+                        preprocess_failure_reason="",
+                        preprocess_started_at=now_iso(),
+                        parse_state="在运行",
+                    )
                     manifest_status, asset_row, used_existing_asset = _run_single_manifest_item(
                         content_db=content_db,
                         parse_level=parse_level,
@@ -568,6 +892,18 @@ def run_parse_manifest(
                         skipped_count += 1
                     else:
                         succeeded_count += 1
+                    finalized_output_dir = _stringify(asset_row.get("asset_dir")) or predicted_output_dir
+                    _update_preprocess_runtime_state(
+                        content_db=content_db,
+                        source_stage=source_stage,
+                        uid_literature=uid_literature,
+                        cite_key=cite_key,
+                        preprocess_state="已处理",
+                        preprocess_result_path=finalized_output_dir,
+                        preprocess_failure_reason="",
+                        preprocess_finished_at=now_iso(),
+                        parse_state="已完成",
+                    )
                     results.append({
                         **row_dict,
                         "title": title,
@@ -585,6 +921,17 @@ def run_parse_manifest(
                 except Exception as exc:
                     failed_count += 1
                     failure_reason = str(exc)
+                    _update_preprocess_runtime_state(
+                        content_db=content_db,
+                        source_stage=source_stage,
+                        uid_literature=uid_literature,
+                        cite_key=cite_key,
+                        preprocess_state="处理失败",
+                        preprocess_result_path=predicted_output_dir,
+                        preprocess_failure_reason=failure_reason,
+                        preprocess_finished_at=now_iso(),
+                        parse_state="未完成",
+                    )
                     failures.append(f"{cite_key}: {failure_reason}")
                     results.append({
                         **row_dict,
@@ -603,7 +950,19 @@ def run_parse_manifest(
         results = []
         for _, row in manifest_df.fillna("").iterrows():
             row_dict = dict(row.to_dict())
+            uid_literature = _stringify(row_dict.get("uid_literature"))
             cite_key = _stringify(row_dict.get("cite_key")) or _stringify(row_dict.get("uid_literature"))
+            _update_preprocess_runtime_state(
+                content_db=content_db,
+                source_stage=source_stage,
+                uid_literature=uid_literature,
+                cite_key=cite_key,
+                preprocess_state="处理失败",
+                preprocess_result_path="",
+                preprocess_failure_reason=lock_error,
+                preprocess_finished_at=now_iso(),
+                parse_state="未完成",
+            )
             failures.append(f"{cite_key}: {lock_error}")
             results.append({
                 **row_dict,

@@ -71,6 +71,7 @@
 
 - `run_online_retrieval_router`
 - `run_online_retrieval_from_bib`
+- `manage_online_retrieval_daily_usage`
 - `migrate_workspace_paths`
 - `PathMapping`
 

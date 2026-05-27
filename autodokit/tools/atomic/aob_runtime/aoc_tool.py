@@ -2,10 +2,10 @@
 """AOC（autodo 编译器）统一入口。
 
 本脚本负责把 AOL（autodo-lang）Markdown DSL 源文件编译为不同引擎可直接落盘的目录与文件。
-当前实现为 v0.2：
+当前实现为 v0.3：
 
 - 输入：AOL Markdown 文件或 AOL 源码目录。
-- 输出：OpenCode / Claude Code / GitHub Copilot 三种引擎目录结构。
+- 输出：OpenCode / Claude Code / GitHub Copilot / Gemini / Codex 五种引擎目录结构。
 - 策略：以 AOL Markdown DSL 作为单一真源。
 """
 
@@ -16,6 +16,10 @@ import hashlib
 import json
 import os
 import re
+try:
+    import tomllib
+except ModuleNotFoundError:  # pragma: no cover - Python < 3.11 fallback
+    import tomli as tomllib
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -40,19 +44,31 @@ from typing import Any
 引擎泄漏正则: list[re.Pattern[str]] = [
     re.compile(r"\.claude/", re.IGNORECASE),
     re.compile(r"\.opencode/", re.IGNORECASE),
+    re.compile(r"\.gemini/", re.IGNORECASE),
+    re.compile(r"\.codex/", re.IGNORECASE),
     re.compile(r"\.github/", re.IGNORECASE),
     re.compile(r"~/.claude/", re.IGNORECASE),
     re.compile(r"~/.opencode/", re.IGNORECASE),
+    re.compile(r"~/.gemini/", re.IGNORECASE),
+    re.compile(r"~/.codex/", re.IGNORECASE),
     re.compile(r"opencode\.json", re.IGNORECASE),
+    re.compile(r"GEMINI\.md", re.IGNORECASE),
+    re.compile(r"config\.toml", re.IGNORECASE),
 ]
 
 引擎语义化替换规则: list[tuple[re.Pattern[str], str]] = [
     (re.compile(r"~/.claude/", re.IGNORECASE), "{{ENGINE_HOME_ROOT}}/"),
     (re.compile(r"~/.opencode/", re.IGNORECASE), "{{ENGINE_HOME_ROOT}}/"),
+    (re.compile(r"~/.gemini/", re.IGNORECASE), "{{ENGINE_HOME_ROOT}}/"),
+    (re.compile(r"~/.codex/", re.IGNORECASE), "{{ENGINE_HOME_ROOT}}/"),
     (re.compile(r"\.claude/", re.IGNORECASE), "{{ENGINE_ROOT}}/"),
     (re.compile(r"\.opencode/", re.IGNORECASE), "{{ENGINE_ROOT}}/"),
+    (re.compile(r"\.gemini/", re.IGNORECASE), "{{ENGINE_ROOT}}/"),
+    (re.compile(r"\.codex/", re.IGNORECASE), "{{ENGINE_ROOT}}/"),
     (re.compile(r"\.github/", re.IGNORECASE), "{{ENGINE_ROOT}}/"),
     (re.compile(r"\bopencode\.json\b", re.IGNORECASE), "{{ENGINE_PROJECT_CONFIG}}"),
+    (re.compile(r"\bGEMINI\.md\b", re.IGNORECASE), "{{ENGINE_PROJECT_RULES}}"),
+    (re.compile(r"\bconfig\.toml\b", re.IGNORECASE), "{{ENGINE_PROJECT_CONFIG}}"),
     (re.compile(r"\bAGENTS\.md\b", re.IGNORECASE), "{{ENGINE_PROJECT_RULES}}"),
 ]
 
@@ -83,6 +99,8 @@ from typing import Any
     "opencode": ".opencode",
     "claude": ".claude",
     "copilot": ".github",
+    "gemini": ".gemini",
+    "codex": ".codex",
 }
 
 可迁移附加载体目录: list[str] = [
@@ -112,7 +130,6 @@ from typing import Any
     ".cfg",
     ".py",
     ".sh",
-    ".ps1",
     ".bat",
     ".cmd",
     ".js",
@@ -414,6 +431,11 @@ class AOL定义:
         commands: 命令定义列表。
         project_instruction: 项目级指令文本（跨引擎统一载体）。
         claude_md: Claude 项目说明（写入 `.claude/CLAUDE.md`）。
+        hooks: 生命周期 hook 载体列表。
+        mcp_servers: MCP 服务注册表。
+        settings: 规范化设置快照。
+        policies: 权限、审批与沙箱策略。
+        engine_native: 引擎原生逃生口配置。
         extra_assets: 附加载体列表（prompts/workflows/templates/hooks/...）。
     """
 
@@ -426,6 +448,11 @@ class AOL定义:
     commands: list[命令定义] = field(default_factory=list)
     project_instruction: str | None = None
     claude_md: str | None = None
+    hooks: list[附加载体定义] = field(default_factory=list)
+    mcp_servers: dict[str, Any] = field(default_factory=dict)
+    settings: dict[str, Any] = field(default_factory=dict)
+    policies: dict[str, Any] = field(default_factory=dict)
+    engine_native: dict[str, dict[str, Any]] = field(default_factory=dict)
     extra_assets: list[附加载体定义] = field(default_factory=list)
 
 
@@ -662,11 +689,54 @@ def 读取_附加载体列表(raw: Any) -> list[附加载体定义]:
     for item in raw:
         if not isinstance(item, dict):
             raise ValueError("extraAssets 元素必须是对象")
-        relative_path = str(item.get("path", "")).strip().replace("\\", "/")
+        relative_path = str(item.get("path") or item.get("relative_path") or "").strip().replace("\\", "/")
         content = str(item.get("content", ""))
         if not relative_path:
             raise ValueError("extraAssets.path 不能为空")
         result.append(附加载体定义(relative_path=relative_path, content=content))
+    return result
+
+
+def 读取_对象字段(raw: Any, *, field_name: str) -> dict[str, Any]:
+    """读取 AOL 根对象字段。
+
+    Args:
+        raw: 原始字段值。
+        field_name: 字段名，用于错误提示。
+
+    Returns:
+        dict[str, Any]: 标准对象字段。
+
+    Raises:
+        ValueError: 字段不是对象时抛出。
+    """
+
+    if raw is None:
+        return {}
+    if not isinstance(raw, dict):
+        raise ValueError(f"{field_name} 必须是对象")
+    return dict(raw)
+
+
+def 读取_引擎原生配置(raw: Any) -> dict[str, dict[str, Any]]:
+    """读取引擎原生逃生口配置。
+
+    Args:
+        raw: 原始字段值。
+
+    Returns:
+        dict[str, dict[str, Any]]: 引擎到原生配置对象的映射。
+
+    Raises:
+        ValueError: 字段结构不合法时抛出。
+    """
+
+    payload = 读取_对象字段(raw, field_name="engineNative")
+    result: dict[str, dict[str, Any]] = {}
+    for engine_id, value in payload.items():
+        if not isinstance(value, dict):
+            raise ValueError(f"engineNative.{engine_id} 必须是对象")
+        result[str(engine_id)] = dict(value)
     return result
 
 
@@ -928,6 +998,13 @@ def 读取_markdown目录_aol(path: Path) -> AOL定义:
     version = "1"
     title = "AOL Library"
     instructions: list[str] = []
+    project_instruction: str | None = None
+    hooks: list[附加载体定义] = []
+    mcp_servers: dict[str, Any] = {}
+    settings: dict[str, Any] = {}
+    policies: dict[str, Any] = {}
+    engine_native: dict[str, dict[str, Any]] = {}
+    extra_assets: list[附加载体定义] = []
     agent_payloads: list[dict[str, Any]] = []
     skill_payloads: list[dict[str, Any]] = []
     rule_payloads: list[dict[str, Any]] = []
@@ -945,6 +1022,18 @@ def 读取_markdown目录_aol(path: Path) -> AOL定义:
                 instructions = [line.strip() for line in instructions_value.split("|") if line.strip()]
             if not instructions and body.strip():
                 instructions = [line.strip("- ").strip() for line in body.splitlines() if line.strip()]
+            raw_project_instruction = frontmatter.get("projectInstruction") or frontmatter.get("project_instruction")
+            if isinstance(raw_project_instruction, str) and raw_project_instruction.strip():
+                project_instruction = raw_project_instruction.strip()
+            hooks = 读取_附加载体列表(frontmatter.get("hooks"))
+            extra_assets = 读取_附加载体列表(frontmatter.get("extraAssets") or frontmatter.get("extra_assets"))
+            mcp_servers = 读取_对象字段(
+                frontmatter.get("mcpServers") or frontmatter.get("mcp_servers") or frontmatter.get("mcp"),
+                field_name="mcpServers",
+            )
+            settings = 读取_对象字段(frontmatter.get("settings"), field_name="settings")
+            policies = 读取_对象字段(frontmatter.get("policies"), field_name="policies")
+            engine_native = 读取_引擎原生配置(frontmatter.get("engineNative") or frontmatter.get("engine_native"))
             continue
 
         if kind == "agent":
@@ -1002,6 +1091,13 @@ def 读取_markdown目录_aol(path: Path) -> AOL定义:
         agents=读取_代理列表(agent_payloads),
         skills=读取_技能列表(skill_payloads),
         rules=读取_规则列表(rule_payloads),
+        project_instruction=project_instruction,
+        hooks=hooks,
+        mcp_servers=mcp_servers,
+        settings=settings,
+        policies=policies,
+        engine_native=engine_native,
+        extra_assets=extra_assets,
     )
 
 
@@ -1262,7 +1358,7 @@ def 识别模板引擎(*, file_path: Path, frontmatter: dict[str, Any]) -> str:
         frontmatter: frontmatter 对象。
 
     Returns:
-        str: `opencode`、`claude`、`copilot` 或 `unknown`。
+        str: `opencode`、`claude`、`copilot`、`gemini`、`codex` 或 `unknown`。
     """
 
     path_text = str(file_path).replace("\\", "/").lower()
@@ -1280,6 +1376,10 @@ def 识别模板引擎(*, file_path: Path, frontmatter: dict[str, Any]) -> str:
         return "claude"
     if ".github/" in path_text:
         return "copilot"
+    if ".gemini/" in path_text or path_text.endswith("gemini.md"):
+        return "gemini"
+    if ".codex/" in path_text:
+        return "codex"
     return "unknown"
 
 
@@ -1362,6 +1462,10 @@ def 读取项目级指令文本(*, workspace_root: Path, source_engine: str) -> 
         candidates = [workspace_root / "copilot-instructions.md"]
     elif source_engine == "opencode":
         candidates = [workspace_root / "library.md", workspace_root.parent / "AGENTS.md"]
+    elif source_engine == "gemini":
+        candidates = [workspace_root / "GEMINI.md", workspace_root.parent / "GEMINI.md"]
+    elif source_engine == "codex":
+        candidates = [workspace_root / "AGENTS.md", workspace_root.parent / "AGENTS.md"]
 
     for path in candidates:
         if path.exists() and path.is_file():
@@ -1400,6 +1504,142 @@ def 收集附加载体(*, workspace_root: Path) -> list[dict[str, str]]:
             })
             seen_paths.add(relative_path)
     return assets
+
+
+def 解析引擎配置文件(path: Path) -> dict[str, Any] | None:
+    """解析引擎配置文件。
+
+    Args:
+        path: 配置文件路径。
+
+    Returns:
+        dict[str, Any] | None: 解析结果；无法解析或不是对象时返回 `None`。
+    """
+
+    if not path.exists() or not path.is_file():
+        return None
+    try:
+        text = path.read_text(encoding="utf-8", errors="ignore")
+        if path.suffix.lower() == ".json":
+            payload = json.loads(text)
+        elif path.suffix.lower() == ".toml":
+            payload = tomllib.loads(text)
+        else:
+            return None
+    except Exception:
+        return None
+    return dict(payload) if isinstance(payload, dict) else None
+
+
+def 解析源配置候选路径(*, workspace_root: Path, source_engine: str) -> list[Path]:
+    """解析源引擎办公区配置候选路径。
+
+    Args:
+        workspace_root: 源办公区根目录。
+        source_engine: 源引擎标识。
+
+    Returns:
+        list[Path]: 去重后的候选路径。
+    """
+
+    parent_root = workspace_root.parent
+    candidates: list[Path] = [workspace_root / "autodo.engine.config.json"]
+    if source_engine == "opencode":
+        candidates.extend([parent_root / "opencode.json", workspace_root / "opencode.json"])
+    elif source_engine == "claude":
+        candidates.extend([workspace_root / "settings.json", parent_root / ".mcp.json"])
+    elif source_engine == "copilot":
+        candidates.extend([workspace_root / "copilot-instructions.json", workspace_root / "settings.json"])
+    elif source_engine == "gemini":
+        candidates.extend([workspace_root / "settings.json"])
+    elif source_engine == "codex":
+        candidates.extend([workspace_root / "config.json", workspace_root / "config.toml"])
+
+    result: list[Path] = []
+    seen: set[str] = set()
+    for path in candidates:
+        key = str(path.resolve()).lower()
+        if key in seen:
+            continue
+        seen.add(key)
+        result.append(path)
+    return result
+
+
+def 读取源引擎配置(*, workspace_root: Path, source_engine: str) -> list[dict[str, Any]]:
+    """读取源引擎配置快照。
+
+    Args:
+        workspace_root: 源办公区根目录。
+        source_engine: 源引擎标识。
+
+    Returns:
+        list[dict[str, Any]]: 每项包含 `path` 与 `payload`。
+    """
+
+    configs: list[dict[str, Any]] = []
+    for path in 解析源配置候选路径(workspace_root=workspace_root, source_engine=source_engine):
+        payload = 解析引擎配置文件(path)
+        if payload is None:
+            continue
+        configs.append({"path": str(path).replace("\\", "/"), "payload": payload})
+    return configs
+
+
+def 合并_mcp_servers(configs: list[dict[str, Any]]) -> dict[str, Any]:
+    """从源配置中抽取 MCP 服务注册表。"""
+
+    servers: dict[str, Any] = {}
+    for item in configs:
+        payload = item.get("payload")
+        if not isinstance(payload, dict):
+            continue
+        for key in ("mcpServers", "mcp_servers"):
+            value = payload.get(key)
+            if isinstance(value, dict):
+                servers.update(value)
+        value = payload.get("mcp")
+        if isinstance(value, dict):
+            nested = value.get("servers")
+            if isinstance(nested, dict):
+                servers.update(nested)
+            else:
+                servers.update(value)
+    return servers
+
+
+def 抽取策略配置(configs: list[dict[str, Any]]) -> dict[str, Any]:
+    """从源配置中抽取权限、审批与沙箱策略。"""
+
+    policies: dict[str, Any] = {}
+    for item in configs:
+        payload = item.get("payload")
+        if not isinstance(payload, dict):
+            continue
+        for key in (
+            "permission",
+            "permissions",
+            "approval",
+            "approval_policy",
+            "sandbox",
+            "sandbox_mode",
+            "security",
+        ):
+            value = payload.get(key)
+            if value not in (None, {}, [], ""):
+                policies[key] = value
+    return policies
+
+
+def 规范化配置快照(*, source_engine: str, configs: list[dict[str, Any]]) -> dict[str, Any]:
+    """把源配置保存为 AOL 设置快照。"""
+
+    if not configs:
+        return {}
+    return {
+        "sourceEngine": source_engine,
+        "sourceConfigs": configs,
+    }
 
 
 def 模板代理转aol(*, file_path: Path) -> dict[str, Any] | None:
@@ -1988,6 +2228,91 @@ def 渲染_claude_command(command: 命令定义) -> str:
     return "\n".join(lines)
 
 
+def 构建_aol配置摘要(aol: AOL定义) -> dict[str, Any]:
+    """构建跨引擎可保留的 AOL 配置摘要。"""
+
+    summary: dict[str, Any] = {
+        "aolVersion": aol.version,
+        "title": aol.title,
+    }
+    if aol.hooks:
+        summary["hooks"] = [asset.relative_path for asset in aol.hooks]
+    if aol.mcp_servers:
+        summary["mcpServers"] = aol.mcp_servers
+    if aol.settings:
+        summary["settings"] = aol.settings
+    if aol.policies:
+        summary["policies"] = aol.policies
+    if aol.engine_native:
+        summary["engineNative"] = aol.engine_native
+    return summary
+
+
+def 构建目标配置(aol: AOL定义, *, target_engine: str, base: dict[str, Any] | None = None) -> dict[str, Any]:
+    """把 AOL 根配置投影到目标引擎配置对象。
+
+    Args:
+        aol: AOL 定义。
+        target_engine: 目标引擎标识。
+        base: 目标配置基础对象。
+
+    Returns:
+        dict[str, Any]: 可写入目标引擎配置文件的对象。
+    """
+
+    config: dict[str, Any] = dict(base or {})
+    native_overrides = aol.engine_native.get(target_engine)
+    if native_overrides:
+        config.update(native_overrides)
+
+    if aol.mcp_servers:
+        if target_engine == "codex":
+            config.setdefault("mcp_servers", aol.mcp_servers)
+        elif target_engine == "opencode":
+            config.setdefault("mcp", {"servers": aol.mcp_servers})
+        else:
+            config.setdefault("mcpServers", aol.mcp_servers)
+
+    if aol.hooks:
+        hook_paths = [asset.relative_path for asset in aol.hooks]
+        if target_engine in {"claude", "gemini"}:
+            config.setdefault("hooks", {"aolHookFiles": hook_paths})
+        else:
+            config.setdefault("aolHooks", hook_paths)
+
+    if aol.policies:
+        if target_engine == "codex":
+            approval = aol.policies.get("approval_policy") or aol.policies.get("approval")
+            sandbox = aol.policies.get("sandbox_mode") or aol.policies.get("sandbox")
+            if approval is not None:
+                config.setdefault("approval_policy", approval)
+            if sandbox is not None:
+                config.setdefault("sandbox_mode", sandbox)
+            config.setdefault("aolPolicies", aol.policies)
+        elif target_engine == "opencode":
+            permission = aol.policies.get("permission") or aol.policies.get("permissions")
+            if permission is not None:
+                config.setdefault("permission", permission)
+            config.setdefault("aolPolicies", aol.policies)
+        else:
+            config.setdefault("aolPolicies", aol.policies)
+
+    if aol.settings:
+        config.setdefault("aolSettings", aol.settings)
+
+    canonical_summary = 构建_aol配置摘要(aol)
+    if len(canonical_summary) > 2:
+        config.setdefault("aolCanonical", canonical_summary)
+    return config
+
+
+def 写入_hooks载体(target_root: Path, hooks: list[附加载体定义]) -> None:
+    """写入 AOL hooks 载体。"""
+
+    for asset in hooks:
+        写文本(target_root / asset.relative_path, asset.content)
+
+
 def 编译到_opencode(aol: AOL定义, output_dir: Path) -> None:
     """编译到 OpenCode 目录。
 
@@ -2003,10 +2328,10 @@ def 编译到_opencode(aol: AOL定义, output_dir: Path) -> None:
     write_rules = [f".opencode/rules/{rule.rule_id}.md" for rule in aol.rules]
     if not write_rules:
         write_rules = [".opencode/rules/base.md"]
-    opencode_json = {
+    opencode_json = 构建目标配置(aol, target_engine="opencode", base={
         "$schema": "https://opencode.ai/config.json",
         "instructions": write_rules,
-    }
+    })
     写文本(output_dir / "opencode.json", json.dumps(opencode_json, ensure_ascii=False, indent=2) + "\n")
 
     rule_lines = [f"# {aol.title}"]
@@ -2029,6 +2354,9 @@ def 编译到_opencode(aol: AOL定义, output_dir: Path) -> None:
             opencode_root / "skills" / skill.name / "SKILL.md",
             渲染_skill(skill.name, skill.description, skill.body, skill.metadata),
         )
+    写入_hooks载体(opencode_root, aol.hooks)
+    for asset in aol.extra_assets:
+        写文本(opencode_root / asset.relative_path, asset.content)
 
 
 def 编译到_claude(aol: AOL定义, output_dir: Path) -> None:
@@ -2043,11 +2371,13 @@ def 编译到_claude(aol: AOL定义, output_dir: Path) -> None:
     (claude_root / "agents").mkdir(parents=True, exist_ok=True)
     (claude_root / "skills").mkdir(parents=True, exist_ok=True)
 
-    settings = {
+    settings = 构建目标配置(aol, target_engine="claude", base={
         "aolVersion": aol.version,
         "title": aol.title,
-    }
+    })
     写文本(claude_root / "settings.json", json.dumps(settings, ensure_ascii=False, indent=2) + "\n")
+    if aol.mcp_servers:
+        写文本(output_dir / ".mcp.json", json.dumps({"mcpServers": aol.mcp_servers}, ensure_ascii=False, indent=2) + "\n")
 
     claude_md_lines = [f"# {aol.title}"]
     if aol.instructions:
@@ -2063,6 +2393,9 @@ def 编译到_claude(aol: AOL定义, output_dir: Path) -> None:
             claude_root / "skills" / skill.name / "SKILL.md",
             渲染_skill(skill.name, skill.description, skill.body, skill.metadata),
         )
+    写入_hooks载体(claude_root, aol.hooks)
+    for asset in aol.extra_assets:
+        写文本(claude_root / asset.relative_path, asset.content)
 
 
 def 编译到_copilot(aol: AOL定义, output_dir: Path) -> None:
@@ -2082,6 +2415,9 @@ def 编译到_copilot(aol: AOL定义, output_dir: Path) -> None:
         instruction_lines.append("")
         instruction_lines.extend([f"- {line}" for line in aol.instructions])
     写文本(github_root / "copilot-instructions.md", "\n".join(instruction_lines) + "\n")
+    config = 构建目标配置(aol, target_engine="copilot", base={"aolVersion": aol.version, "title": aol.title})
+    if len(config) > 2:
+        写文本(github_root / "autodo.engine.config.json", json.dumps(config, ensure_ascii=False, indent=2) + "\n")
 
     for agent in aol.agents:
         写文本(github_root / "agents" / f"{agent.agent_id}.agent.md", 渲染_copilot_agent(agent))
@@ -2091,6 +2427,103 @@ def 编译到_copilot(aol: AOL定义, output_dir: Path) -> None:
             github_root / "skills" / skill.name / "SKILL.md",
             渲染_skill(skill.name, skill.description, skill.body, skill.metadata),
         )
+    写入_hooks载体(github_root, aol.hooks)
+    for asset in aol.extra_assets:
+        写文本(github_root / asset.relative_path, asset.content)
+
+
+def 编译到_gemini(aol: AOL定义, output_dir: Path) -> None:
+    """编译到 Gemini CLI 目录。
+
+    Args:
+        aol: AOL 对象。
+        output_dir: 输出根目录。
+    """
+
+    gemini_root = output_dir / ".gemini"
+    (gemini_root / "agents").mkdir(parents=True, exist_ok=True)
+    (gemini_root / "skills").mkdir(parents=True, exist_ok=True)
+    (gemini_root / "commands").mkdir(parents=True, exist_ok=True)
+    (gemini_root / "rules").mkdir(parents=True, exist_ok=True)
+
+    settings = 构建目标配置(aol, target_engine="gemini", base={
+        "aolVersion": aol.version,
+        "title": aol.title,
+    })
+    写文本(gemini_root / "settings.json", json.dumps(settings, ensure_ascii=False, indent=2) + "\n")
+
+    if aol.project_instruction and aol.project_instruction.strip():
+        gemini_md = aol.project_instruction.strip() + "\n"
+    else:
+        gemini_md_lines = [f"# {aol.title}"]
+        if aol.instructions:
+            gemini_md_lines.append("")
+            gemini_md_lines.extend([f"- {line}" for line in aol.instructions])
+        gemini_md = "\n".join(gemini_md_lines) + "\n"
+    写文本(output_dir / "GEMINI.md", gemini_md)
+
+    for agent in aol.agents:
+        写文本(gemini_root / "agents" / f"{agent.agent_id}.md", 渲染_claude_agent(agent))
+
+    for skill in aol.skills:
+        写文本(
+            gemini_root / "skills" / skill.name / "SKILL.md",
+            渲染_skill(skill.name, skill.description, skill.body, skill.metadata),
+        )
+
+    for rule in aol.rules:
+        写文本(gemini_root / "rules" / f"{rule.rule_id}.md", f"# {rule.rule_id}\n\n{rule.content}\n")
+
+    for command in aol.commands:
+        写文本(gemini_root / "commands" / f"{command.command_id}.md", 渲染_claude_command(command))
+    写入_hooks载体(gemini_root, aol.hooks)
+    for asset in aol.extra_assets:
+        写文本(gemini_root / asset.relative_path, asset.content)
+
+
+def 编译到_codex(aol: AOL定义, output_dir: Path) -> None:
+    """编译到 Codex CLI 目录。
+
+    Args:
+        aol: AOL 对象。
+        output_dir: 输出根目录。
+    """
+
+    codex_root = output_dir / ".codex"
+    (codex_root / "skills").mkdir(parents=True, exist_ok=True)
+    (codex_root / "commands").mkdir(parents=True, exist_ok=True)
+    (codex_root / "rules").mkdir(parents=True, exist_ok=True)
+
+    agent_lines = [f"# {aol.title}"]
+    if aol.instructions:
+        agent_lines.append("")
+        agent_lines.extend([f"- {line}" for line in aol.instructions])
+    if aol.project_instruction and aol.project_instruction.strip():
+        agent_lines.extend(["", aol.project_instruction.strip()])
+    写文本(output_dir / "AGENTS.md", "\n".join(agent_lines) + "\n")
+
+    codex_config = 构建目标配置(aol, target_engine="codex", base={
+        "aolVersion": aol.version,
+        "title": aol.title,
+        "agentCount": len(aol.agents),
+        "skillCount": len(aol.skills),
+    })
+    写文本(codex_root / "config.json", json.dumps(codex_config, ensure_ascii=False, indent=2) + "\n")
+
+    for skill in aol.skills:
+        写文本(
+            codex_root / "skills" / skill.name / "SKILL.md",
+            渲染_skill(skill.name, skill.description, skill.body, skill.metadata),
+        )
+
+    for rule in aol.rules:
+        写文本(codex_root / "rules" / f"{rule.rule_id}.md", f"# {rule.rule_id}\n\n{rule.content}\n")
+
+    for command in aol.commands:
+        写文本(codex_root / "commands" / f"{command.command_id}.md", 渲染_claude_command(command))
+    写入_hooks载体(codex_root, aol.hooks)
+    for asset in aol.extra_assets:
+        写文本(codex_root / asset.relative_path, asset.content)
 
 
 def 读取引擎办公区目录名(*, engine: str) -> str:
@@ -2196,14 +2629,23 @@ def 从引擎办公区构建_aol(*, source_workspace_dir: Path, source_engine: s
             commands.append(payload)
             command_count += 1
 
-    extra_assets = 收集附加载体(workspace_root=workspace_root)
+    collected_assets = 收集附加载体(workspace_root=workspace_root)
+    hook_assets = [asset for asset in collected_assets if str(asset.get("path", "")).replace("\\", "/").startswith("hooks/")]
+    extra_assets = [asset for asset in collected_assets if asset not in hook_assets]
     project_instruction = 读取项目级指令文本(workspace_root=workspace_root, source_engine=source_engine)
+    source_configs = 读取源引擎配置(workspace_root=workspace_root, source_engine=source_engine)
+    mcp_servers = 合并_mcp_servers(source_configs)
+    policies = 抽取策略配置(source_configs)
+    settings = 规范化配置快照(source_engine=source_engine, configs=source_configs)
+    engine_native: dict[str, dict[str, Any]] = {}
+    if source_configs:
+        engine_native[source_engine] = {"sourceConfigs": source_configs}
 
     claude_md: str | None = None
     if source_engine == "claude":
         claude_md = project_instruction
 
-    if not agents and not skills and not rules and not commands and not extra_assets and not project_instruction:
+    if not agents and not skills and not rules and not commands and not extra_assets and not hook_assets and not project_instruction and not source_configs:
         raise ValueError(f"源办公区中未找到可转换内容：{workspace_root}")
 
     seen_agent_ids: set[str] = set()
@@ -2263,6 +2705,11 @@ def 从引擎办公区构建_aol(*, source_workspace_dir: Path, source_engine: s
         commands=读取_命令列表(commands),
         project_instruction=project_instruction,
         claude_md=claude_md,
+        hooks=读取_附加载体列表(hook_assets),
+        mcp_servers=mcp_servers,
+        settings=settings,
+        policies=policies,
+        engine_native=engine_native,
         extra_assets=读取_附加载体列表(extra_assets),
     )
     return aol, {
@@ -2270,7 +2717,9 @@ def 从引擎办公区构建_aol(*, source_workspace_dir: Path, source_engine: s
         "skills": skill_count,
         "rules": rule_count,
         "commands": command_count,
-        "assets": len(extra_assets),
+        "assets": len(extra_assets) + len(hook_assets),
+        "hooks": len(hook_assets),
+        "configs": len(source_configs),
     }
 
 
@@ -2333,7 +2782,17 @@ def 编译_aol到引擎办公区(*, aol: AOL定义, target_workspace_dir: Path, 
         if aol.project_instruction and aol.project_instruction.strip():
             写文本(target_root / "library.md", aol.project_instruction.strip() + "\n")
 
+        写入_hooks载体(target_root, aol.hooks)
         写入附加载体(target_root=target_root, extra_assets=aol.extra_assets)
+        opencode_json = 构建目标配置(
+            aol,
+            target_engine="opencode",
+            base={
+                "$schema": "https://opencode.ai/config.json",
+                "instructions": [f".opencode/rules/{rule.rule_id}.md" for rule in aol.rules] or [".opencode/rules/base.md"],
+            },
+        )
+        写文本(target_root.parent / "opencode.json", json.dumps(opencode_json, ensure_ascii=False, indent=2) + "\n")
         return
 
     if target_engine == "claude":
@@ -2341,11 +2800,13 @@ def 编译_aol到引擎办公区(*, aol: AOL定义, target_workspace_dir: Path, 
         (target_root / "skills").mkdir(parents=True, exist_ok=True)
         (target_root / "commands").mkdir(parents=True, exist_ok=True)
         (target_root / "rules").mkdir(parents=True, exist_ok=True)
-        settings = {
+        settings = 构建目标配置(aol, target_engine="claude", base={
             "aolVersion": aol.version,
             "title": aol.title,
-        }
+        })
         写文本(target_root / "settings.json", json.dumps(settings, ensure_ascii=False, indent=2) + "\n")
+        if aol.mcp_servers:
+            写文本(target_root.parent / ".mcp.json", json.dumps({"mcpServers": aol.mcp_servers}, ensure_ascii=False, indent=2) + "\n")
 
         if aol.project_instruction and aol.project_instruction.strip():
             claude_md = aol.project_instruction.strip() + "\n"
@@ -2358,6 +2819,7 @@ def 编译_aol到引擎办公区(*, aol: AOL定义, target_workspace_dir: Path, 
                 claude_md_lines.extend([f"- {line}" for line in aol.instructions])
             claude_md = "\n".join(claude_md_lines) + "\n"
         写文本(target_root / "CLAUDE.md", claude_md)
+        写文本(target_root.parent / "CLAUDE.md", claude_md)
 
         for agent in aol.agents:
             写文本(target_root / "agents" / f"{agent.agent_id}.md", 渲染_claude_agent(agent))
@@ -2374,6 +2836,7 @@ def 编译_aol到引擎办公区(*, aol: AOL定义, target_workspace_dir: Path, 
         for command in aol.commands:
             写文本(target_root / "commands" / f"{command.command_id}.md", 渲染_claude_command(command))
 
+        写入_hooks载体(target_root, aol.hooks)
         写入附加载体(target_root=target_root, extra_assets=aol.extra_assets)
         return
 
@@ -2390,6 +2853,9 @@ def 编译_aol到引擎办公区(*, aol: AOL定义, target_workspace_dir: Path, 
                 instruction_lines.extend([f"- {line}" for line in aol.instructions])
             instruction_text = "\n".join(instruction_lines) + "\n"
         写文本(target_root / "copilot-instructions.md", instruction_text)
+        config = 构建目标配置(aol, target_engine="copilot", base={"aolVersion": aol.version, "title": aol.title})
+        if len(config) > 2:
+            写文本(target_root / "autodo.engine.config.json", json.dumps(config, ensure_ascii=False, indent=2) + "\n")
 
         for agent in aol.agents:
             写文本(target_root / "agents" / f"{agent.agent_id}.agent.md", 渲染_copilot_agent(agent))
@@ -2409,6 +2875,85 @@ def 编译_aol到引擎办公区(*, aol: AOL定义, target_workspace_dir: Path, 
         for rule in aol.rules:
             写文本(target_root / "rules" / f"{rule.rule_id}.md", f"# {rule.rule_id}\n\n{rule.content}\n")
 
+        写入_hooks载体(target_root, aol.hooks)
+        写入附加载体(target_root=target_root, extra_assets=aol.extra_assets)
+        return
+
+    if target_engine == "gemini":
+        (target_root / "agents").mkdir(parents=True, exist_ok=True)
+        (target_root / "skills").mkdir(parents=True, exist_ok=True)
+        (target_root / "commands").mkdir(parents=True, exist_ok=True)
+        (target_root / "rules").mkdir(parents=True, exist_ok=True)
+
+        settings = 构建目标配置(aol, target_engine="gemini", base={
+            "aolVersion": aol.version,
+            "title": aol.title,
+        })
+        写文本(target_root / "settings.json", json.dumps(settings, ensure_ascii=False, indent=2) + "\n")
+
+        if aol.project_instruction and aol.project_instruction.strip():
+            gemini_md = aol.project_instruction.strip() + "\n"
+        else:
+            gemini_md_lines = [f"# {aol.title}"]
+            if aol.instructions:
+                gemini_md_lines.append("")
+                gemini_md_lines.extend([f"- {line}" for line in aol.instructions])
+            gemini_md = "\n".join(gemini_md_lines) + "\n"
+        写文本(target_root.parent / "GEMINI.md", gemini_md)
+
+        for agent in aol.agents:
+            写文本(target_root / "agents" / f"{agent.agent_id}.md", 渲染_claude_agent(agent))
+
+        for skill in aol.skills:
+            写文本(
+                target_root / "skills" / skill.name / "SKILL.md",
+                渲染_skill(skill.name, skill.description, skill.body, skill.metadata),
+            )
+
+        for rule in aol.rules:
+            写文本(target_root / "rules" / f"{rule.rule_id}.md", f"# {rule.rule_id}\n\n{rule.content}\n")
+
+        for command in aol.commands:
+            写文本(target_root / "commands" / f"{command.command_id}.md", 渲染_claude_command(command))
+
+        写入_hooks载体(target_root, aol.hooks)
+        写入附加载体(target_root=target_root, extra_assets=aol.extra_assets)
+        return
+
+    if target_engine == "codex":
+        (target_root / "skills").mkdir(parents=True, exist_ok=True)
+        (target_root / "commands").mkdir(parents=True, exist_ok=True)
+        (target_root / "rules").mkdir(parents=True, exist_ok=True)
+
+        agent_lines = [f"# {aol.title}"]
+        if aol.instructions:
+            agent_lines.append("")
+            agent_lines.extend([f"- {line}" for line in aol.instructions])
+        if aol.project_instruction and aol.project_instruction.strip():
+            agent_lines.extend(["", aol.project_instruction.strip()])
+        写文本(target_root.parent / "AGENTS.md", "\n".join(agent_lines) + "\n")
+
+        codex_config = 构建目标配置(aol, target_engine="codex", base={
+            "aolVersion": aol.version,
+            "title": aol.title,
+            "agentCount": len(aol.agents),
+            "skillCount": len(aol.skills),
+        })
+        写文本(target_root / "config.json", json.dumps(codex_config, ensure_ascii=False, indent=2) + "\n")
+
+        for skill in aol.skills:
+            写文本(
+                target_root / "skills" / skill.name / "SKILL.md",
+                渲染_skill(skill.name, skill.description, skill.body, skill.metadata),
+            )
+
+        for rule in aol.rules:
+            写文本(target_root / "rules" / f"{rule.rule_id}.md", f"# {rule.rule_id}\n\n{rule.content}\n")
+
+        for command in aol.commands:
+            写文本(target_root / "commands" / f"{command.command_id}.md", 渲染_claude_command(command))
+
+        写入_hooks载体(target_root, aol.hooks)
         写入附加载体(target_root=target_root, extra_assets=aol.extra_assets)
         return
 
@@ -2428,7 +2973,7 @@ def 执行_compile(argv: list[str]) -> int:
 
     parser = argparse.ArgumentParser(description="把 AOL 编译为目标引擎目录")
     parser.add_argument("--input", required=True, help="AOL Markdown 文件或 AOL 目录路径")
-    parser.add_argument("--engine", required=True, choices=["opencode", "claude", "copilot"])
+    parser.add_argument("--engine", required=True, choices=["opencode", "claude", "copilot", "gemini", "codex"])
     parser.add_argument("--output-dir", required=True, help="输出目录")
     parser.add_argument("--repo-root", default="", help="AOB 仓库根目录（若不传则自动推断）")
     args = parser.parse_args(argv)
@@ -2456,6 +3001,10 @@ def 执行_compile(argv: list[str]) -> int:
         编译到_claude(aol, output_dir)
     elif args.engine == "copilot":
         编译到_copilot(aol, output_dir)
+    elif args.engine == "gemini":
+        编译到_gemini(aol, output_dir)
+    elif args.engine == "codex":
+        编译到_codex(aol, output_dir)
 
     print(f"[DONE] 已编译到 {args.engine}: {output_dir}")
     return 0

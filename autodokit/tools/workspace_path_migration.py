@@ -57,7 +57,7 @@ DEFAULT_SCAN_DIRS = ("config", "tasks", "steps", "knowledge", "views", "batches"
 DEFAULT_SQLITE_PATHS = (
     "database/content/content.db",
     "database/decision/decision.db",
-    "database/logs/aok_log.db",
+    "database/logs/log.db",
     "database/tasks/tasks.db",
 )
 DEFAULT_EXCLUDED_PREFIXES = (

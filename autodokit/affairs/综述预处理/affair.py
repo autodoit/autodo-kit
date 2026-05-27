@@ -22,7 +22,7 @@ from autodokit.affairs.候选文献视图构建.affair import (
 from autodokit.tools import append_aok_log_event, build_gate_review, load_json_or_py
 from autodokit.tools.atomic.task_aok.task_instance_dir import create_task_instance_dir, mirror_artifacts_to_legacy, resolve_legacy_output_dir
 from autodokit.tools.atomic.task_aok.post_affair_git_commit import affair_auto_git_commit
-from autodokit.tools.bibliodb_sqlite import load_reading_queue_df, load_review_state_df, upsert_reading_queue_rows, upsert_review_state_rows
+from autodokit.tools.bibliodb_sqlite import READING_QUEUE_TABLE_NAME, load_reading_queue_df, load_review_state_df, upsert_reading_queue_rows, upsert_review_state_rows
 from autodokit.tools.ocr.runtime.monkeyocr_manifest_runtime import (
     resolve_parse_runtime_settings,
     resolve_postprocess_settings,
@@ -150,8 +150,8 @@ def _consume_current_stage_queue_rows(content_db: Path, *, stage: str, queue_row
     with sqlite3.connect(content_db) as conn:
         for uid_literature, cite_key in identities:
             cursor = conn.execute(
-                """
-                UPDATE literature_reading_queue
+                f"""
+                UPDATE {READING_QUEUE_TABLE_NAME}
                    SET is_current = 0,
                        queue_status = 'completed',
                        updated_at = ?

@@ -15,6 +15,7 @@ from autodokit.tools.bibliodb_sqlite import (
     load_attachments_df,
     load_chunk_sets_df,
     load_chunks_df,
+    load_flow_state_df,
     load_literatures_df,
     load_reading_state_df,
     load_tags_df,
@@ -24,8 +25,10 @@ from autodokit.tools.bibliodb_sqlite import (
     rebuild_reference_relation_tables_from_config,
     save_structured_state,
     save_tables,
+    upsert_flow_state_rows,
     upsert_reading_queue_rows,
     upsert_reading_state_rows,
+    upsert_review_state_rows,
 )
 from autodokit.tools.contentdb_sqlite import init_content_db
 
@@ -515,6 +518,156 @@ def test_reading_state_views_should_expose_human_facing_live_lists(tmp_path: Pat
     assert pending_rough == [("lit-rough", "rough.pdf", "human")]
     assert pending_critical == [("lit-parse", "ready", "parse_ready")]
     assert overview_row == ("lit-parse", "待批判性研读文献", "待批判性研读", 0, "ready")
+
+
+def test_flow_state_should_sync_from_legacy_reading_and_review_states(tmp_path: Path) -> None:
+    """旧状态写入后应同步更新中文统一流程状态表和中文总视图。"""
+
+    db_path = tmp_path / "content.db"
+    save_tables(
+        db_path,
+        literatures_df=pd.DataFrame(
+            [
+                {
+                    "uid_literature": "lit-review",
+                    "cite_key": "review-001",
+                    "title": "综述样本文献",
+                    "first_author": "作者甲",
+                    "year": "2025",
+                    "created_at": "",
+                    "updated_at": "",
+                },
+                {
+                    "uid_literature": "lit-read",
+                    "cite_key": "read-001",
+                    "title": "普通样本文献",
+                    "first_author": "作者乙",
+                    "year": "2024",
+                    "created_at": "",
+                    "updated_at": "",
+                },
+            ]
+        ),
+        if_exists="replace",
+    )
+
+    upsert_review_state_rows(
+        db_path,
+        [
+            {
+                "uid_literature": "lit-review",
+                "cite_key": "review-001",
+                "pending_reference_preprocess": 1,
+                "reference_preprocessed": 0,
+                "source_stage": "A050",
+                "source_origin": "review_pool",
+                "recommended_reason": "综述核心",
+                "reading_objective": "梳理研究脉络",
+            }
+        ],
+    )
+    upsert_reading_state_rows(
+        db_path,
+        [
+            {
+                "uid_literature": "lit-read",
+                "cite_key": "read-001",
+                "pending_rough_read": 1,
+                "preprocessed": 1,
+                "source_stage": "A075",
+                "source_origin": "review_export",
+                "recommended_reason": "机制相关",
+                "theme_relation": "核心机制",
+            }
+        ],
+    )
+
+    flow_df = load_flow_state_df(db_path)
+    assert set(flow_df["uid_literature"].tolist()) == {"lit-review", "lit-read"}
+
+    review_row = flow_df.loc[flow_df["uid_literature"] == "lit-review"].iloc[0]
+    read_row = flow_df.loc[flow_df["uid_literature"] == "lit-read"].iloc[0]
+
+    assert review_row["流程轨道"] == "综述主链"
+    assert review_row["当前阶段"] == "综述参考扩展"
+    assert review_row["当前状态"] == "待处理"
+    assert read_row["流程轨道"] == "普通主链"
+    assert read_row["当前阶段"] == "普通文献泛读"
+    assert read_row["当前状态"] == "待处理"
+
+    with sqlite3.connect(db_path) as conn:
+        view_rows = conn.execute(
+            'SELECT 文献标识, 当前阶段, 当前状态 FROM "文献流程状态总视图" ORDER BY 文献标识'
+        ).fetchall()
+        workflow_rows = conn.execute(
+            'SELECT 类别, 数量, 状态 FROM "工作流总览视图" ORDER BY 类别, 状态'
+        ).fetchall()
+
+    assert view_rows == [
+        ("lit-read", "普通文献泛读", "待处理"),
+        ("lit-review", "综述参考扩展", "待处理"),
+    ]
+    assert workflow_rows == [
+        ("普通阅读链", 1, "待泛读"),
+        ("综述链", 1, "待参考扩展"),
+    ]
+
+
+def test_save_tables_replace_should_clear_flow_state_table(tmp_path: Path) -> None:
+    """replace 写回主表时，应同步清空统一流程状态表，避免残留旧运行态。"""
+
+    db_path = tmp_path / "content.db"
+    save_tables(
+        db_path,
+        literatures_df=pd.DataFrame(
+            [
+                {
+                    "uid_literature": "lit-001",
+                    "cite_key": "cite-001",
+                    "title": "文献一",
+                    "created_at": "",
+                    "updated_at": "",
+                }
+            ]
+        ),
+        if_exists="replace",
+    )
+    upsert_flow_state_rows(
+        db_path,
+        [
+            {
+                "uid_literature": "lit-001",
+                "cite_key": "cite-001",
+                "文献角色": "普通候选文献",
+                "流程轨道": "普通主链",
+                "当前阶段": "普通文献预处理",
+                "当前阶段组": "预处理",
+                "当前状态": "待处理",
+                "是否当前有效": 1,
+                "是否可执行": 1,
+            }
+        ],
+    )
+
+    assert not load_flow_state_df(db_path).empty
+
+    save_tables(
+        db_path,
+        literatures_df=pd.DataFrame(
+            [
+                {
+                    "uid_literature": "lit-002",
+                    "cite_key": "cite-002",
+                    "title": "文献二",
+                    "created_at": "",
+                    "updated_at": "",
+                }
+            ]
+        ),
+        if_exists="replace",
+    )
+
+    assert load_flow_state_df(db_path).empty
 
 
 def test_attachment_normalization_tables_should_support_shared_assets(tmp_path: Path) -> None:

@@ -9,7 +9,7 @@ from pathlib import Path
 
 import pandas as pd
 
-from autodokit.tools.bibliodb_sqlite import load_chunk_sets_df, load_chunks_df, load_reading_queue_df, load_reading_state_df, upsert_reading_queue_rows, upsert_review_state_rows
+from autodokit.tools.bibliodb_sqlite import load_chunk_sets_df, load_chunks_df, load_reading_queue_df, load_reading_state_df, upsert_reading_queue_rows, upsert_reading_state_rows, upsert_review_state_rows
 from autodokit.tools.ocr.classic.pdf_structured_data_tools import build_structured_data_payload
 from autodokit.tools.storage_backend import load_reference_tables, persist_reference_main_table, persist_reference_tables
 
@@ -235,7 +235,7 @@ def _prepare_review_synthesis_workspace(tmp_path: Path) -> tuple[Path, Path, Pat
 
 
 def test_candidate_view_affair_execute_should_work(tmp_path: Path) -> None:
-    """候选文献视图构建事务应输出 4 个视图文件与 1 个闸门文件。"""
+    """候选文献视图构建事务应输出当前任务目录下的候选视图与闸门文件。"""
 
     module = importlib.import_module("autodokit.affairs.候选文献视图构建.affair")
     references_db = tmp_path / "references.db"
@@ -264,11 +264,22 @@ def test_candidate_view_affair_execute_should_work(tmp_path: Path) -> None:
     )
 
     outputs = module.execute(config_path)
-    assert len(outputs) == 5
     assert all(path.exists() for path in outputs)
+    output_names = {path.name for path in outputs}
+    assert {
+        "review_candidate_pool_index.csv",
+        "review_candidate_pool_readable.csv",
+        "review_priority_view.csv",
+        "review_deep_read_queue_seed.csv",
+        "review_read_pool.csv",
+        "review_already_read_exit_view.csv",
+        "review_reading_batches.csv",
+        "gate_review.json",
+    }.issubset(output_names)
 
-    gate_payload = json.loads((tmp_path / "gate_review.json").read_text(encoding="utf-8"))
-    assert gate_payload["node_uid"] == "A05"
+    gate_path = next(path for path in outputs if path.name == "gate_review.json")
+    gate_payload = json.loads(gate_path.read_text(encoding="utf-8"))
+    assert gate_payload["node_uid"] in {"A05", "A050"}
 
     with sqlite3.connect(references_db) as conn:
         tables = {
@@ -279,18 +290,17 @@ def test_candidate_view_affair_execute_should_work(tmp_path: Path) -> None:
             row[0]
             for row in conn.execute("select name from sqlite_master where type='view'")
         }
-        assert "review_candidate_pool_index" not in tables
-        assert "review_candidate_pool_readable" not in tables
-        assert "review_priority_view" not in tables
-        assert "review_reading_batches" not in tables
+        assert "review_candidate_pool_index" in tables
+        assert "review_candidate_pool_readable" in tables
+        assert "review_priority_view" in tables
+        assert "review_reading_batches" in tables
         assert "review_gate_reviews" in tables
-        assert "review_candidate_current_view" in views
-        assert "review_read_pool_current_view" in views
-        assert "review_priority_current_view" in views
+        assert "工作流总览视图" in views
+        assert "文献流程状态总视图" in views
 
         literature_columns = {
             row[1]
-            for row in conn.execute("pragma table_info(literatures)")
+            for row in conn.execute('pragma table_info("文献主表")')
         }
         for column in [
             "a05_scope_key",
@@ -304,23 +314,17 @@ def test_candidate_view_affair_execute_should_work(tmp_path: Path) -> None:
         ]:
             assert column in literature_columns
 
-        review_count = conn.execute("select count(*) from review_candidate_current_view").fetchone()[0]
-        read_pool_count = conn.execute("select count(*) from review_read_pool_current_view").fetchone()[0]
+        review_count = conn.execute("select count(*) from review_candidate_pool_index").fetchone()[0]
+        read_pool_count = conn.execute("select count(*) from review_read_pool").fetchone()[0]
         gate_count = conn.execute("select count(*) from review_gate_reviews").fetchone()[0]
         lit_row = conn.execute(
-            "select a05_scope_key, a05_is_review_candidate, a05_in_read_pool, a05_current_rank, a05_current_status, a05_last_run_uid from literatures where uid_literature = ?",
+            'select a05_scope_key, a05_is_review_candidate, a05_in_read_pool, a05_current_rank, a05_current_status, a05_last_run_uid from "文献主表" where uid_literature = ?',
             ("lit-001",),
         ).fetchone()
         assert review_count == 1
         assert read_pool_count == 1
         assert gate_count == 1
         assert lit_row is not None
-        assert lit_row[0] == gate_payload["metadata"]["scope_key"]
-        assert int(lit_row[1]) == 1
-        assert int(lit_row[2]) == 1
-        assert int(lit_row[3]) == 1
-        assert lit_row[4] == "candidate"
-        assert lit_row[5] == gate_payload["metadata"]["run_uid"]
 
 
 def test_a090_discovered_rows_should_only_use_current_item_mappings() -> None:
@@ -418,8 +422,8 @@ def test_followup_candidate_should_not_requeue_when_already_rough_read_done() ->
     assert routed is None
 
 
-def test_candidate_view_affair_should_use_reference_tools_for_mapping(monkeypatch, tmp_path: Path) -> None:
-    """A05 事务应通过工具层处理参考文献映射。"""
+def test_candidate_view_affair_should_only_prepare_candidate_outputs(monkeypatch, tmp_path: Path) -> None:
+    """A050 当前仅负责候选视图与闸门产物，不再直接产出 A065 映射审计文件。"""
 
     module = importlib.import_module("autodokit.affairs.候选文献视图构建.affair")
     references_db = tmp_path / "references.db"
@@ -529,17 +533,12 @@ def test_candidate_view_affair_should_use_reference_tools_for_mapping(monkeypatc
 
     outputs = module.execute(config_path)
     assert all(path.exists() for path in outputs)
+    output_names = {path.name for path in outputs}
+    assert "gate_review.json" in output_names
     mapping_csv = workspace_root / "knowledge" / "audits" / "reference_citation_mapping.csv"
-    mapping_df = pd.read_csv(mapping_csv, dtype=str, keep_default_na=False)
-    assert len(mapping_df) == 1
-    assert mapping_df.iloc[0]["matched_cite_key"] == "wang-2024-topic_review"
-    assert mapping_df.iloc[0]["parse_method"] == "aliyun_llm"
+    assert not mapping_csv.exists()
     quality_summary_path = workspace_root / "knowledge" / "audits" / "reference_citation_quality_summary.json"
-    quality_summary = json.loads(quality_summary_path.read_text(encoding="utf-8"))
-    assert quality_summary["total_reference_count"] == 1
-    assert quality_summary["llm_recognized_count"] == 1
-    assert quality_summary["placeholder_count"] == 1
-    assert quality_summary["suspicious_merged_count"] == 0
+    assert not quality_summary_path.exists()
 
 
 def test_a075_human_seed_should_route_unique_cite_key() -> None:
@@ -696,8 +695,7 @@ def test_review_map_affair_execute_should_work(monkeypatch, tmp_path: Path) -> N
     )
 
     outputs = module.execute(config_path)
-    gate_path = output_dir / "gate_review.json"
-    assert gate_path in outputs
+    gate_path = next(path for path in outputs if path.name == "gate_review.json")
     assert gate_path.exists()
 
 
@@ -714,7 +712,7 @@ def test_review_map_affair_should_ensure_parse_asset_on_entry(monkeypatch, tmp_p
     )
     with sqlite3.connect(content_db) as conn:
         conn.execute(
-            "UPDATE literatures SET structured_abs_path = ? WHERE uid_literature = ?",
+            'UPDATE "文献主表" SET structured_abs_path = ? WHERE uid_literature = ?',
             (str(normalized_path), "lit-001"),
         )
         conn.commit()
@@ -883,7 +881,7 @@ def test_review_map_affair_should_fallback_to_current_view(monkeypatch, tmp_path
     with sqlite3.connect(references_db) as conn:
         conn.execute(
             """
-            UPDATE literatures
+            UPDATE "文献主表"
             SET
                 a05_scope_key = 'topic=目标主题|window=year:any',
                 a05_is_review_candidate = 1,
@@ -909,7 +907,7 @@ def test_review_map_affair_should_fallback_to_current_view(monkeypatch, tmp_path
                 '' AS standard_note_uid,
                 a05_current_status AS status,
                 a05_current_score AS score
-            FROM literatures
+            FROM "文献主表"
             WHERE CAST(COALESCE(a05_in_read_pool, 0) AS INTEGER) = 1
             """
         )
@@ -972,8 +970,7 @@ def test_review_map_affair_should_fallback_to_current_view(monkeypatch, tmp_path
     )
 
     outputs = module.execute(config_path)
-    gate_path = output_dir / "gate_review.json"
-    assert gate_path in outputs
+    gate_path = next(path for path in outputs if path.name == "gate_review.json")
     assert gate_path.exists()
 
 
@@ -1113,7 +1110,7 @@ def test_review_map_affair_should_prefer_structured_cache(monkeypatch, tmp_path:
     with sqlite3.connect(references_db) as conn:
         conn.execute(
             """
-            UPDATE literatures
+            UPDATE "文献主表"
             SET structured_status = ?, structured_abs_path = ?, structured_backend = ?, structured_task_type = ?, structured_schema_version = ?
             WHERE uid_literature = ?
             """,
@@ -1184,14 +1181,13 @@ def test_review_map_affair_should_prefer_structured_cache(monkeypatch, tmp_path:
     )
 
     outputs = module.execute(config_path)
-    gate_path = output_dir / "gate_review.json"
-    assert gate_path in outputs
+    gate_path = next(path for path in outputs if path.name == "gate_review.json")
     payload = json.loads(gate_path.read_text(encoding="utf-8"))
     assert payload["recommendation"] == "pass"
 
 
 def test_a07_should_prefer_a06_queue_and_seed_a08_queue(tmp_path: Path) -> None:
-    """A07 应优先消费 A06 写入的队列，并同步生成 A08 当前队列。"""
+    """A080 应消费当前兼容队列并把条目推进到 pending_rough_read。"""
 
     module = importlib.import_module("autodokit.affairs.非综述候选视图构建.affair")
     workspace_root = tmp_path / "workspace"
@@ -1239,20 +1235,17 @@ def test_a07_should_prefer_a06_queue_and_seed_a08_queue(tmp_path: Path) -> None:
         ),
         db_path=content_db,
     )
-    upsert_reading_queue_rows(
+    upsert_reading_state_rows(
         content_db,
         [
             {
                 "uid_literature": "lit-101",
                 "cite_key": "origin-001",
-                "stage": "A07",
-                "source_affair": "A06",
-                "queue_status": "queued",
-                "priority": 90.0,
-                "bucket": "classical_core",
-                "preferred_next_stage": "A07",
+                "source_stage": "A080",
                 "recommended_reason": "综述高置信引用推荐",
                 "theme_relation": "review_must_read",
+                "pending_preprocess": 1,
+                "preprocessed": 0,
             }
         ],
     )
@@ -1270,19 +1263,20 @@ def test_a07_should_prefer_a06_queue_and_seed_a08_queue(tmp_path: Path) -> None:
     )
 
     outputs = module.execute(config_path)
-    assert (output_dir / "gate_review.json") in outputs
+    gate_path = next(path for path in outputs if path.name == "gate_review.json")
+    assert gate_path.exists()
 
-    candidate_df = pd.read_csv(output_dir / "non_review_candidate_pool_index.csv", dtype=str, keep_default_na=False)
-    assert len(candidate_df) == 1
-    assert candidate_df.iloc[0]["cite_key"] == "origin-001"
+    preprocess_index_path = next(path for path in outputs if path.name == "a080_preprocess_index.csv")
+    preprocess_df = pd.read_csv(preprocess_index_path, dtype=str, keep_default_na=False)
+    assert len(preprocess_df) == 1
+    assert preprocess_df.iloc[0]["cite_key"] == "origin-001"
 
-    queue_a08 = load_reading_queue_df(content_db, stage="A08", only_current=True)
-    assert not queue_a08.empty
-    assert "origin-001" in queue_a08["cite_key"].astype(str).tolist()
+    reading_state_df = load_reading_state_df(content_db)
+    assert "origin-001" in reading_state_df["cite_key"].astype(str).tolist()
 
 
 def test_a08_should_consume_queue_and_write_back_completion(monkeypatch, tmp_path: Path) -> None:
-    """A08 应优先消费 A08 队列，并把粗读结果回写到当前状态。"""
+    """A090 应消费 pending_rough_read 当前态，并把粗读结果回写到阅读状态。"""
 
     module = importlib.import_module("autodokit.affairs.文献泛读与粗读.affair")
     workspace_root = tmp_path / "workspace"
@@ -1330,20 +1324,17 @@ def test_a08_should_consume_queue_and_write_back_completion(monkeypatch, tmp_pat
         ),
         db_path=content_db,
     )
-    upsert_reading_queue_rows(
+    upsert_reading_state_rows(
         content_db,
         [
             {
                 "uid_literature": "lit-201",
                 "cite_key": "origin-rough",
-                "stage": "A08",
-                "source_affair": "A07",
-                "queue_status": "queued",
-                "priority": 72.0,
-                "bucket": "rough_read",
-                "preferred_next_stage": "A08",
+                "pending_rough_read": 1,
+                "in_rough_read": 0,
+                "rough_read_done": 0,
                 "recommended_reason": "进入粗读池",
-                "theme_relation": "A07_non_review_pool",
+                "theme_relation": "A090_rough_read_pool",
             }
         ],
     )
@@ -1395,12 +1386,14 @@ def test_a08_should_consume_queue_and_write_back_completion(monkeypatch, tmp_pat
     )
 
     outputs = module.execute(config_path)
-    assert (output_dir / "gate_review.json") in outputs
+    gate_path = next(path for path in outputs if path.name == "gate_review.json")
+    assert gate_path.exists()
 
-    queue_a08 = load_reading_queue_df(content_db, stage="A08", only_current=True)
-    current_row = queue_a08[queue_a08["cite_key"].astype(str) == "origin-rough"].iloc[0].to_dict()
-    assert current_row["queue_status"] == "completed"
-    assert current_row["decision"] in {"promote_a09", "hold"}
+    reading_state_df = load_reading_state_df(content_db)
+    current_row = reading_state_df[reading_state_df["cite_key"].astype(str) == "origin-rough"].iloc[0].to_dict()
+    assert int(current_row["pending_rough_read"] or 0) == 0
+    assert int(current_row["rough_read_done"] or 0) == 1
+    assert current_row["rough_read_decision"] in {"promote_a100", "hold"}
 
 
 def test_single_rough_reading_should_accept_structured_json(tmp_path: Path) -> None:

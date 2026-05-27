@@ -21,6 +21,7 @@ import pandas as pd
 from autodokit.tools import run_online_retrieval_router
 from autodokit.tools import load_json_or_py
 from autodokit.tools import bibliodb_sqlite
+from autodokit.tools import normalize_to_legacy_contract
 from autodokit.tools import normalize_primary_fulltext_attachment_names
 from autodokit.tools import resolve_primary_attachment_normalization_settings
 from autodokit.tools.atomic.task_aok.task_instance_dir import create_task_instance_dir, mirror_artifacts_to_legacy, resolve_legacy_output_dir
@@ -164,7 +165,218 @@ def _coerce_list(value: Any) -> list[Any]:
     return [value]
 
 
+def _build_online_runtime_passthrough(raw_cfg: dict[str, Any]) -> dict[str, Any]:
+    """收集在线检索路由可直接消费的运行时参数。"""
+
+    passthrough: dict[str, Any] = {}
+    for key in (
+        "allow_manual_intervention",
+        "keep_browser_open",
+        "browser_profile_dir",
+        "browser_cdp_port",
+        "manual_wait_timeout_seconds",
+        "cnki_skip_launch",
+        "cnki_cdp_url",
+        "cnki_cdp_port",
+        "cnki_entry_url",
+        "cnki_entry_url_fallbacks",
+        "cnki_search_mode",
+        "cnki_professional_query",
+        "bailian_api_key_file",
+        "online_retrieval_config_path",
+    ):
+        value = raw_cfg.get(key)
+        if value is None:
+            continue
+        if isinstance(value, str) and not value.strip():
+            continue
+        passthrough[key] = value
+
+    cnki_browser_config = raw_cfg.get("cnki_browser_config")
+    if isinstance(cnki_browser_config, dict) and cnki_browser_config:
+        passthrough["cnki_browser_config"] = dict(cnki_browser_config)
+
+    retrieval_rules = raw_cfg.get("retrieval_rules")
+    if isinstance(retrieval_rules, dict) and retrieval_rules:
+        passthrough["retrieval_rules"] = dict(retrieval_rules)
+
+    for key, value in raw_cfg.items():
+        if not str(key).startswith("deepxiv_"):
+            continue
+        if value is None:
+            continue
+        if isinstance(value, str) and not value.strip():
+            continue
+        passthrough[str(key)] = value
+
+    return passthrough
+
+
 _A040_SC_ZH_RE = re.compile(r"[\u4e00-\u9fff]")
+_A030_KEYWORD_OUTPUT_DIRNAME = "A030_research_questions_and_keywords"
+
+
+def _dedupe_texts(values: list[Any]) -> list[str]:
+    cleaned: list[str] = []
+    seen: set[str] = set()
+    for value in list(values or []):
+        text = _normalize_text(value)
+        if not text:
+            continue
+        key = text.lower()
+        if key in seen:
+            continue
+        seen.add(key)
+        cleaned.append(text)
+    return cleaned
+
+
+def _read_json_object(path: Path) -> dict[str, Any]:
+    if not path.exists() or not path.is_file():
+        return {}
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except json.JSONDecodeError:
+        return {}
+    return dict(payload) if isinstance(payload, dict) else {}
+
+
+def _resolve_latest_workspace_artifact(
+    workspace_root: Path,
+    *,
+    explicit_path: str,
+    legacy_dir_name: str,
+    task_suffix: str,
+    artifact_name: str,
+) -> Path | None:
+    explicit_text = _normalize_text(explicit_path)
+    if explicit_text:
+        explicit_candidate = Path(explicit_text).expanduser()
+        if not explicit_candidate.is_absolute():
+            explicit_candidate = (workspace_root / explicit_candidate).resolve()
+        if explicit_candidate.exists() and explicit_candidate.is_file():
+            return explicit_candidate
+
+    tasks_root = (workspace_root / "tasks").resolve()
+    candidate_paths: list[Path] = []
+
+    legacy_candidate = tasks_root / legacy_dir_name / artifact_name
+    if legacy_candidate.exists() and legacy_candidate.is_file():
+        candidate_paths.append(legacy_candidate)
+
+    for task_dir in sorted(tasks_root.glob(f"*-{task_suffix}"), reverse=True):
+        task_candidate = task_dir / artifact_name
+        if task_candidate.exists() and task_candidate.is_file():
+            candidate_paths.append(task_candidate)
+
+    return candidate_paths[0] if candidate_paths else None
+
+
+def _split_terms_by_language(values: list[Any]) -> tuple[list[str], list[str]]:
+    zh_terms: list[str] = []
+    foreign_terms: list[str] = []
+    for text in _dedupe_texts([value for value in list(values or [])]):
+        if _A040_SC_ZH_RE.search(text):
+            zh_terms.append(text)
+        else:
+            foreign_terms.append(text)
+    return zh_terms, foreign_terms
+
+
+def _pick_preferred_query(terms: list[str], *, prefer_zh: bool) -> str:
+    ranked: list[tuple[int, int, str]] = []
+    for term in _dedupe_texts(terms):
+        word_count = len([token for token in re.split(r"\s+", term) if token])
+        has_space = 1 if " " in term else 0
+        if prefer_zh:
+            semantic_bonus = 1 if any(token in term for token in ("与", "银行", "系统性风险", "房地产")) else 0
+            ranked.append((semantic_bonus, len(term), term))
+        else:
+            semantic_bonus = 1 if word_count >= 3 or has_space else 0
+            ranked.append((semantic_bonus, len(term), term))
+
+    if not ranked:
+        return ""
+
+    ranked.sort(reverse=True)
+    return ranked[0][2]
+
+
+def _load_a030_keyword_context(raw_cfg: dict[str, Any], workspace_root: Path) -> tuple[dict[str, Any], Path | None]:
+    upstream_artifacts = dict(raw_cfg.get("upstream_artifacts") or {})
+    candidate = _resolve_latest_workspace_artifact(
+        workspace_root,
+        explicit_path=_normalize_text(raw_cfg.get("a030_keyword_set_path") or upstream_artifacts.get("a030_keyword_set_path")),
+        legacy_dir_name=_A030_KEYWORD_OUTPUT_DIRNAME,
+        task_suffix="A030",
+        artifact_name="keyword_set.json",
+    )
+    if candidate is None:
+        return {}, None
+    return _read_json_object(candidate), candidate
+
+
+def _apply_a030_keyword_context(raw_cfg: dict[str, Any], workspace_root: Path) -> tuple[dict[str, Any], dict[str, Any]]:
+    effective_cfg = dict(raw_cfg)
+    existing_query = _normalize_text(raw_cfg.get("query"))
+    existing_keyword_list = _dedupe_texts(_coerce_list(raw_cfg.get("keyword_list")))
+    metadata = dict(raw_cfg.get("metadata") or {})
+    metadata_keywords = _dedupe_texts(_coerce_list(metadata.get("keywords")))
+    has_query_inputs = bool(existing_query or existing_keyword_list or metadata_keywords)
+
+    if has_query_inputs and not _coerce_bool(raw_cfg.get("force_consume_a030_keywords"), False):
+        return effective_cfg, {"status": "SKIPPED", "reason": "query_inputs_already_present"}
+
+    keyword_context, keyword_path = _load_a030_keyword_context(raw_cfg, workspace_root)
+    if not keyword_context or keyword_path is None:
+        return effective_cfg, {"status": "SKIPPED", "reason": "a030_keyword_set_missing"}
+
+    upstream_keywords = _dedupe_texts(
+        _coerce_list(keyword_context.get("all_keywords"))
+        + _coerce_list(keyword_context.get("initial_keywords"))
+        + _coerce_list(keyword_context.get("cross_domain_phrases"))
+    )
+    keyword_limit = max(1, _coerce_int(raw_cfg.get("auto_a030_keyword_limit"), 80))
+    merged_keywords = _dedupe_texts(existing_keyword_list + metadata_keywords + upstream_keywords[:keyword_limit])
+    zh_terms, foreign_terms = _split_terms_by_language(merged_keywords)
+
+    if not existing_query:
+        effective_cfg["query"] = _pick_preferred_query(zh_terms, prefer_zh=True) or _pick_preferred_query(foreign_terms, prefer_zh=False)
+    if zh_terms and not _normalize_text(effective_cfg.get("zh_query")):
+        effective_cfg["zh_query"] = _pick_preferred_query(zh_terms, prefer_zh=True)
+    if foreign_terms and not _normalize_text(effective_cfg.get("foreign_query")):
+        effective_cfg["foreign_query"] = _pick_preferred_query(foreign_terms, prefer_zh=False)
+
+    effective_cfg["keyword_list"] = merged_keywords
+    metadata["keywords"] = merged_keywords
+    metadata["upstream_a030_keyword_set_path"] = str(keyword_path)
+    metadata["upstream_a030_description"] = _normalize_text(keyword_context.get("description"))
+    effective_cfg["metadata"] = metadata
+    return effective_cfg, {
+        "status": "PASS",
+        "keyword_set_path": str(keyword_path),
+        "keyword_count": len(merged_keywords),
+        "zh_keyword_count": len(zh_terms),
+        "foreign_keyword_count": len(foreign_terms),
+        "query": _normalize_text(effective_cfg.get("query")),
+        "zh_query": _normalize_text(effective_cfg.get("zh_query")),
+        "foreign_query": _normalize_text(effective_cfg.get("foreign_query")),
+    }
+
+
+def _resolve_source_queries(raw_cfg: dict[str, Any], query_terms: list[str]) -> tuple[str, str, str]:
+    metadata = dict(raw_cfg.get("metadata") or {})
+    default_query = _normalize_text(raw_cfg.get("query") or (query_terms[0] if query_terms else ""))
+    zh_query = _normalize_text(raw_cfg.get("zh_query") or metadata.get("zh_query"))
+    foreign_query = _normalize_text(raw_cfg.get("foreign_query") or metadata.get("foreign_query"))
+
+    zh_terms, foreign_terms = _split_terms_by_language(query_terms)
+    if not zh_query:
+        zh_query = _pick_preferred_query(zh_terms, prefer_zh=True) or default_query
+    if not foreign_query:
+        foreign_query = _pick_preferred_query(foreign_terms, prefer_zh=False) or default_query
+
+    return default_query, zh_query, foreign_query
 
 
 @dataclass(slots=True)
@@ -264,7 +476,7 @@ def _a040_sc_parse_cite_keys(payload: dict[str, Any]) -> list[str]:
 def _a040_sc_load_foreign_items(db_path: Path) -> list[_A040SpecialItem]:
     with sqlite3.connect(str(db_path)) as conn:
         conn.row_factory = sqlite3.Row
-        column_rows = conn.execute("PRAGMA table_info(literatures)").fetchall()
+        column_rows = conn.execute(f'PRAGMA table_info("{bibliodb_sqlite.LITERATURE_TABLE_NAME}")').fetchall()
         available_columns = {str(row[1]) for row in column_rows}
         if "文献语种" in available_columns:
             literature_language_select = 'COALESCE("文献语种", \"\") AS literature_language'
@@ -282,7 +494,7 @@ def _a040_sc_load_foreign_items(db_path: Path) -> list[_A040SpecialItem]:
                 lit.language,
                 lit.source_lang,
                 {literature_language_select}
-            FROM literatures AS lit
+            FROM "文献主表" AS lit
             WHERE trim(coalesce(lit.cite_key, '')) <> ''
             ORDER BY id ASC
             """
@@ -314,7 +526,7 @@ def _a040_sc_load_items_by_cite_keys(db_path: Path, cite_keys: list[str]) -> lis
         rows = conn.execute(
             """
             SELECT uid_literature, cite_key, title, year, doi, url
-            FROM literatures
+            FROM "文献主表"
             WHERE trim(coalesce(cite_key, '')) <> ''
             """
         ).fetchall()
@@ -474,11 +686,11 @@ def _run_a040_special_channel(payload: dict[str, Any]) -> dict[str, Any]:
                     """
                     SELECT lit.uid_literature, lit.has_fulltext, lit.pdf_path, lit.primary_attachment_source_path,
                            EXISTS(
-                               SELECT 1 FROM literature_attachment_links AS lnk
+                                                             SELECT 1 FROM "文献附件关联" AS lnk
                                WHERE lnk.uid_literature = lit.uid_literature
                                  AND CAST(coalesce(lnk.is_primary, 0) AS INTEGER) = 1
                            ) AS has_primary_link
-                    FROM literatures AS lit
+                                        FROM "文献主表" AS lit
                     """
                 ).fetchall()
             }
@@ -927,7 +1139,7 @@ def _local_retrieval(
     where_sql = " AND ".join(where_parts) if where_parts else "1=1"
     with sqlite3.connect(str(content_db_path)) as conn:
         conn.row_factory = sqlite3.Row
-        column_rows = conn.execute("PRAGMA table_info(literatures)").fetchall()
+        column_rows = conn.execute(f'PRAGMA table_info("{bibliodb_sqlite.LITERATURE_TABLE_NAME}")').fetchall()
         available_columns = {str(row[1]) for row in column_rows}
 
         base_columns = [
@@ -960,7 +1172,7 @@ def _local_retrieval(
 
         query_sql = (
             f"SELECT {', '.join(select_parts)} "
-            "FROM literatures "
+            f'FROM "{bibliodb_sqlite.LITERATURE_TABLE_NAME}" '
             f"WHERE {where_sql} "
             "ORDER BY CAST(COALESCE(year, 0) AS INTEGER) DESC, rowid DESC "
             "LIMIT ?"
@@ -981,7 +1193,149 @@ def _local_retrieval(
     }
 
 
-def _build_seed_items(raw_cfg: dict[str, Any], local_result: dict[str, Any], query_terms: list[str]) -> list[dict[str, Any]]:
+def _load_a045_seed_items_from_latest_a040(
+    workspace_root: Path,
+    content_db_path: Path,
+    *,
+    max_items: int,
+) -> list[dict[str, Any]]:
+    candidate = _resolve_latest_workspace_artifact(
+        workspace_root,
+        explicit_path="",
+        legacy_dir_name="A040_retrieval_governance",
+        task_suffix="A040",
+        artifact_name="online_retrieval_result.json",
+    )
+    if candidate is None:
+        return []
+
+    payload = _read_json_object(candidate)
+    results = dict(payload.get("results") or {})
+    candidates: list[dict[str, Any]] = []
+    for source_name in ("en_open_access", "deepxiv"):
+        source_payload = dict(results.get(source_name) or {})
+        for run in list(source_payload.get("source_runs") or []):
+            run_dict = dict(run or {})
+            for record in list(run_dict.get("records") or []):
+                row = dict(record or {})
+                title = _normalize_text(row.get("title"))
+                cite_key = _normalize_text(row.get("bibtex_key") or row.get("cite_key"))
+                pdf_url = _normalize_text(row.get("pdf_url"))
+                landing_url = _normalize_text(row.get("landing_url") or row.get("detail_url"))
+                detail_url = pdf_url or landing_url
+                doi = _normalize_text(row.get("doi"))
+                if not (title or cite_key or detail_url or doi):
+                    continue
+                candidates.append(
+                    {
+                        "title": title,
+                        "cite_key": "",
+                        "detail_url": detail_url,
+                        "landing_url": landing_url,
+                        "pdf_url": pdf_url,
+                        "doi": doi,
+                        "source": source_name,
+                    }
+                )
+
+    if not candidates:
+        return []
+
+    matched_candidates: list[dict[str, Any]] = []
+    with sqlite3.connect(str(content_db_path)) as conn:
+        conn.row_factory = sqlite3.Row
+        column_rows = conn.execute(f'PRAGMA table_info("{bibliodb_sqlite.LITERATURE_TABLE_NAME}")').fetchall()
+        available_columns = {str(row[1]) for row in column_rows}
+
+        select_parts = [
+            'COALESCE(uid_literature, "") AS uid_literature' if "uid_literature" in available_columns else '"" AS uid_literature',
+            'COALESCE(cite_key, "") AS cite_key' if "cite_key" in available_columns else '"" AS cite_key',
+            'COALESCE(title, "") AS title' if "title" in available_columns else (
+                'COALESCE("标题", "") AS title' if "标题" in available_columns else '"" AS title'
+            ),
+            'COALESCE(authors, "") AS authors' if "authors" in available_columns else (
+                'COALESCE(author, "") AS authors' if "author" in available_columns else (
+                    'COALESCE("作者串", "") AS authors' if "作者串" in available_columns else '"" AS authors'
+                )
+            ),
+            'COALESCE(first_author, "") AS first_author' if "first_author" in available_columns else (
+                'COALESCE("第一作者", "") AS first_author' if "第一作者" in available_columns else '"" AS first_author'
+            ),
+            'COALESCE(year, "") AS year' if "year" in available_columns else (
+                'COALESCE("年份", "") AS year' if "年份" in available_columns else '"" AS year'
+            ),
+            'COALESCE(journal, "") AS journal' if "journal" in available_columns else '"" AS journal',
+            'COALESCE(detail_url, "") AS detail_url' if "detail_url" in available_columns else '"" AS detail_url',
+            'COALESCE(landing_url, "") AS landing_url' if "landing_url" in available_columns else '"" AS landing_url',
+            'COALESCE(pdf_path, "") AS pdf_path' if "pdf_path" in available_columns else (
+                'COALESCE("全文路径", "") AS pdf_path' if "全文路径" in available_columns else '"" AS pdf_path'
+            ),
+            'COALESCE(has_fulltext, 0) AS has_fulltext' if "has_fulltext" in available_columns else (
+                'COALESCE("是否有全文", 0) AS has_fulltext' if "是否有全文" in available_columns else '0 AS has_fulltext'
+            ),
+        ]
+        rows = conn.execute(
+            f'SELECT {", ".join(select_parts)} FROM "{bibliodb_sqlite.LITERATURE_TABLE_NAME}"'
+        ).fetchall()
+
+    row_by_detail: dict[str, sqlite3.Row] = {}
+    row_by_cite_key: dict[str, sqlite3.Row] = {}
+    row_by_title: dict[str, sqlite3.Row] = {}
+    for row in rows:
+        detail_key = _normalize_text(row["detail_url"] or row["landing_url"]).lower()
+        cite_key = _normalize_text(row["cite_key"]).lower()
+        title = _normalize_text(row["title"]).lower()
+        if detail_key:
+            row_by_detail[detail_key] = row
+        if cite_key:
+            row_by_cite_key[cite_key] = row
+        if title:
+            row_by_title[title] = row
+
+    prioritized: list[tuple[int, dict[str, Any]]] = []
+    for item in candidates:
+        detail_key = _normalize_text(item.get("detail_url") or item.get("landing_url")).lower()
+        cite_key = _normalize_text(item.get("cite_key")).lower()
+        title = _normalize_text(item.get("title")).lower()
+        row = row_by_detail.get(detail_key) or row_by_cite_key.get(cite_key) or row_by_title.get(title)
+        if row is None:
+            continue
+        has_fulltext = _coerce_bool(row["has_fulltext"], False) or bool(_normalize_text(row["pdf_path"]))
+        if has_fulltext:
+            continue
+        priority = 1 if _normalize_text(item.get("pdf_url")) else 0
+        prioritized.append(
+            (
+                priority,
+                {
+                    **item,
+                    "uid_literature": _normalize_text(row["uid_literature"]),
+                    "cite_key": _normalize_text(row["cite_key"]),
+                    "authors": _normalize_text(row["authors"]),
+                    "first_author": _normalize_text(row["first_author"]),
+                    "year": _normalize_text(row["year"]),
+                    "journal": _normalize_text(row["journal"]),
+                    "detail_url": _normalize_text(item.get("detail_url") or row["detail_url"] or row["landing_url"]),
+                    "landing_url": _normalize_text(item.get("landing_url") or row["landing_url"] or row["detail_url"]),
+                },
+            )
+        )
+
+    prioritized.sort(key=lambda pair: pair[0], reverse=True)
+    for _, item in prioritized[: max(1, max_items)]:
+        matched_candidates.append(dict(item))
+    return _dedupe_seed_items(matched_candidates)
+
+
+def _build_seed_items(
+    raw_cfg: dict[str, Any],
+    local_result: dict[str, Any],
+    query_terms: list[str],
+    *,
+    workspace_root: Path,
+    content_db_path: Path,
+    runtime_node: dict[str, Any],
+) -> list[dict[str, Any]]:
     seeds: list[dict[str, Any]] = []
     for item in _coerce_list(raw_cfg.get("seed_items")):
         if isinstance(item, dict):
@@ -1007,7 +1361,20 @@ def _build_seed_items(raw_cfg: dict[str, Any], local_result: dict[str, Any], que
         if title or cite_key or detail_url:
             seeds.append(seed_item)
 
-    if not seeds:
+    if (not seeds) and runtime_node["node_code"] == "A045" and _coerce_bool(raw_cfg.get("auto_seed_from_latest_a040"), True):
+        seeds.extend(
+            _load_a045_seed_items_from_latest_a040(
+                workspace_root,
+                content_db_path,
+                max_items=max(1, _coerce_int(raw_cfg.get("auto_seed_from_latest_a040_limit"), 40)),
+            )
+        )
+
+    suppress_query_term_seed_fallback = runtime_node["node_code"] == "A045" and _coerce_bool(
+        raw_cfg.get("suppress_query_term_seed_fallback"),
+        True,
+    )
+    if (not seeds) and (not suppress_query_term_seed_fallback):
         for term in query_terms:
             if term:
                 seeds.append({"title": term})
@@ -1114,21 +1481,25 @@ def _partition_seed_items_by_language(content_db_path: Path, seed_items: list[di
     row_by_uid: dict[str, sqlite3.Row] = {}
     with sqlite3.connect(str(content_db_path)) as conn:
         conn.row_factory = sqlite3.Row
-        column_rows = conn.execute("PRAGMA table_info(literatures)").fetchall()
+        column_rows = conn.execute(f'PRAGMA table_info("{bibliodb_sqlite.LITERATURE_TABLE_NAME}")').fetchall()
         available_columns = {str(row[1]) for row in column_rows}
-        literature_language_select = 'COALESCE("文献语种", "") AS literature_language' if "文献语种" in available_columns else '"" AS literature_language'
+        select_parts = [
+            'COALESCE(cite_key, "") AS cite_key' if "cite_key" in available_columns else '"" AS cite_key',
+            'COALESCE(uid_literature, "") AS uid_literature'
+            if "uid_literature" in available_columns
+            else ('COALESCE("uid_文献", "") AS uid_literature' if "uid_文献" in available_columns else '"" AS uid_literature'),
+            'COALESCE(title, "") AS title'
+            if "title" in available_columns
+            else ('COALESCE("标题", "") AS title' if "标题" in available_columns else '"" AS title'),
+            'COALESCE(language, "") AS language' if "language" in available_columns else '"" AS language',
+            'COALESCE(source_lang, "") AS source_lang' if "source_lang" in available_columns else '"" AS source_lang',
+            'COALESCE(literature_language, "") AS literature_language'
+            if "literature_language" in available_columns
+            else ('COALESCE("文献语种", "") AS literature_language' if "文献语种" in available_columns else '"" AS literature_language'),
+        ]
 
         rows = conn.execute(
-            """
-            SELECT
-                COALESCE(cite_key, '') AS cite_key,
-                COALESCE(uid_literature, '') AS uid_literature,
-                COALESCE(title, '') AS title,
-                COALESCE(language, '') AS language,
-                COALESCE(source_lang, '') AS source_lang,
-                {literature_language_select}
-            FROM literatures
-            """.replace("{literature_language_select}", literature_language_select)
+            f'SELECT {", ".join(select_parts)} FROM "{bibliodb_sqlite.LITERATURE_TABLE_NAME}"'
         ).fetchall()
 
     for row in rows:
@@ -1190,10 +1561,11 @@ def _run_online_metadata(
     online_sources = [str(item).strip() for item in _coerce_list(raw_cfg.get("online_sources") or ["zh_cnki", "en_open_access"]) if str(item).strip()]
     online_max_pages = max(1, _coerce_int(raw_cfg.get("online_max_pages"), 1))
     en_per_page = max(1, _coerce_int(raw_cfg.get("en_per_page"), 20))
+    runtime_passthrough = _build_online_runtime_passthrough(raw_cfg)
     results: dict[str, Any] = {}
     zh_seed_items, foreign_seed_items = _partition_seed_items_by_language(content_db_path, seed_items)
 
-    effective_query = query or (query_terms[0] if query_terms else "")
+    effective_query, zh_query, foreign_query = _resolve_source_queries(raw_cfg, query_terms)
     for source in online_sources:
         if source == "zh_cnki":
             if not zh_seed_items:
@@ -1203,11 +1575,31 @@ def _run_online_metadata(
                 "source": "zh_cnki",
                 "mode": "search",
                 "action": "metadata",
-                "zh_query": effective_query,
+                "zh_query": zh_query or effective_query,
                 "max_pages": online_max_pages,
                 "zh_output_dir": str((output_dir / "online" / "zh_cnki").resolve()),
                 "content_db": str(content_db_path),
                 "seed_items": zh_seed_items,
+                **runtime_passthrough,
+            }
+            results[source] = run_online_retrieval_router(payload)
+            continue
+
+        if source == "deepxiv":
+            if not foreign_seed_items:
+                results[source] = {"status": "SKIPPED", "reason": "no_foreign_seed_items"}
+                continue
+            payload = {
+                "source": "deepxiv",
+                "mode": "search",
+                "action": "metadata",
+                "query": foreign_query or effective_query,
+                "max_pages": online_max_pages,
+                "per_page": en_per_page,
+                "output_dir": str((output_dir / "online" / "deepxiv").resolve()),
+                "content_db": str(content_db_path),
+                "seed_items": foreign_seed_items,
+                **runtime_passthrough,
             }
             results[source] = run_online_retrieval_router(payload)
             continue
@@ -1220,12 +1612,13 @@ def _run_online_metadata(
                 "source": "en_open_access",
                 "mode": "search",
                 "action": "metadata",
-                "query": effective_query,
+                "query": foreign_query or effective_query,
                 "max_pages": online_max_pages,
                 "per_page": en_per_page,
                 "output_dir": str((output_dir / "online" / "en_open_access").resolve()),
                 "content_db": str(content_db_path),
                 "seed_items": foreign_seed_items,
+                **runtime_passthrough,
             }
             results[source] = run_online_retrieval_router(payload)
 
@@ -1249,6 +1642,7 @@ def _run_online_acquisition(
         return {"status": "SKIPPED", "mode": mode, "results": {}}
 
     online_sources = [str(item).strip() for item in _coerce_list(raw_cfg.get("online_sources") or ["zh_cnki", "en_open_access"]) if str(item).strip()]
+    runtime_passthrough = _build_online_runtime_passthrough(raw_cfg)
     results: dict[str, Any] = {}
     zh_seed_items, foreign_seed_items = _partition_seed_items_by_language(content_db_path, seed_items)
 
@@ -1266,6 +1660,7 @@ def _run_online_acquisition(
                     "content_db": str(content_db_path),
                     "seed_items": zh_seed_items,
                     "output_dir": str((output_dir / "acquisition" / "zh_cnki" / "download").resolve()),
+                    **runtime_passthrough,
                 }
                 source_results["download_pdf"] = run_online_retrieval_router(payload)
             if mode in {"html_extract", "both"}:
@@ -1276,8 +1671,32 @@ def _run_online_acquisition(
                     "content_db": str(content_db_path),
                     "seed_items": zh_seed_items,
                     "output_dir": str((output_dir / "acquisition" / "zh_cnki" / "html").resolve()),
+                    **runtime_passthrough,
                 }
                 source_results["html_extract"] = run_online_retrieval_router(payload)
+            results[source] = source_results
+            continue
+
+        if source == "deepxiv":
+            if not foreign_seed_items:
+                results[source] = {"status": "SKIPPED", "reason": "no_foreign_seed_items"}
+                continue
+            if mode in {"download_pdf", "both"}:
+                payload = {
+                    "source": "deepxiv",
+                    "mode": "batch",
+                    "action": "download",
+                    "content_db": str(content_db_path),
+                    "seed_items": foreign_seed_items,
+                    "output_dir": str((output_dir / "acquisition" / "deepxiv" / "download").resolve()),
+                    **runtime_passthrough,
+                }
+                source_results["download_pdf"] = run_online_retrieval_router(payload)
+            if mode in {"html_extract", "both"}:
+                source_results["html_extract"] = {
+                    "status": "SKIPPED",
+                    "reason": "deepxiv_structured_extract_not_enabled",
+                }
             results[source] = source_results
             continue
 
@@ -1293,6 +1712,7 @@ def _run_online_acquisition(
                     "content_db": str(content_db_path),
                     "seed_items": foreign_seed_items,
                     "output_dir": str((output_dir / "acquisition" / "en_open_access" / "download").resolve()),
+                    **runtime_passthrough,
                 }
                 source_results["download_pdf"] = run_online_retrieval_router(payload)
                 if _coerce_bool(raw_cfg.get("enable_en_school_portal_retry"), True):
@@ -1310,6 +1730,7 @@ def _run_online_acquisition(
                     "content_db": str(content_db_path),
                     "seed_items": foreign_seed_items,
                     "output_dir": str((output_dir / "acquisition" / "en_open_access" / "html").resolve()),
+                    **runtime_passthrough,
                 }
                 source_results["html_extract"] = run_online_retrieval_router(payload)
             results[source] = source_results
@@ -1323,12 +1744,14 @@ def _run_online_acquisition(
 
 def _extract_en_failed_records(download_result: dict[str, Any]) -> list[dict[str, Any]]:
     failed: list[dict[str, Any]] = []
-    for item in list(download_result.get("results") or []):
+    for item in list(download_result.get("records") or download_result.get("results") or []):
         item_dict = dict(item or {})
-        status = _normalize_text((item_dict.get("result") or {}).get("status") or item_dict.get("status"))
+        primary_result = dict(item_dict.get("result") or {})
+        nested_result = dict(primary_result.get("result") or {})
+        status = _normalize_text(nested_result.get("status") or primary_result.get("status") or item_dict.get("status"))
         if status == "PASS":
             continue
-        record = dict(item_dict.get("record") or {})
+        record = dict(item_dict.get("record") or primary_result.get("record") or nested_result.get("record") or {})
         if not record:
             continue
         title = _normalize_text(record.get("title"))
@@ -1430,7 +1853,98 @@ def _extract_online_metadata_records(online_result: dict[str, Any]) -> list[dict
             }
         )
 
+    deepxiv = dict(results.get("deepxiv") or {})
+    deepxiv_paths = dict(deepxiv.get("metadata_paths") or {})
+    for row in _read_json_list(str(deepxiv_paths.get("json") or "")):
+        title = _normalize_text(row.get("title"))
+        if not title:
+            continue
+        normalized.append(
+            {
+                "source": "deepxiv",
+                "title": title,
+                "authors": "; ".join([_normalize_text(item) for item in _coerce_list(row.get("authors")) if _normalize_text(item)]),
+                "year": _normalize_text(row.get("year")),
+                "journal": _normalize_text(row.get("journal")),
+                "abstract": _normalize_text(row.get("abstract")),
+                "keywords": _normalize_text(row.get("keywords")),
+                "detail_url": _normalize_text(row.get("pdf_url") or row.get("landing_url") or row.get("detail_url")),
+                "pdf_path": "",
+            }
+        )
+
     return normalized
+
+
+def _extract_acquisition_metadata_records(acquisition_result: dict[str, Any]) -> list[dict[str, Any]]:
+    normalized: list[dict[str, Any]] = []
+    results = dict(acquisition_result.get("results") or {})
+
+    source_specs = [
+        ("zh_cnki", "download_pdf"),
+        ("en_open_access", "download_pdf"),
+        ("en_open_access", "download_pdf_retry_chaoxing_portal"),
+        ("deepxiv", "download_pdf"),
+    ]
+    for source_name, channel_name in source_specs:
+        source_payload = dict(results.get(source_name) or {})
+        channel_payload = dict(source_payload.get(channel_name) or {})
+        for item in list(channel_payload.get("records") or channel_payload.get("results") or []):
+            item_dict = dict(item or {})
+            status, record, saved_path = _unwrap_download_item(item_dict)
+            if status and status.upper() not in {"PASS", "SUCCESS", "DOWNLOADED", "DONE"} and not saved_path:
+                continue
+            title = _normalize_text(record.get("title") or item_dict.get("title"))
+            if not title:
+                continue
+            landing_url = _normalize_text(record.get("landing_url") or record.get("detail_url") or item_dict.get("landing_url") or item_dict.get("detail_url"))
+            detail_url = _normalize_text(landing_url or record.get("detail_url") or record.get("pdf_url") or item_dict.get("detail_url") or item_dict.get("pdf_url"))
+            normalized.append(
+                {
+                    "source": source_name,
+                    "uid_literature": _normalize_text(record.get("uid_literature") or item_dict.get("uid_literature")),
+                    "cite_key": _normalize_text(record.get("cite_key") or record.get("bibtex_key") or item_dict.get("cite_key") or item_dict.get("bibtex_key")),
+                    "title": title,
+                    "authors": "; ".join([_normalize_text(author) for author in _coerce_list(record.get("authors")) if _normalize_text(author)]) or _normalize_text(record.get("authors")),
+                    "first_author": _normalize_text(record.get("first_author")),
+                    "year": _normalize_text(record.get("year")),
+                    "journal": _normalize_text(record.get("journal")),
+                    "abstract": _normalize_text(record.get("abstract")),
+                    "keywords": _normalize_text(record.get("keywords")),
+                    "detail_url": detail_url,
+                    "landing_url": landing_url,
+                    "pdf_path": _normalize_text(saved_path),
+                }
+            )
+
+    return normalized
+
+
+def _unwrap_download_item(item: dict[str, Any]) -> tuple[str, dict[str, Any], str]:
+    item_dict = dict(item or {})
+    final_result = dict(item_dict.get("final_result") or {})
+    primary_result = dict(item_dict.get("result") or final_result or {})
+    nested_result = dict(primary_result.get("result") or final_result.get("result") or {})
+    status = _normalize_text(
+        nested_result.get("status")
+        or primary_result.get("status")
+        or final_result.get("status")
+        or item_dict.get("status")
+    )
+    record = dict(
+        item_dict.get("record")
+        or primary_result.get("record")
+        or final_result.get("record")
+        or nested_result.get("record")
+        or {}
+    )
+    saved_path = _normalize_text(
+        nested_result.get("saved_path")
+        or primary_result.get("saved_path")
+        or final_result.get("saved_path")
+        or item_dict.get("saved_path")
+    )
+    return status, record, saved_path
 
 
 def _apply_download_paths(metadata_records: list[dict[str, Any]], acquisition_result: dict[str, Any]) -> list[dict[str, Any]]:
@@ -1440,11 +1954,9 @@ def _apply_download_paths(metadata_records: list[dict[str, Any]], acquisition_re
 
     zh = dict(results.get("zh_cnki") or {})
     zh_download = dict(zh.get("download_pdf") or {})
-    for item in list(zh_download.get("results") or []):
+    for item in list(zh_download.get("records") or zh_download.get("results") or []):
         item_dict = dict(item or {})
-        download = dict(item_dict.get("download") or {})
-        record = dict(item_dict.get("record") or {})
-        saved_path = _normalize_text(download.get("saved_path") or item_dict.get("saved_path"))
+        _, record, saved_path = _unwrap_download_item(item_dict)
         detail_url = _normalize_text(record.get("detail_url") or item_dict.get("detail_url"))
         title = _normalize_text(record.get("title") or item_dict.get("title"))
         if saved_path:
@@ -1455,12 +1967,23 @@ def _apply_download_paths(metadata_records: list[dict[str, Any]], acquisition_re
 
     en = dict(results.get("en_open_access") or {})
     en_download = dict(en.get("download_pdf") or {})
-    for item in list(en_download.get("results") or []):
+    for item in list(en_download.get("records") or en_download.get("results") or []):
         item_dict = dict(item or {})
-        result = dict(item_dict.get("result") or {})
-        record = dict(item_dict.get("record") or {})
-        saved_path = _normalize_text(result.get("saved_path") or item_dict.get("saved_path"))
-        detail_url = _normalize_text(record.get("landing_url") or record.get("detail_url"))
+        _, record, saved_path = _unwrap_download_item(item_dict)
+        detail_url = _normalize_text(record.get("pdf_url") or record.get("landing_url") or record.get("detail_url"))
+        title = _normalize_text(record.get("title") or item_dict.get("title"))
+        if saved_path:
+            if detail_url:
+                path_by_key[f"detail:{detail_url.lower()}"] = saved_path
+            if title:
+                path_by_key[f"title:{title.lower()}"] = saved_path
+
+    deepxiv = dict(results.get("deepxiv") or {})
+    deepxiv_download = dict(deepxiv.get("download_pdf") or {})
+    for item in list(deepxiv_download.get("records") or deepxiv_download.get("results") or []):
+        item_dict = dict(item or {})
+        _, record, saved_path = _unwrap_download_item(item_dict)
+        detail_url = _normalize_text(record.get("pdf_url") or record.get("detail_url") or record.get("landing_url"))
         title = _normalize_text(record.get("title") or item_dict.get("title"))
         if saved_path:
             if detail_url:
@@ -1469,13 +1992,10 @@ def _apply_download_paths(metadata_records: list[dict[str, Any]], acquisition_re
                 path_by_key[f"title:{title.lower()}"] = saved_path
 
     en_retry = dict(en.get("download_pdf_retry_chaoxing_portal") or {})
-    for item in list(en_retry.get("results") or []):
+    for item in list(en_retry.get("records") or en_retry.get("results") or []):
         item_dict = dict(item or {})
-        final_result = dict(item_dict.get("final_result") or {})
-        result = dict(final_result.get("result") or {})
-        record = dict(final_result.get("record") or item_dict.get("record") or {})
-        saved_path = _normalize_text(result.get("saved_path") or final_result.get("saved_path"))
-        detail_url = _normalize_text(record.get("landing_url") or record.get("detail_url"))
+        _, record, saved_path = _unwrap_download_item(item_dict)
+        detail_url = _normalize_text(record.get("pdf_url") or record.get("landing_url") or record.get("detail_url"))
         title = _normalize_text(record.get("title") or item_dict.get("title"))
         if saved_path:
             if detail_url:
@@ -1492,6 +2012,65 @@ def _apply_download_paths(metadata_records: list[dict[str, Any]], acquisition_re
             or _normalize_text(row.get("pdf_path"))
         )
     return records
+
+
+def _hydrate_online_records_from_content_db(
+    content_db_path: Path,
+    records: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    if (not records) or (not content_db_path.exists()):
+        return [dict(item) for item in records]
+
+    existing_df = bibliodb_sqlite.load_literatures_df(content_db_path)
+    if existing_df is None or existing_df.empty:
+        return [dict(item) for item in records]
+
+    existing_df = existing_df.fillna("")
+    row_by_detail: dict[str, dict[str, Any]] = {}
+    row_by_title: dict[str, dict[str, Any]] = {}
+    row_by_cite_key: dict[str, dict[str, Any]] = {}
+    for _, row in existing_df.iterrows():
+        row_dict = row.to_dict()
+        for detail_candidate in [row_dict.get("detail_url"), row_dict.get("landing_url")]:
+            detail_key = _normalize_text(detail_candidate).lower()
+            if detail_key:
+                row_by_detail.setdefault(detail_key, row_dict)
+        title_key = _normalize_text(row_dict.get("title")).lower()
+        if title_key:
+            row_by_title.setdefault(title_key, row_dict)
+        cite_key = _normalize_text(row_dict.get("cite_key")).lower()
+        if cite_key:
+            row_by_cite_key.setdefault(cite_key, row_dict)
+
+    hydrated: list[dict[str, Any]] = []
+    for raw_item in records:
+        item = dict(raw_item)
+        detail_key = _normalize_text(item.get("detail_url") or item.get("landing_url")).lower()
+        title_key = _normalize_text(item.get("title")).lower()
+        cite_key = _normalize_text(item.get("cite_key")).lower()
+        matched = row_by_detail.get(detail_key) or row_by_cite_key.get(cite_key) or row_by_title.get(title_key)
+        if matched is not None:
+            for field_name in [
+                "uid_literature",
+                "cite_key",
+                "title",
+                "authors",
+                "first_author",
+                "year",
+                "journal",
+                "abstract",
+                "keywords",
+                "detail_url",
+                "landing_url",
+                "source_type",
+                "clean_title",
+                "title_norm",
+            ]:
+                if not _normalize_text(item.get(field_name)) and _normalize_text(matched.get(field_name)):
+                    item[field_name] = matched.get(field_name)
+        hydrated.append(item)
+
+    return hydrated
 
 
 def _dedupe_online_records(records: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -1604,19 +2183,21 @@ def _build_online_literatures_df(records: list[dict[str, Any]]) -> pd.DataFrame:
         year_raw = _normalize_text(item.get("year"))
         year_int = parse_year_int(year_raw)
         year_text = str(year_int) if year_int is not None else year_raw
-        first_author = extract_first_author(authors)
-        clean_title = clean_title_text(title)
+        first_author = _normalize_text(item.get("first_author")) or extract_first_author(authors)
+        clean_title = _normalize_text(item.get("clean_title")) or clean_title_text(title)
+        title_norm = _normalize_text(item.get("title_norm")) or clean_title
         detail_url = _normalize_text(item.get("detail_url") or item.get("landing_url"))
         pdf_path = _normalize_text(item.get("pdf_path"))
         literature_source_type = _infer_online_literature_source_type(item)
         cite_key = _normalize_text(item.get("cite_key")) or build_cite_key(first_author, year_text, clean_title)
+        uid_literature = _normalize_text(item.get("uid_literature")) or generate_uid(first_author, year_int, clean_title)
         rows.append(
             {
-                "uid_literature": generate_uid(first_author, year_int, clean_title),
+            "uid_literature": uid_literature,
                 "cite_key": cite_key,
                 "title": title,
                 "clean_title": clean_title,
-                "title_norm": clean_title,
+            "title_norm": title_norm,
                 "authors": authors,
                 "first_author": first_author,
                 "year": year_text,
@@ -1640,7 +2221,11 @@ def _build_online_literatures_df(records: list[dict[str, Any]]) -> pd.DataFrame:
     return pd.DataFrame(rows)
 
 
-def _build_online_attachments_df(literatures_df: pd.DataFrame) -> pd.DataFrame:
+def _build_online_attachments_df(
+    literatures_df: pd.DataFrame,
+    *,
+    source_affair: str = "A040",
+) -> pd.DataFrame:
     rows: list[dict[str, Any]] = []
     for _, row in literatures_df.iterrows():
         pdf_path = _normalize_text(row.get("pdf_path"))
@@ -1665,7 +2250,7 @@ def _build_online_attachments_df(literatures_df: pd.DataFrame) -> pd.DataFrame:
                 "source_path": source_ref,
                 "source_type": f"{literature_source_type}.attachment",
                 "附件来源类型": _infer_attachment_source_label(literature_source_type),
-                "来源事务": "A040",
+                "来源事务": source_affair,
                 "checksum": "",
                 "is_primary": 1,
                 "status": "available",
@@ -1676,7 +2261,12 @@ def _build_online_attachments_df(literatures_df: pd.DataFrame) -> pd.DataFrame:
     return pd.DataFrame(rows)
 
 
-def _upsert_literatures(content_db_path: Path, records: list[dict[str, Any]]) -> dict[str, Any]:
+def _upsert_literatures(
+    content_db_path: Path,
+    records: list[dict[str, Any]],
+    *,
+    source_affair: str = "A040",
+) -> dict[str, Any]:
     records = _dedupe_online_records(records)
     if not records:
         return {"status": "SKIPPED", "inserted": 0, "updated": 0, "records": 0}
@@ -1684,7 +2274,10 @@ def _upsert_literatures(content_db_path: Path, records: list[dict[str, Any]]) ->
         return {"status": "BLOCKED", "reason": "content_db_missing", "inserted": 0, "updated": 0, "records": len(records)}
 
     incoming_literatures_df = _build_online_literatures_df(records)
-    incoming_attachments_df = _build_online_attachments_df(incoming_literatures_df)
+    incoming_attachments_df = _build_online_attachments_df(
+        incoming_literatures_df,
+        source_affair=source_affair,
+    )
     existing_literatures_df = bibliodb_sqlite.load_literatures_df(content_db_path)
     existing_attachments_df = bibliodb_sqlite.load_attachments_df(content_db_path)
     existing_tags_df = bibliodb_sqlite.load_tags_df(content_db_path)
@@ -1696,12 +2289,23 @@ def _upsert_literatures(content_db_path: Path, records: list[dict[str, Any]]) ->
         incoming_attachments_df=incoming_attachments_df,
         incoming_tags_df=pd.DataFrame(),
     )
-    bibliodb_sqlite.replace_reference_tables_only(
-        content_db_path,
-        literatures_df=merged_literatures_df,
-        attachments_df=merged_attachments_df,
-        tags_df=merged_tags_df,
-    )
+    try:
+        bibliodb_sqlite.replace_reference_tables_only(
+            content_db_path,
+            literatures_df=merged_literatures_df,
+            attachments_df=merged_attachments_df,
+            tags_df=merged_tags_df,
+        )
+    except sqlite3.OperationalError as exc:
+        return {
+            "status": "BLOCKED",
+            "reason": "content_db_constraint_mismatch",
+            "error": str(exc),
+            "inserted": 0,
+            "updated": 0,
+            "records": len(records),
+            "attachment_records": int(len(incoming_attachments_df)),
+        }
 
     return {
         "status": "PASS",
@@ -1714,6 +2318,9 @@ def _upsert_literatures(content_db_path: Path, records: list[dict[str, Any]]) ->
 
 def _build_gate_review(
     *,
+    node_code: str,
+    node_name: str,
+    gate_code: str,
     local_hit_count: int,
     online_record_count: int,
     acquisition_mode: str,
@@ -1725,11 +2332,15 @@ def _build_gate_review(
     total_effective = local_hit_count + online_record_count
     gate_action = "pass_next" if total_effective > 0 else "fallback_current"
     return {
-        "node_code": "A040",
-        "node_name": "文献检索与入库",
-        "gate_code": "G040",
+        "node_code": node_code,
+        "node_name": node_name,
+        "gate_code": gate_code,
         "gate_action": gate_action,
-        "summary": "A040 三阶段检索执行完成" if total_effective > 0 else "A040 命中不足，建议回流 A030/A040 继续补检",
+        "summary": (
+            f"{node_code} 三阶段执行完成"
+            if total_effective > 0
+            else f"{node_code} 命中不足，建议回流 A030/{node_code} 继续补检"
+        ),
         "checks": {
             "local_hit_count": local_hit_count,
             "online_triggered": online_triggered,
@@ -1741,6 +2352,21 @@ def _build_gate_review(
             "feedback_request_count": int(feedback_request_count),
             "feedback_source_stage_count": int(feedback_source_stage_count),
         },
+    }
+
+
+def _resolve_runtime_node_contract(raw_cfg: dict[str, Any]) -> dict[str, str]:
+    node_code = (_normalize_text(raw_cfg.get("node_code")) or "A040").upper()
+    node_name = _normalize_text(raw_cfg.get("node_name")) or "文献检索与入库"
+    gate_code = (_normalize_text(raw_cfg.get("gate_code")) or f"G{node_code[1:]}").upper()
+    next_node_code = (_normalize_text(raw_cfg.get("next_node_code")) or "A050").upper()
+    summary_title = _normalize_text(raw_cfg.get("summary_title")) or f"{node_code} {node_name}执行摘要"
+    return {
+        "node_code": node_code,
+        "node_name": node_name,
+        "gate_code": gate_code,
+        "next_node_code": next_node_code,
+        "summary_title": summary_title,
     }
 
 
@@ -1765,14 +2391,15 @@ def default_retrieval_handler(payload: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-@affair_auto_git_commit("A040")
-def execute(config_path: Path) -> list[Path]:
+def _execute_impl(config_path: Path) -> list[Path]:
     """事务执行入口。"""
 
-    raw_cfg = load_json_or_py(config_path)
+    raw_cfg = normalize_to_legacy_contract(load_json_or_py(config_path))
+    runtime_node = _resolve_runtime_node_contract(raw_cfg)
     workspace_root = Path(str(raw_cfg.get("workspace_root") or config_path.parents[2]))
     if not workspace_root.is_absolute():
         raise ValueError(f"workspace_root 必须为绝对路径: {workspace_root}")
+    raw_cfg, a030_keyword_context = _apply_a030_keyword_context(raw_cfg, workspace_root)
     content_db_path = _resolve_content_db(raw_cfg, workspace_root)
 
     governance_result = default_retrieval_handler(
@@ -1788,9 +2415,9 @@ def execute(config_path: Path) -> list[Path]:
     )
 
     legacy_output_dir = resolve_legacy_output_dir(raw_cfg, config_path)
-    output_dir = create_task_instance_dir(workspace_root, "A040")
+    output_dir = create_task_instance_dir(workspace_root, runtime_node["node_code"])
 
-    # A040 特殊渠道分支：开放源批量 -> 学校门户重试 -> 人工清单。
+    # 检索治理类节点的特殊渠道分支：开放源批量 -> 学校门户重试 -> 人工清单。
     special_mode = _normalize_text(raw_cfg.get("special_channel_mode") or "none").lower()
     special_enabled = _coerce_bool(raw_cfg.get("enable_special_channel"), False)
     if special_enabled and special_mode in {"en_special_download", "en_open_access_special"}:
@@ -1813,11 +2440,11 @@ def execute(config_path: Path) -> list[Path]:
         }
         special_result = _run_a040_special_channel(special_payload)
         gate_review = {
-            "node_code": "A040",
-            "node_name": "文献检索与入库",
-            "gate_code": "G040",
+            "node_code": runtime_node["node_code"],
+            "node_name": runtime_node["node_name"],
+            "gate_code": runtime_node["gate_code"],
             "gate_action": "pass_next" if int(special_result.get("success") or 0) > 0 else "fallback_current",
-            "summary": "A040 特殊渠道执行完成",
+            "summary": f"{runtime_node['node_code']} 特殊渠道执行完成",
             "checks": {
                 "special_channel_mode": special_mode,
                 "success": int(special_result.get("success") or 0),
@@ -1843,7 +2470,7 @@ def execute(config_path: Path) -> list[Path]:
         readable_path.write_text(
             "\n".join(
                 [
-                    "# A040 检索执行摘要",
+                    f"# {runtime_node['summary_title']}",
                     "",
                     "- mode: special_channel",
                     f"- portal_order: {', '.join([str(item) for item in list(special_result.get('portal_order') or [])])}",
@@ -1884,6 +2511,8 @@ def execute(config_path: Path) -> list[Path]:
     enable_online_retrieval = _coerce_bool(raw_cfg.get("enable_online_retrieval"), False)
     online_trigger_policy = _normalize_text(raw_cfg.get("online_trigger_policy") or "gap_only").lower()
     online_acquisition_mode = _normalize_text(raw_cfg.get("online_acquisition_mode") or "none").lower()
+    explicit_seed_items = [item for item in _coerce_list(raw_cfg.get("seed_items"))]
+    force_local_seed_scan = runtime_node["node_code"] == "A045" and (not explicit_seed_items) and bool(query_terms)
 
     local_result = {
         "status": "SKIPPED",
@@ -1891,7 +2520,7 @@ def execute(config_path: Path) -> list[Path]:
         "hit_count": 0,
         "records": [],
     }
-    if enable_local_retrieval:
+    if enable_local_retrieval or force_local_seed_scan:
         local_result = _local_retrieval(
             content_db_path,
             query_terms,
@@ -1899,6 +2528,8 @@ def execute(config_path: Path) -> list[Path]:
             year_end=year_end,
             max_local_hits=max_local_hits,
         )
+        if force_local_seed_scan and not enable_local_retrieval:
+            local_result["forced_for_a045_seed_resolution"] = True
 
     local_hit_count = _coerce_int(local_result.get("hit_count"), 0)
     gap_count = max(0, local_hit_threshold - local_hit_count)
@@ -1910,7 +2541,14 @@ def execute(config_path: Path) -> list[Path]:
         "should_online_fallback": gap_count > 0,
     }
 
-    seed_items = _build_seed_items(raw_cfg, local_result, query_terms)
+    seed_items = _build_seed_items(
+        raw_cfg,
+        local_result,
+        query_terms,
+        workspace_root=workspace_root,
+        content_db_path=content_db_path,
+        runtime_node=runtime_node,
+    )
     feedback_requests = _load_feedback_requests(raw_cfg)
     feedback_seed_items = _build_seed_items_from_feedback_requests(feedback_requests)
     if feedback_seed_items:
@@ -1968,8 +2606,14 @@ def execute(config_path: Path) -> list[Path]:
         )
 
     online_records = _extract_online_metadata_records(online_retrieval_result)
+    online_records.extend(_extract_acquisition_metadata_records(online_acquisition_result))
+    online_records = _hydrate_online_records_from_content_db(content_db_path, online_records)
     online_records = _apply_download_paths(online_records, online_acquisition_result)
-    upsert_summary = _upsert_literatures(content_db_path, online_records)
+    upsert_summary = _upsert_literatures(
+        content_db_path,
+        online_records,
+        source_affair=runtime_node["node_code"],
+    )
     normalization_settings = resolve_primary_attachment_normalization_settings(raw_cfg, workspace_root=workspace_root)
     attachment_normalization_summary = {
         "status": "SKIPPED",
@@ -1997,9 +2641,13 @@ def execute(config_path: Path) -> list[Path]:
         "upsert_summary": upsert_summary,
         "attachment_normalization": attachment_normalization_summary,
         "feedback_request_count": len(feedback_requests),
+        "a030_keyword_context": a030_keyword_context,
     }
 
     gate_review = _build_gate_review(
+        node_code=runtime_node["node_code"],
+        node_name=runtime_node["node_name"],
+        gate_code=runtime_node["gate_code"],
         local_hit_count=local_hit_count,
         online_record_count=len(online_records),
         acquisition_mode=online_acquisition_mode,
@@ -2063,7 +2711,7 @@ def execute(config_path: Path) -> list[Path]:
                     "source_uid_literature": _normalize_text(item.get("source_uid_literature")),
                     "source_cite_key": _normalize_text(item.get("source_cite_key")),
                     "target_task_uid": output_dir.name,
-                    "target_node": "A040",
+                    "target_node": runtime_node["node_code"],
                 }
                 for item in feedback_requests
             ],
@@ -2076,9 +2724,10 @@ def execute(config_path: Path) -> list[Path]:
     gate_path.write_text(json.dumps(gate_review, ensure_ascii=False, indent=2), encoding="utf-8")
 
     readable_lines = [
-        "# A040 检索执行摘要",
+        f"# {runtime_node['summary_title']}",
         "",
         f"- query: {query_text}",
+        f"- a030_keyword_context_status: {a030_keyword_context.get('status', 'SKIPPED')}",
         f"- local_hit_count: {local_hit_count}",
         f"- local_hit_threshold: {local_hit_threshold}",
         f"- online_triggered: {online_triggered}",
@@ -2119,7 +2768,7 @@ def execute(config_path: Path) -> list[Path]:
                 translation_policy=translation_policy,
                 workspace_root=str(raw_cfg.get("workspace_root") or "").strip() or None,
                 max_items=int(raw_cfg.get("translation_max_items") or 0),
-                affair_name="A040",
+                affair_name=runtime_node["node_code"],
                 config_path=config_path,
             )
             result["metadata_translation"] = translation_result
@@ -2137,14 +2786,14 @@ def execute(config_path: Path) -> list[Path]:
             content_db_path,
             [
                 {
-                    "node_code": "A040",
-                    "node_name": "文献检索与入库",
+                    "node_code": runtime_node["node_code"],
+                    "node_name": runtime_node["node_name"],
                     "pending_run": 0,
                     "in_progress": 0,
                     "completed": 1,
                     "gate_status": str(gate_review.get("gate_action") or "pass_next"),
-                    "summary": "A040 三阶段检索执行完成",
-                    "next_node_code": "A050",
+                    "summary": str(gate_review.get("summary") or f"{runtime_node['node_code']} 执行完成"),
+                    "next_node_code": runtime_node["next_node_code"],
                     "failure_reason": "",
                     "retry_count": 0,
                 }
@@ -2153,3 +2802,10 @@ def execute(config_path: Path) -> list[Path]:
     except Exception:
         pass
     return written_files
+
+
+@affair_auto_git_commit("A040")
+def execute(config_path: Path) -> list[Path]:
+    """A040 官方事务入口。"""
+
+    return _execute_impl(config_path)

@@ -72,6 +72,121 @@ REQUEST_TIMEOUT = 60
 MANUAL_WAIT_TIMEOUT_SECONDS = 900
 MANUAL_WAIT_POLL_SECONDS = 5
 HUMAN_STEP_DELAY_MS = 1200
+CNKI_ENTRY_URL_PRIMARY = "https://ai.cnki.net/aisearch"
+CNKI_ENTRY_URL_SECONDARY = "https://kns.cnki.net/kns8s/AdvSearch"
+CNKI_ENTRY_URL_TERTIARY = "https://kns.cnki.net/kns8s/search"
+CNKI_PROFESSIONAL_PROFILE_FILE = Path(__file__).with_name("cnki_professional_search_profile.json")
+
+
+def _load_json_file(path: Path) -> dict[str, Any]:
+    """读取 JSON 文件。"""
+
+    if not path.exists():
+        return {}
+    try:
+        return json.loads(path.read_text(encoding="utf-8"))
+    except Exception:  # noqa: BLE001
+        return {}
+
+
+def _normalize_term_list(values: Any) -> list[str]:
+    """将输入归一化为去空去重的字符串列表。"""
+
+    items: list[str] = []
+    if isinstance(values, str):
+        values = [values]
+    if not isinstance(values, (list, tuple, set)):
+        return items
+    seen: set[str] = set()
+    for value in values:
+        term = _normalize_text(value)
+        if not term:
+            continue
+        lowered = term.lower()
+        if lowered in seen:
+            continue
+        seen.add(lowered)
+        items.append(term)
+    return items
+
+
+def _quote_cnki_value(value: str) -> str:
+    """为 CNKI 查询表达式转义单引号。"""
+
+    return _normalize_text(value).replace("'", "''")
+
+
+def _build_cnki_field_clause(field: str, operator: str, value: str) -> str:
+    """构造 CNKI 单字段条件。"""
+
+    field_text = _normalize_text(field)
+    operator_text = _normalize_text(operator) or "="
+    value_text = _quote_cnki_value(value)
+    return f"{field_text} {operator_text} '{value_text}'"
+
+
+def _build_cnki_or_group(clauses: list[str]) -> str:
+    """构造 OR 组。"""
+
+    filtered = [clause for clause in clauses if _normalize_text(clause)]
+    if not filtered:
+        return ""
+    if len(filtered) == 1:
+        return filtered[0]
+    return "(" + " OR ".join(filtered) + ")"
+
+
+def _build_cnki_and_group(clauses: list[str]) -> str:
+    """构造 AND 组。"""
+
+    filtered = [clause for clause in clauses if _normalize_text(clause)]
+    if not filtered:
+        return ""
+    return " AND ".join(filtered)
+
+
+def _load_cnki_professional_profile(config: dict[str, Any], project_root: Path) -> dict[str, Any]:
+    """读取 CNKI 专业检索知识文件。"""
+
+    profile_path = _normalize_text(config.get("cnki_professional_profile_path"))
+    if profile_path:
+        candidate = Path(profile_path).expanduser()
+        if not candidate.is_absolute():
+            candidate = (project_root / candidate).resolve()
+        profile = _load_json_file(candidate)
+        if profile:
+            return profile
+    return _load_json_file(CNKI_PROFESSIONAL_PROFILE_FILE)
+
+
+def _build_cnki_professional_query(config: dict[str, Any], profile: dict[str, Any]) -> str:
+    """基于结构化知识文件生成 CNKI 专业检索式。"""
+
+    explicit_query = _normalize_text(config.get("cnki_professional_query"))
+    if explicit_query:
+        return explicit_query
+
+    field_tokens = dict(profile.get("field_tokens") or {})
+    operators = dict(profile.get("operators") or {})
+    defaults = dict(profile.get("defaults") or {})
+
+    subject_field = _normalize_text(config.get("cnki_professional_subject_field") or defaults.get("subject_field") or field_tokens.get("subject") or "SU")
+    year_field = _normalize_text(config.get("cnki_professional_year_field") or defaults.get("year_field") or field_tokens.get("year") or "YE")
+    review_fields = _normalize_term_list(config.get("cnki_professional_review_fields") or defaults.get("review_fields") or [field_tokens.get("title") or "TI", field_tokens.get("keyword") or "KY", field_tokens.get("abstract") or "AB"])
+    subject_terms = _normalize_term_list(config.get("cnki_professional_subject_terms") or config.get("keyword_list") or defaults.get("subject_terms"))
+    review_terms = _normalize_term_list(config.get("cnki_professional_review_terms") or defaults.get("review_terms") or ["综述", "文献综述", "研究综述"])
+
+    subject_operator = _normalize_text(config.get("cnki_professional_subject_operator") or defaults.get("subject_operator") or operators.get("contains") or "%=")
+    review_operator = _normalize_text(config.get("cnki_professional_review_operator") or defaults.get("review_operator") or operators.get("equals") or "=")
+    year_operator = _normalize_text(config.get("cnki_professional_year_operator") or defaults.get("year_operator") or operators.get("gte") or ">=")
+
+    year_start = _normalize_text(config.get("year_start") or defaults.get("year_start") or "2021")
+    year_clause = _build_cnki_field_clause(year_field, year_operator, year_start) if year_start else ""
+
+    subject_clauses = [_build_cnki_field_clause(subject_field, subject_operator, term) for term in subject_terms]
+    review_clauses = [_build_cnki_field_clause(field, review_operator, term) for field in review_fields for term in review_terms]
+
+    return _build_cnki_and_group([_build_cnki_and_group(subject_clauses), _build_cnki_or_group(review_clauses), year_clause])
 
 
 def _resolve_project_root(config: dict[str, Any]) -> Path:
@@ -545,7 +660,7 @@ def _build_submit_search_script() -> str:
     """构造搜索脚本。"""
 
     return r"""
-    async (params) => {
+                async (params) => {
       const waitFor = (predicate, limit = 50) => new Promise((resolve, reject) => {
         let retry = 0;
         const tick = () => {
@@ -565,17 +680,93 @@ def _build_submit_search_script() -> str:
       });
 
             const beforeUrl = location.href;
-            await waitFor(() => document.querySelector('textarea.search-input, input.search-input, #txt_SearchText'));
-            const input = document.querySelector('textarea.search-input, input.search-input, #txt_SearchText');
+            const mode = String(params.mode || 'auto').toLowerCase();
+            const professionalQuery = String(params.professional_query || '').trim();
+            const isVisible = (node) => {
+                if (!node)
+                {
+                    return false;
+                }
+                const rect = node.getBoundingClientRect();
+                const style = window.getComputedStyle(node);
+                return rect.width > 0 && rect.height > 0 && style.visibility !== 'hidden' && style.display !== 'none';
+            };
+            const clickByText = (patterns) => {
+                const nodes = Array.from(document.querySelectorAll('a,button,span,div,label,li'));
+                for (const node of nodes)
+                {
+                    const text = (node.innerText || node.textContent || '').trim();
+                    if (!text || !isVisible(node))
+                    {
+                        continue;
+                    }
+                    for (const pattern of patterns)
+                    {
+                        if (pattern.test(text))
+                        {
+                            node.click();
+                            return true;
+                        }
+                    }
+                }
+                return false;
+            };
+
+            if (mode === 'professional')
+            {
+                clickByText([/专业检索/i, /^专业$/i]);
+            }
+            else if (mode === 'advanced')
+            {
+                clickByText([/高级检索/i, /^高级$/i]);
+            }
+
+            const locateInput = () => {
+                const selectors = [
+                    'textarea.search-input',
+                    'input.search-input',
+                    '#txt_SearchText',
+                    'textarea[placeholder*="文献"]',
+                    'input[placeholder*="文献"]',
+                    'textarea[placeholder*="检索"]',
+                    'input[placeholder*="检索"]',
+                    'textarea',
+                    'input[type="text"]',
+                    'input:not([type])'
+                ];
+                const candidates = Array.from(document.querySelectorAll(selectors.join(',')));
+                for (const candidate of candidates)
+                {
+                    if (!isVisible(candidate) || candidate.disabled || candidate.readOnly)
+                    {
+                        continue;
+                    }
+                    return candidate;
+                }
+                return null;
+            };
+
+            await waitFor(() => Boolean(locateInput()));
+            const input = locateInput();
             if (!input)
             {
                 throw new Error('search_input_not_found');
             }
+            const queryText = (mode === 'professional' && professionalQuery) ? professionalQuery : String(params.query || '');
             input.focus();
-            input.value = params.query;
+            input.value = queryText;
             input.dispatchEvent(new Event('input', { bubbles: true }));
             input.dispatchEvent(new Event('change', { bubbles: true }));
-            const searchButton = document.querySelector('.search-btn, input.search-btn, button.search-btn, a.search-btn');
+            const searchButton = document.querySelector(
+                '.search-btn, input.search-btn, button.search-btn, a.search-btn, #btnSearch, button[type="submit"], input[type="submit"]'
+            ) || Array.from(document.querySelectorAll('a,button,span,div')).find((node) => {
+                if (!isVisible(node))
+                {
+                    return false;
+                }
+                const text = (node.innerText || node.textContent || '').trim();
+                return /检索|搜索|search/i.test(text);
+            });
             if (searchButton)
             {
                 searchButton.click();
@@ -588,9 +779,47 @@ def _build_submit_search_script() -> str:
             return {
                 status: 'SUBMITTED',
                 before_url: beforeUrl,
+                mode,
+                query: queryText,
             };
     }
     """
+
+
+def _build_cnki_entry_candidates(config: dict[str, Any]) -> list[str]:
+    """构造 CNKI 入口候选列表，按主入口和备选入口顺序返回。"""
+
+    candidates: list[str] = []
+
+    raw_primary = _normalize_text(config.get("cnki_entry_url"))
+    if raw_primary:
+        candidates.append(raw_primary)
+    else:
+        candidates.append(CNKI_ENTRY_URL_PRIMARY)
+
+    fallback_values = config.get("cnki_entry_url_fallbacks")
+    if isinstance(fallback_values, (list, tuple)):
+        for value in fallback_values:
+            normalized = _normalize_text(value)
+            if normalized:
+                candidates.append(normalized)
+    elif isinstance(fallback_values, str):
+        normalized = _normalize_text(fallback_values)
+        if normalized:
+            candidates.append(normalized)
+
+    candidates.append(CNKI_ENTRY_URL_SECONDARY)
+    candidates.append(CNKI_ENTRY_URL_TERTIARY)
+
+    deduped: list[str] = []
+    seen: set[str] = set()
+    for url in candidates:
+        lowered = url.lower()
+        if lowered in seen:
+            continue
+        seen.add(lowered)
+        deduped.append(url)
+    return deduped
 
 
 def _detect_blocking_state(page: Page) -> dict[str, Any]:
@@ -989,7 +1218,11 @@ def run_pipeline(config: dict[str, Any]) -> dict[str, Any]:
     )
     port = int(config.get("cnki_cdp_port") or 9222)
     cdp_url = str(config.get("cnki_cdp_url") or f"http://127.0.0.1:{port}")
-    entry_url = str(config.get("cnki_entry_url") or "https://kns.cnki.net/kns8s/search")
+    entry_candidates = _build_cnki_entry_candidates(config)
+    entry_url = entry_candidates[0]
+    search_mode = _normalize_text(config.get("cnki_search_mode")).lower() or "auto"
+    professional_profile = _load_cnki_professional_profile(config, project_root)
+    professional_query = _build_cnki_professional_query(config, professional_profile)
     browser_config = dict(config.get("cnki_browser_config") or {})
     skip_launch = bool(
         config.get("cnki_skip_launch", False)
@@ -1040,13 +1273,20 @@ def run_pipeline(config: dict[str, Any]) -> dict[str, Any]:
             playwright, context = _connect_context_with_retry(cdp_url)
         except Exception as exc:
             if skip_launch:
+                attach_error = (
+                    "当前配置为仅接管已有浏览器，但未连接到可用 CDP 会话。"
+                    "请先在目标浏览器开启远程调试并提供 cnki_cdp_url/cnki_cdp_port。"
+                )
+                if browser_config.get("vscode_embedded_only", False):
+                    attach_error = (
+                        "当前配置要求接管预先准备好的 VS Code 内嵌浏览器会话，"
+                        "但仓库目前尚未内建 VS Code 内嵌浏览器启动器。"
+                        "请先手动准备可被 CDP 接管的 Chromium 会话，并提供 cnki_cdp_url/cnki_cdp_port。"
+                    )
                 return {
                     "status": "BLOCKED",
                     "error_type": "BrowserAttachRequired",
-                    "error": (
-                        "当前配置为仅接管已有浏览器，但未连接到可用 CDP 会话。"
-                        "请先在目标浏览器开启远程调试并提供 cnki_cdp_url/cnki_cdp_port。"
-                    ),
+                    "error": attach_error,
                     "query": query,
                     "record_count": 0,
                     "download_count": 0,
@@ -1064,20 +1304,39 @@ def run_pipeline(config: dict[str, Any]) -> dict[str, Any]:
         page.set_default_timeout(int(browser_config.get("timeout_ms") or 15000))
         manual_events.extend(_wait_for_human_if_needed(page, bailian_api_key_file, allow_manual))
 
-        if entry_url and entry_url not in page.url and not _is_result_page(page):
-            print("[CNKI] 当前活动页不是目标知网页面，自动新开入口页继续执行。")
-            page = context.new_page()
-            page.set_default_timeout(int(browser_config.get("timeout_ms") or 15000))
-            page.goto(entry_url, wait_until="domcontentloaded")
-            _human_pause(page)
-            manual_events.extend(_wait_for_human_if_needed(page, bailian_api_key_file, allow_manual))
-
         if _is_result_page(page):
             print("[CNKI] 当前已在结果页，直接从现有列表继续。")
         else:
-            print(f"[CNKI] 提交检索词: {query}")
-            _safe_evaluate(page, _build_submit_search_script(), {"query": query})
-            _wait_for_result_page(page)
+            search_errors: list[str] = []
+            for index, candidate in enumerate(entry_candidates):
+                try:
+                    if index > 0 or candidate not in page.url:
+                        print(f"[CNKI] 切换入口页: {candidate}")
+                        page.goto(candidate, wait_until="domcontentloaded")
+                        _human_pause(page)
+                        manual_events.extend(_wait_for_human_if_needed(page, bailian_api_key_file, allow_manual))
+
+                    current_mode = search_mode
+                    if "/kns8s/search" in candidate and search_mode == "professional":
+                        current_mode = "auto"
+
+                    print(f"[CNKI] 提交检索词: {query} (mode={current_mode}, entry={candidate})")
+                    _safe_evaluate(
+                        page,
+                        _build_submit_search_script(),
+                        {
+                            "query": query,
+                            "mode": current_mode,
+                            "professional_query": professional_query,
+                        },
+                    )
+                    _wait_for_result_page(page)
+                    search_errors.clear()
+                    break
+                except Exception as exc:  # noqa: BLE001
+                    search_errors.append(f"[{candidate}] {exc}")
+            if search_errors and not _is_result_page(page):
+                raise RuntimeError("CNKI 多入口检索均失败: " + " | ".join(search_errors))
         manual_events.extend(_wait_for_human_if_needed(page, bailian_api_key_file, allow_manual))
         blocked_state = _detect_blocking_state(page)
         if blocked_state.get("reason") == "auth_client_invalid":

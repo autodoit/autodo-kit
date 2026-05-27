@@ -1,9 +1,8 @@
 """统一内容主库 SQLite 适配层。
 
 该模块为 AOK 内容层提供统一物理主库能力：
-
-1. 将旧的 `references.db` / `knowledge.db` 路径统一解析到 `content.db`；
-2. 初始化文献域、知识域和跨域关系表；
+1. 将旧的 `references.db` / `knowledge.db` 路径统一解析到 `content.db`。
+2. 初始化文献域、知识域和跨域关系表。
 3. 提供关系表回填与兼容字段同步能力。
 """
 from __future__ import annotations
@@ -23,19 +22,36 @@ from autodokit.tools.time_utils import now_iso
 
 DEFAULT_CONTENT_DB_NAME = "content.db"
 CONTENT_DB_DIRECTORY_NAME = "content"
-ATTACHMENT_TABLE_NAME = "attachments"
-ATTACHMENT_LINK_TABLE_NAME = "literature_attachment_links"
-TAG_TABLE_NAME = "tags"
-AUTHOR_TABLE_NAME = "authors"
-AUTHOR_LINK_TABLE_NAME = "literature_authors"
-KNOWLEDGE_LINK_TABLE_NAME = "knowledge_literature_links"
-KNOWLEDGE_EVIDENCE_TABLE_NAME = "knowledge_evidence_links"
-KNOWLEDGE_NOTES_TABLE_NAME = "knowledge_notes"
-TRANSLATION_ASSET_TABLE_NAME = "literature_translation_assets"
-READING_STATE_TABLE_NAME = "literature_reading_state"
-READING_STATE_OVERVIEW_VIEW_NAME = "阅读状态总视图"
-WORKSPACE_NODE_STATE_TABLE_NAME = "workspace_node_state"
-REVIEW_STATE_TABLE_NAME = "literature_review_state"
+LITERATURE_TABLE_NAME = "文献主表"
+ATTACHMENT_TABLE_NAME = "附件表"
+ATTACHMENT_LINK_TABLE_NAME = "文献附件关联"
+TAG_TABLE_NAME = "标签表"
+LITERATURE_TAG_TABLE_NAME = "文献标签关联"
+AUTHOR_TABLE_NAME = "作者表"
+AUTHOR_LINK_TABLE_NAME = "文献作者关联"
+PARSE_ASSET_TABLE_NAME = "文献解析资产"
+TRANSLATION_ASSET_TABLE_NAME = "文献翻译资产"
+TRANSLATION_ASSET_STORAGE_TABLE_NAME = "content_translation_assets_storage"
+CHUNK_SET_TABLE_NAME = "文献分块集"
+CHUNK_TABLE_NAME = "文献分块"
+KNOWLEDGE_INDEX_TABLE_NAME = "知识索引"
+KNOWLEDGE_ATTACHMENT_TABLE_NAME = "知识附件"
+KNOWLEDGE_LINK_TABLE_NAME = "知识文献关联"
+KNOWLEDGE_EVIDENCE_TABLE_NAME = "知识证据关联"
+KNOWLEDGE_NOTES_TABLE_NAME = "知识笔记"
+AUTO_KNOWLEDGE_LINK_SOURCE_FIELDS: tuple[str, ...] = (
+    "知识索引",
+    "文献主表.standard_note_uid",
+)
+AUTO_KNOWLEDGE_EVIDENCE_SOURCE_FIELDS: tuple[str, ...] = (
+    "知识索引.evidence_uids",
+)
+READING_STATE_TABLE_NAME = "文献阅读状态"
+WORKSPACE_NODE_STATE_TABLE_NAME = "工作区节点状态"
+REVIEW_STATE_TABLE_NAME = "综述文献阅读状态"
+FLOW_STATE_TABLE_NAME = "文献流程状态"
+READING_QUEUE_TABLE_NAME = "文献预处理"
+FLOW_STATE_OVERVIEW_VIEW_NAME = "文献流程状态总视图"
 WORKSPACE_NODE_OVERVIEW_VIEW_NAME = "工作区节点状态总视图"
 WORKSPACE_NODE_FILTER_VIEWS: tuple[tuple[str, str], ...] = (
     ("待执行节点清单", "IFNULL(待执行, 0) = 1"),
@@ -44,61 +60,402 @@ WORKSPACE_NODE_FILTER_VIEWS: tuple[tuple[str, str], ...] = (
     ("闸门待处理节点清单", "IFNULL(闸门状态, '') IN ('retry_current', 'fallback_current', 'pause_current', 'stop_workflow')"),
     ("失败待重试节点清单", "IFNULL(失败原因, '') <> ''"),
 )
-REVIEW_STATE_OVERVIEW_VIEW_NAME = "综述文献阅读状态总视图"
-REVIEW_STATE_FILTER_VIEWS: tuple[tuple[str, str], ...] = (
-    ("待筛选综述文献清单", "IFNULL(待综述筛选, 0) = 1"),
-    ("候选综述文献清单", "IFNULL(已入综述候选, 0) = 1"),
-    ("待解析综述文献清单", "IFNULL(待综述解析确认, 0) = 1"),
-    ("已解析综述文献清单", "IFNULL(综述解析已就绪, 0) = 1"),
-    ("待预处理综述文献清单", "IFNULL(待参考文献预处理, 0) = 1"),
-    ("待阅读综述文献清单", "IFNULL(待综述阅读, 0) = 1"),
-    ("正在阅读综述文献清单", "IFNULL(正综述阅读, 0) = 1"),
-    ("已阅读综述文献清单", "IFNULL(已综述阅读, 0) = 1"),
+FLOW_STATE_FILTER_VIEWS: tuple[tuple[str, str], ...] = (
+    ("待处理文献流程清单", "IFNULL(当前状态, '') = '待处理'"),
+    ("处理中文献流程清单", "IFNULL(当前状态, '') = '处理中'"),
+    ("失败文献流程清单", "IFNULL(当前状态, '') = '失败'"),
+    ("阻塞文献流程清单", "IFNULL(当前状态, '') = '阻塞'"),
 )
-LEGACY_REVIEW_VIEW_NAMES: tuple[str, ...] = (
-    "综述阅读状态总视图",
-    "待综述筛选文献清单",
-    "综述候选文献清单",
-    "待综述解析文献清单",
-    "待参考文献预处理综述清单",
-    "待综述阅读文献清单",
-    "正综述阅读文献清单",
-    "已综述阅读文献清单",
+FLOW_STAGE_LIST_VIEWS: tuple[tuple[str, str], ...] = (
+    ("待预处理文献清单", "IFNULL(当前阶段, '') = '普通文献预处理' AND IFNULL(当前状态, '') IN ('待处理', '阻塞')"),
+    ("补件待办文献清单", "IFNULL(当前阶段, '') = '普通文献预处理' AND IFNULL(当前状态, '') = '阻塞'"),
+    ("待泛读文献清单", "IFNULL(当前阶段, '') = '普通文献泛读' AND IFNULL(当前状态, '') = '待处理'"),
+    ("待批判性研读文献清单", "IFNULL(当前阶段, '') = '批判性研读' AND IFNULL(当前状态, '') = '待处理'"),
 )
-READING_STATE_FILTER_VIEWS: tuple[tuple[str, str], ...] = (
-    ("待预处理文献清单", "IFNULL(pending_preprocess, 0) = 1"),
-    (
-        "补件待办文献清单",
-        "IFNULL(pending_preprocess, 0) = 1 AND IFNULL(preprocess_status, '') = 'missing_attachment'",
-    ),
-    ("已预处理文献清单", "IFNULL(preprocessed, 0) = 1"),
-    ("待泛读文献清单", "IFNULL(pending_rough_read, 0) = 1"),
-    (
-        "未解析待泛读文献清单",
-        "IFNULL(pending_rough_read, 0) = 1 AND IFNULL(preprocessed, 0) = 0 AND IFNULL(allow_unparsed_read, 0) = 1",
-    ),
-    ("正泛读文献清单", "IFNULL(in_rough_read, 0) = 1"),
-    ("已泛读文献清单", "IFNULL(rough_read_done, 0) = 1"),
-    (
-        "待批次汇总文献清单",
-        "IFNULL(rough_read_done, 0) = 1 AND IFNULL(analysis_batch_synced, 0) = 0",
-    ),
-    ("待研读文献清单", "IFNULL(pending_deep_read, 0) = 1"),
-    (
-        "待批判性研读文献清单",
-        "IFNULL(deep_read_decision, '') = 'parse_ready' AND IFNULL(deep_read_done, 0) = 0",
-    ),
-    ("正研读文献清单", "IFNULL(in_deep_read, 0) = 1"),
-    ("已研读文献清单", "IFNULL(deep_read_done, 0) = 1"),
-    (
-        "未解析已泛读文献清单",
-        "IFNULL(rough_read_without_parse_done, 0) = 1",
-    ),
-    (
-        "未解析已研读文献清单",
-        "IFNULL(deep_read_without_parse_done, 0) = 1",
-    ),
+TRANSACTION_RELATION_OVERVIEW_VIEW_NAME = "事务关联总视图"
+TRANSACTION_RELATION_NODE_LABELS: tuple[tuple[str, str], ...] = (
+    ("A040", "文献检索事务"),
+    ("A050", "预处理排序事务"),
+    ("A055", "预处理执行事务"),
+    ("A060", "综述候选构建事务"),
+    ("A065", "综述参考扩展事务"),
+    ("A070", "综述综合研读事务"),
+    ("A075", "普通候选导入事务"),
+    ("A080", "普通文献预处理事务"),
+    ("A090", "普通文献泛读事务"),
+    ("A095", "泛读批次汇总事务"),
+    ("A100", "深度解析准备事务"),
+    ("A105", "批判性研读事务"),
+    ("A110", "文献矩阵事务"),
+    ("A120", "研究脉络梳理事务"),
+    ("A130", "领域知识框架构建事务"),
+    ("A140", "创新点池构建事务"),
+    ("A150", "创新点可行性验证事务"),
+    ("A160", "成果收敛交付事务"),
 )
+TRANSACTION_RELATION_FILTER_VIEWS: tuple[tuple[str, str], ...] = tuple(
+    (f"{node_code}事务关联视图", node_code)
+    for node_code, _ in TRANSACTION_RELATION_NODE_LABELS
+)
+LEGACY_TRANSACTION_RELATION_OVERVIEW_VIEW_NAMES: tuple[str, ...] = (
+    "事务编号关联总视图",
+    "研究任务关联总视图",
+)
+LEGACY_TRANSACTION_RELATION_FILTER_VIEW_NAMES: tuple[str, ...] = (
+    *(f"{node_code}事务编号关联视图" for node_code, _ in TRANSACTION_RELATION_NODE_LABELS),
+    "候选发现任务视图",
+    "预处理排序任务视图",
+    "预处理执行任务视图",
+    "综述候选构建任务视图",
+    "综述参考扩展任务视图",
+    "综述综合研读任务视图",
+    "普通候选导入任务视图",
+    "普通文献预处理任务视图",
+    "普通文献泛读任务视图",
+    "泛读批次汇总任务视图",
+    "深度解析准备任务视图",
+    "批判性研读任务视图",
+    "文献矩阵任务视图",
+    "研究脉络梳理任务视图",
+    "领域知识框架构建任务视图",
+    "创新点池构建任务视图",
+    "创新点可行性验证任务视图",
+    "成果收敛交付任务视图",
+)
+LITERATURE_PARSE_STATE_PENDING = "未完成"
+LITERATURE_PARSE_STATE_RUNNING = "在运行"
+LITERATURE_PARSE_STATE_COMPLETED = "已完成"
+
+
+def normalize_literature_parse_state(value: object, *, fallback: str = LITERATURE_PARSE_STATE_PENDING) -> str:
+    text = str(value or "").strip()
+    if not text:
+        return fallback
+    normalized = text.lower().replace("-", "_").replace(" ", "_")
+    if text == LITERATURE_PARSE_STATE_COMPLETED or normalized in {"ready", "success", "succeeded", "successful", "completed", "done", "ok", "已处理", "完成", "成功"}:
+        return LITERATURE_PARSE_STATE_COMPLETED
+    if text == LITERATURE_PARSE_STATE_RUNNING or normalized in {"running", "in_progress", "processing", "处理中", "执行中", "进行中", "dispatching", "queued_remote"}:
+        return LITERATURE_PARSE_STATE_RUNNING
+    if text == LITERATURE_PARSE_STATE_PENDING or normalized in {"", "pending", "queued", "failed", "error", "blocked", "missing_attachment", "未处理", "处理失败", "失败", "阻塞", "需补件"}:
+        return LITERATURE_PARSE_STATE_PENDING
+    return fallback
+
+
+def derive_literature_parse_state(
+    *,
+    parse_state: object = "",
+    current_parse_status: object = "",
+    structured_status: object = "",
+    preprocess_state: object = "",
+    has_parse_result: bool = False,
+) -> str:
+    explicit_state = normalize_literature_parse_state(parse_state, fallback="")
+    if explicit_state:
+        return explicit_state
+
+    for candidate in (current_parse_status, structured_status, preprocess_state):
+        if normalize_literature_parse_state(candidate, fallback="") == LITERATURE_PARSE_STATE_COMPLETED:
+            return LITERATURE_PARSE_STATE_COMPLETED
+
+    for candidate in (current_parse_status, structured_status, preprocess_state):
+        if normalize_literature_parse_state(candidate, fallback="") == LITERATURE_PARSE_STATE_RUNNING:
+            return LITERATURE_PARSE_STATE_RUNNING
+
+    if has_parse_result:
+        return LITERATURE_PARSE_STATE_COMPLETED
+    return LITERATURE_PARSE_STATE_PENDING
+
+
+CONTENTDB_CHINESE_CONTRACT_VIEWS: dict[str, tuple[str, dict[str, str]]] = {
+    "文献主表": (
+        LITERATURE_TABLE_NAME,
+        {
+            "id": "id",
+            "uid_literature": "uid_literature",
+            "cite_key": "cite_key",
+            "title": "标题",
+            "clean_title": "标题清洗",
+            "title_norm": "标题标准化",
+            "authors": "作者串",
+            "first_author": "第一作者",
+            "year": "年份",
+            "entry_type": "entry_type",
+            "abstract": "摘要",
+            "keywords": "关键词",
+            "pdf_path": "PDF路径",
+            "is_placeholder": "是否占位",
+            "placeholder_reason": "占位原因",
+            "placeholder_status": "占位状态",
+            "placeholder_run_uid": "placeholder_run_uid",
+            "has_fulltext": "是否有全文",
+            "primary_attachment_name": "主附件名称",
+            "primary_attachment_source_path": "主附件源路径",
+            "standard_note_uid": "standard_note_uid",
+            "source_type": "来源类型",
+            "origin_path": "来源路径",
+            "created_at": "创建时间",
+            "updated_at": "更新时间",
+            "structured_status": "结构化状态",
+            "structured_abs_path": "结构化正文路径",
+            "structured_backend": "结构化后端",
+            "structured_task_type": "结构化任务类型",
+            "structured_updated_at": "结构化更新时间",
+            "structured_schema_version": "结构化Schema版本",
+            "structured_text_length": "结构化文本长度",
+            "structured_reference_count": "结构化参考文献数",
+            "文献语种": "文献语种",
+            "title_zh": "标题译文",
+            "abstract_zh": "摘要译文",
+            "keywords_zh": "关键词译文",
+            "metadata_translation_status": "元数据翻译状态",
+            "metadata_translation_provider": "元数据翻译提供方",
+            "metadata_translation_model": "元数据翻译模型",
+            "metadata_translation_updated_at": "元数据翻译更新时间",
+            "note": "备注",
+            "parse_state": "解析状态",
+            "literature_type": "文献类型",
+            "pdf_rel_path": "PDF相对路径",
+        },
+    ),
+    "附件表": (
+        ATTACHMENT_TABLE_NAME,
+        {
+            "id": "id",
+            "uid_attachment": "uid_attachment",
+            "attachment_name": "附件名称",
+            "attachment_type": "附件类型",
+            "file_ext": "文件扩展名",
+            "storage_path": "存储路径",
+            "source_path": "来源路径",
+            "附件来源类型": "附件来源类型",
+            "来源事务": "来源事务",
+            "checksum": "校验和",
+            "status": "状态",
+            "created_at": "创建时间",
+            "updated_at": "更新时间",
+            "path_rel": "相对路径",
+        },
+    ),
+    "文献附件关联": (
+        ATTACHMENT_LINK_TABLE_NAME,
+        {
+            "id": "id",
+            "uid_attachment_link": "uid_attachment_link",
+            "uid_literature": "uid_literature",
+            "uid_attachment": "uid_attachment",
+            "link_role": "关联角色",
+            "is_primary": "是否主附件",
+            "source_type": "来源类型",
+            "legacy_uid_attachment": "legacy_uid_attachment",
+            "created_at": "创建时间",
+            "updated_at": "更新时间",
+        },
+    ),
+    "作者表": (
+        AUTHOR_TABLE_NAME,
+        {
+            "id": "id",
+            "uid_author": "uid_author",
+            "display_name": "显示姓名",
+            "normalized_name": "规范姓名",
+            "surname": "姓",
+            "given_names": "名",
+            "orcid": "研究者标识",
+            "source_type": "来源类型",
+            "created_at": "创建时间",
+            "updated_at": "更新时间",
+            "标准作者名": "标准作者名",
+            "作者类型": "作者类型",
+            "作者质量标记": "作者质量标记",
+        },
+    ),
+    "文献作者关联": (
+        AUTHOR_LINK_TABLE_NAME,
+        {
+            "id": "id",
+            "uid_literature_author": "uid_literature_author",
+            "uid_literature": "uid_literature",
+            "uid_author": "uid_author",
+            "author_order": "作者顺序",
+            "is_first_author": "是否第一作者",
+            "is_corresponding": "是否通讯作者",
+            "display_name": "显示姓名",
+            "source_type": "来源类型",
+            "created_at": "创建时间",
+            "updated_at": "更新时间",
+        },
+    ),
+    "标签表": (
+        TAG_TABLE_NAME,
+        {
+            "id": "id",
+            "uid_tag": "uid_tag",
+            "tag": "标签",
+            "tag_norm": "标签规范名",
+            "tag_display": "标签显示名",
+            "tag_group": "标签分组",
+            "created_at": "创建时间",
+            "updated_at": "更新时间",
+        },
+    ),
+    "文献标签关联": (
+        LITERATURE_TAG_TABLE_NAME,
+        {
+            "id": "id",
+            "uid_literature": "uid_literature",
+            "cite_key": "cite_key",
+            "tag": "标签",
+            "tag_norm": "标签规范名",
+            "source_type": "来源类型",
+            "created_at": "创建时间",
+            "updated_at": "更新时间",
+        },
+    ),
+    "文献解析资产": (
+        PARSE_ASSET_TABLE_NAME,
+        {
+            "id": "id",
+            "asset_uid": "asset_uid",
+            "uid_literature": "uid_literature",
+            "cite_key": "cite_key",
+            "uid_attachment": "uid_attachment",
+            "parse_level": "解析层级",
+            "backend": "解析后端",
+            "model_name": "模型名称",
+            "asset_dir": "资产目录",
+            "normalized_structured_path": "结构化正文路径",
+            "reconstructed_markdown_path": "重构Markdown路径",
+            "linear_index_path": "线性索引路径",
+            "elements_path": "元素路径",
+            "chunks_jsonl_path": "分块JSONL路径",
+            "parse_record_path": "解析记录路径",
+            "quality_report_path": "质量报告路径",
+            "parse_status": "解析状态",
+            "last_run_uid": "last_run_uid",
+            "is_current": "是否当前有效",
+            "created_at": "创建时间",
+            "updated_at": "更新时间",
+        },
+    ),
+    "文献翻译资产": (
+        TRANSLATION_ASSET_STORAGE_TABLE_NAME,
+        {
+            "id": "id",
+            "translation_uid": "translation_uid",
+            "uid_literature": "uid_literature",
+            "cite_key": "cite_key",
+            "source_asset_uid": "source_asset_uid",
+            "source_kind": "来源类型",
+            "target_lang": "目标语种",
+            "translation_scope": "翻译范围",
+            "provider": "提供方",
+            "model_name": "模型名称",
+            "asset_dir": "资产目录",
+            "translated_markdown_path": "译文Markdown路径",
+            "translated_structured_path": "译文结构化路径",
+            "translation_audit_path": "翻译审计路径",
+            "status": "状态",
+            "is_current": "是否当前有效",
+            "created_at": "创建时间",
+            "updated_at": "更新时间",
+        },
+    ),
+    "文献分块集": (
+        CHUNK_SET_TABLE_NAME,
+        {
+            "id": "id",
+            "chunks_uid": "chunks_uid",
+            "source_scope": "来源范围",
+            "chunks_abs_path": "分块绝对路径",
+            "source_backend": "来源后端",
+            "chunk_count": "分块数量",
+            "source_doc_count": "来源文献数",
+            "created_at": "创建时间",
+            "status": "状态",
+        },
+    ),
+    "文献分块": (
+        CHUNK_TABLE_NAME,
+        {
+            "id": "id",
+            "chunk_id": "chunk_id",
+            "chunks_uid": "chunks_uid",
+            "uid_literature": "uid_literature",
+            "cite_key": "cite_key",
+            "shard_abs_path": "分片路径",
+            "chunk_index": "分块序号",
+            "chunk_type": "分块类型",
+            "char_start": "起始字符位",
+            "char_end": "结束字符位",
+            "text_length": "文本长度",
+            "created_at": "创建时间",
+        },
+    ),
+    "工作区节点状态": (
+        WORKSPACE_NODE_STATE_TABLE_NAME,
+        {
+            "node_code": "节点编码",
+            "node_name": "节点名称",
+            "pending_run": "待执行",
+            "in_progress": "执行中",
+            "completed": "已完成",
+            "gate_status": "闸门状态",
+            "last_task_uid": "last_task_uid",
+            "current_task_uid": "current_task_uid",
+            "last_run_at": "最近执行时间",
+            "completed_at": "完成时间",
+            "summary": "摘要",
+            "next_node_code": "下一节点编码",
+            "failure_reason": "失败原因",
+            "retry_count": "重试次数",
+            "updated_at": "更新时间",
+        },
+    ),
+    "知识笔记": (
+        KNOWLEDGE_NOTES_TABLE_NAME,
+        {
+            "id": "id",
+            "uid_note": "uid_note",
+            "uid_literature": "uid_literature",
+            "cite_key": "cite_key",
+            "note_type": "笔记类型",
+            "note_path": "笔记路径",
+            "title": "标题",
+            "status": "状态",
+            "source_stage": "来源阶段",
+            "source_run_uid": "source_run_uid",
+            "content_hash": "内容哈希",
+            "created_at": "创建时间",
+            "updated_at": "更新时间",
+        },
+    ),
+    "知识文献关联": (
+        KNOWLEDGE_LINK_TABLE_NAME,
+        {
+            "id": "id",
+            "uid_knowledge": "uid_knowledge",
+            "uid_literature": "uid_literature",
+            "relation_type": "关联类型",
+            "is_primary": "是否主项",
+            "cite_key": "cite_key",
+            "source_field": "来源字段",
+            "created_at": "创建时间",
+            "updated_at": "更新时间",
+        },
+    ),
+    "知识证据关联": (
+        KNOWLEDGE_EVIDENCE_TABLE_NAME,
+        {
+            "id": "id",
+            "uid_knowledge": "uid_knowledge",
+            "evidence_type": "证据类型",
+            "target_uid": "target_uid",
+            "evidence_role": "证据角色",
+            "source_field": "来源字段",
+            "created_at": "创建时间",
+        },
+    ),
+}
 READING_QUEUE_REQUIRED_COLUMNS: dict[str, str] = {
     "queue_uid": "TEXT",
     "stage": "TEXT",
@@ -194,6 +551,35 @@ REVIEW_STATE_REQUIRED_COLUMNS: dict[str, str] = {
     "note_uid": "TEXT",
     "updated_at": "TEXT",
 }
+FLOW_STATE_REQUIRED_COLUMNS: dict[str, str] = {
+    "cite_key": "TEXT",
+    "parse_asset_uid": "TEXT",
+    "note_uid": "TEXT",
+    "source_uid_literature": "TEXT",
+    "parent_uid_literature": "TEXT",
+    "stage_code": "TEXT",
+    "node_code": "TEXT",
+    "文献角色": "TEXT",
+    "流程轨道": "TEXT",
+    "当前阶段": "TEXT",
+    "当前阶段组": "TEXT",
+    "当前状态": "TEXT",
+    "下一阶段": "TEXT",
+    "来源阶段": "TEXT",
+    "来源类型": "TEXT",
+    "推荐原因": "TEXT",
+    "主题关系": "TEXT",
+    "阅读目标": "TEXT",
+    "人工提示": "TEXT",
+    "失败原因": "TEXT",
+    "阻塞原因": "TEXT",
+    "是否当前有效": "INTEGER",
+    "是否可执行": "INTEGER",
+    "uid_最近任务": "TEXT",
+    "uid_最近批次": "TEXT",
+    "创建时间": "TEXT",
+    "更新时间": "TEXT",
+}
 PDF_STRUCTURED_VARIANT_SPECS: tuple[dict[str, str], ...] = (
     {
         "converter": "local_pipeline_v2",
@@ -226,40 +612,35 @@ PDF_STRUCTURED_VARIANT_PATH_COLUMNS: dict[str, str] = {
 }
 LITERATURE_REQUIRED_COLUMNS: dict[str, str] = {
     "文献语种": "TEXT",
-    "clean_title": "TEXT",
-    "title_norm": "TEXT",
+    "title_clean": "TEXT",
+    "title_normalized": "TEXT",
     "authors": "TEXT",
     "primary_attachment_source_path": "TEXT",
     "placeholder_reason": "TEXT",
     "placeholder_status": "TEXT",
     "placeholder_run_uid": "TEXT",
     "source_type": "TEXT",
-    "origin_path": "TEXT",
-    "a05_scope_key": "TEXT",
-    "a05_is_review_candidate": "INTEGER",
-    "a05_in_read_pool": "INTEGER",
-    "a05_current_score": "REAL",
-    "a05_current_rank": "INTEGER",
-    "a05_current_status": "TEXT",
-    "a05_last_run_uid": "TEXT",
-    "a05_updated_at": "TEXT",
+    "source_path": "TEXT",
     "structured_status": "TEXT",
-    "structured_abs_path": "TEXT",
+    "structured_text_path": "TEXT",
     "structured_backend": "TEXT",
     "structured_task_type": "TEXT",
     "structured_updated_at": "TEXT",
     "structured_schema_version": "TEXT",
     "structured_text_length": "INTEGER",
     "structured_reference_count": "INTEGER",
-    "source_lang": "TEXT",
+    "pdf_rel_path": "TEXT",
     "title_zh": "TEXT",
     "abstract_zh": "TEXT",
     "keywords_zh": "TEXT",
     "metadata_translation_status": "TEXT",
     "metadata_translation_provider": "TEXT",
     "metadata_translation_model": "TEXT",
+    "parse_state": "TEXT",
     "metadata_translation_updated_at": "TEXT",
-    **PDF_STRUCTURED_VARIANT_PATH_COLUMNS,
+}
+ATTACHMENT_REQUIRED_COLUMNS: dict[str, str] = {
+    "path_rel": "TEXT",
 }
 TRANSLATION_ASSET_REQUIRED_COLUMNS: dict[str, str] = {
     "translation_uid": "TEXT",
@@ -279,6 +660,122 @@ TRANSLATION_ASSET_REQUIRED_COLUMNS: dict[str, str] = {
     "is_current": "INTEGER",
     "created_at": "TEXT",
     "updated_at": "TEXT",
+}
+FLOW_STATE_TO_LITERATURE_COLUMN_MAP: dict[str, str] = {
+    "parse_asset_uid": "流程解析资产UID",
+    "note_uid": "流程笔记UID",
+    "source_uid_literature": "流程来源文献UID",
+    "parent_uid_literature": "流程父文献UID",
+    "stage_code": "流程阶段编码",
+    "node_code": "流程节点编码",
+    "文献角色": "流程文献角色",
+    "流程轨道": "流程轨道",
+    "当前阶段": "流程当前阶段",
+    "当前阶段组": "流程当前阶段组",
+    "当前状态": "流程当前状态",
+    "下一阶段": "流程下一阶段",
+    "来源阶段": "流程来源阶段",
+    "来源类型": "流程来源类型",
+    "推荐原因": "流程推荐原因",
+    "主题关系": "流程主题关系",
+    "阅读目标": "流程阅读目标",
+    "人工提示": "流程人工提示",
+    "失败原因": "流程失败原因",
+    "阻塞原因": "流程阻塞原因",
+    "是否当前有效": "流程是否当前有效",
+    "是否可执行": "流程是否可执行",
+    "uid_最近任务": "流程最近任务UID",
+    "uid_最近批次": "流程最近批次UID",
+    "创建时间": "流程创建时间",
+    "更新时间": "流程更新时间",
+}
+READING_STATE_TO_LITERATURE_COLUMN_MAP: dict[str, str] = {
+    "source_stage": "阅读来源阶段",
+    "source_uid_literature": "阅读来源文献UID",
+    "source_cite_key": "阅读来源题录键",
+    "recommended_reason": "阅读推荐原因",
+    "theme_relation": "阅读主题关系",
+    "source_origin": "阅读来源口径",
+    "reading_objective": "阅读目标",
+    "manual_guidance": "阅读人工提示",
+    "pending_preprocess": "阅读待预处理",
+    "preprocessed": "阅读已预处理",
+    "preprocess_status": "阅读预处理状态",
+    "preprocess_note_path": "阅读预处理笔记路径",
+    "standard_note_path": "阅读标准笔记路径",
+    "pending_rough_read": "阅读待泛读",
+    "in_rough_read": "阅读泛读中",
+    "rough_read_done": "阅读已泛读",
+    "rough_read_note_path": "阅读泛读笔记路径",
+    "rough_read_decision": "阅读泛读决策",
+    "rough_read_reason": "阅读泛读原因",
+    "analysis_light_synced": "阅读轻量分析已同步",
+    "analysis_batch_synced": "阅读批次分析已同步",
+    "pending_deep_read": "阅读待研读",
+    "in_deep_read": "阅读研读中",
+    "deep_read_done": "阅读已研读",
+    "deep_read_count": "阅读研读次数",
+    "deep_read_note_path": "阅读研读笔记路径",
+    "deep_read_decision": "阅读研读决策",
+    "deep_read_reason": "阅读研读原因",
+    "analysis_formal_synced": "阅读正式分析已同步",
+    "innovation_synced": "阅读创新点已同步",
+    "last_batch_id": "阅读最近批次UID",
+    "created_at": "阅读创建时间",
+    "updated_at": "阅读更新时间",
+}
+READING_QUEUE_TO_LITERATURE_COLUMN_MAP: dict[str, str] = {
+    "queue_uid": "预处理队列UID",
+    "stage": "预处理阶段",
+    "source_affair": "预处理来源事务",
+    "queue_status": "预处理队列状态",
+    "decision": "预处理决策",
+    "priority": "预处理优先级",
+    "bucket": "预处理主题桶",
+    "preferred_next_stage": "预处理推荐下一阶段",
+    "recommended_reason": "预处理推荐原因",
+    "theme_relation": "预处理主题关系",
+    "evidence_note_path": "预处理证据笔记路径",
+    "preprocess_state": "预处理执行状态",
+    "preprocess_result_path": "预处理结果路径",
+    "preprocess_started_at": "预处理开始时间",
+    "preprocess_finished_at": "预处理完成时间",
+    "preprocess_failure_reason": "预处理失败原因",
+    "source_round": "预处理来源轮次",
+    "run_uid": "预处理运行UID",
+    "scope_key": "预处理范围键",
+    "is_current": "预处理是否当前有效",
+    "created_at": "预处理创建时间",
+    "updated_at": "预处理更新时间",
+}
+PARSE_ASSET_TO_LITERATURE_COLUMN_MAP: dict[str, str] = {
+    "asset_uid": "current_parse_asset_uid",
+    "uid_attachment": "current_parse_uid_attachment",
+    "parse_level": "current_parse_level",
+    "backend": "current_parse_backend",
+    "normalized_structured_path": "current_parse_path",
+    "reconstructed_markdown_path": "current_parse_markdown_path",
+    "parse_status": "current_parse_status",
+    "parse_state": "parse_state",
+    "updated_at": "current_parse_updated_at",
+}
+PARSE_ASSET_TO_ATTACHMENT_COLUMN_MAP: dict[str, str] = {
+    "asset_uid": "current_parse_asset_uid",
+    "parse_level": "current_parse_level",
+    "backend": "current_parse_backend",
+    "normalized_structured_path": "current_parse_path",
+    "reconstructed_markdown_path": "current_parse_markdown_path",
+    "parse_status": "current_parse_status",
+    "updated_at": "current_parse_updated_at",
+}
+LITERATURE_RUNTIME_SUMMARY_COLUMNS: dict[str, str] = {
+    **{column_name: "TEXT" for column_name in FLOW_STATE_TO_LITERATURE_COLUMN_MAP.values()},
+    **{column_name: "TEXT" for column_name in READING_STATE_TO_LITERATURE_COLUMN_MAP.values()},
+    **{column_name: "TEXT" for column_name in READING_QUEUE_TO_LITERATURE_COLUMN_MAP.values()},
+    **{column_name: "TEXT" for column_name in PARSE_ASSET_TO_LITERATURE_COLUMN_MAP.values()},
+}
+ATTACHMENT_RUNTIME_SUMMARY_COLUMNS: dict[str, str] = {
+    **{column_name: "TEXT" for column_name in PARSE_ASSET_TO_ATTACHMENT_COLUMN_MAP.values()},
 }
 
 TAG_REQUIRED_COLUMNS: dict[str, str] = {
@@ -318,6 +815,19 @@ AUTHOR_LINK_REQUIRED_COLUMNS: dict[str, str] = {
     "created_at": "TEXT",
     "updated_at": "TEXT",
 }
+
+_COMMON_CHINESE_SURNAME_PREFIXES: tuple[str, ...] = (
+    "欧阳",
+    "司马",
+    "上官",
+    "诸葛",
+    "尉迟",
+    "夏侯",
+    "东方",
+    "皇甫",
+    "公孙",
+    "令狐",
+)
 
 
 def _utc_now_iso() -> str:
@@ -359,6 +869,32 @@ def _split_author_values(value: object) -> list[str]:
         if all(paired):
             return paired
     return comma_segments or [text]
+
+
+def _split_author_name_components(author_name: object) -> tuple[str, str]:
+    # 把作者名拆分为 (姓, 名) 元组。
+
+    cleaned_text, _ = _clean_author_display_name(author_name)
+    if not cleaned_text:
+        return "", ""
+
+    if re.search(r"[\u4e00-\u9fff]", cleaned_text):
+        compact = re.sub(r"\s+", "", cleaned_text)
+        if not compact:
+            return "", ""
+        for prefix in sorted(_COMMON_CHINESE_SURNAME_PREFIXES, key=len, reverse=True):
+            if compact.startswith(prefix):
+                return prefix, compact[len(prefix):]
+        return compact[:1], compact[1:]
+
+    if "," in cleaned_text:
+        surname, given_names = [segment.strip() for segment in cleaned_text.split(",", 1)]
+        return surname, given_names
+
+    parts = [segment for segment in cleaned_text.split() if segment]
+    if len(parts) <= 1:
+        return cleaned_text, ""
+    return parts[-1], " ".join(parts[:-1])
 
 
 def _normalize_person_name(value: object) -> str:
@@ -542,6 +1078,74 @@ def infer_workspace_root_from_content_db(db_path: str | Path) -> Path:
     return resolved.parent.parent.parent
 
 
+def normalize_db_relative_path(path_text: str | Path) -> str:
+    """规范化数据库中的相对路径文本。"""
+
+    text = str(path_text or "").strip()
+    if not text:
+        return ""
+    return text.replace("\\", "/").lstrip("/")
+
+
+def build_relative_path_from_workspace(path_text: str | Path, *, workspace_root: str | Path) -> str:
+    """把路径转为相对 `workspace_root` 的路径文本。
+
+    若无法计算相对路径，返回空字符串。
+    """
+
+    text = str(path_text or "").strip()
+    if not text:
+        return ""
+    root = resolve_portable_path(workspace_root, base=Path.cwd())
+    try:
+        resolved = resolve_portable_path(text, base=root)
+    except Exception:
+        return ""
+    try:
+        relative = resolved.relative_to(root)
+    except ValueError:
+        return ""
+    return normalize_db_relative_path(relative.as_posix())
+
+
+def resolve_content_path(
+    path_text: str | Path,
+    *,
+    workspace_root: str | Path,
+) -> Path:
+    """统一解析 content.db 中的路径字段到当前运行时绝对路径。"""
+
+    root = resolve_portable_path(workspace_root, base=Path.cwd())
+    return resolve_portable_path(path_text, base=root)
+
+
+def resolve_content_path_candidates(
+    *,
+    workspace_root: str | Path,
+    relative_path: str | Path | None = None,
+    absolute_or_legacy_path: str | Path | None = None,
+) -> list[Path]:
+    """解析候选路径并去重，优先返回可用候选顺序。"""
+
+    root = resolve_portable_path(workspace_root, base=Path.cwd())
+    results: list[Path] = []
+    seen: set[str] = set()
+    for candidate in (relative_path, absolute_or_legacy_path):
+        raw = str(candidate or "").strip()
+        if not raw:
+            continue
+        try:
+            resolved = resolve_portable_path(raw, base=root).resolve()
+        except Exception:
+            continue
+        marker = str(resolved).lower()
+        if marker in seen:
+            continue
+        seen.add(marker)
+        results.append(resolved)
+    return results
+
+
 def get_pdf_structured_variant_spec(converter: str, task_type: str) -> dict[str, str] | None:
     """按解析工具链与任务类型获取四组合规格。"""
 
@@ -615,14 +1219,593 @@ def _ensure_legacy_db_alias(original: Path, resolved: Path) -> None:
         return
 
 
+CONTENTDB_PHYSICAL_COLUMN_ALIASES: dict[str, dict[str, str]] = {
+    LITERATURE_TABLE_NAME: {
+        "id": "内部编号",
+        "uid_literature": "uid_文献",
+        "cite_key": "题录键",
+        "doi": "bib_doi",
+        "isbn": "bib_isbn",
+        "issn": "bib_issn",
+        "entry_type": "bib_entry_type",
+        "orig_entry_type": "bib_orig_entry_type",
+        "journal": "bib_journal",
+        "booktitle": "bib_booktitle",
+        "pages": "bib_pages",
+        "volume": "bib_volume",
+        "number": "bib_number",
+        "month": "bib_month",
+        "publisher": "bib_publisher",
+        "editor": "bib_editor",
+        "school": "bib_school",
+        "author": "bib_author",
+        "file": "bib_file",
+        "url": "bib_url",
+        "urldate": "bib_urldate",
+        "langid": "bib_langid",
+        "howpublished": "bib_howpublished",
+        "note": "bib_note",
+        "title": "标题",
+        "clean_title": "标题清洗",
+        "title_clean": "标题清洗",
+        "title_norm": "标题标准化",
+        "title_normalized": "标题标准化",
+        "authors": "作者串",
+        "first_author": "第一作者",
+        "year": "年份",
+        "abstract": "摘要",
+        "keywords": "关键词",
+        "pdf_path": "PDF路径",
+        "is_placeholder": "是否占位",
+        "placeholder_reason": "占位原因",
+        "placeholder_status": "占位状态",
+        "placeholder_run_uid": "uid_占位运行",
+        "has_fulltext": "是否有全文",
+        "primary_attachment_name": "主附件名称",
+        "primary_attachment_source_path": "主附件源路径",
+        "standard_note_uid": "uid_标准笔记",
+        "source_type": "来源类型",
+        "origin_path": "来源路径",
+        "source_path": "来源路径",
+        "source": "导入来源",
+        "created_at": "创建时间",
+        "updated_at": "更新时间",
+        "imported_at": "导入时间",
+        "structured_status": "结构化状态",
+        "structured_abs_path": "结构化正文路径",
+        "structured_text_path": "结构化正文路径",
+        "structured_backend": "结构化后端",
+        "structured_task_type": "结构化任务类型",
+        "structured_updated_at": "结构化更新时间",
+        "structured_schema_version": "结构化Schema版本",
+        "structured_text_length": "结构化文本长度",
+        "structured_reference_count": "结构化参考文献数",
+        "source_lang": "文献语种",
+        "language": "文献语种",
+        "title_zh": "标题译文",
+        "abstract_zh": "摘要译文",
+        "keywords_zh": "关键词译文",
+        "metadata_translation_status": "元数据翻译状态",
+        "metadata_translation_provider": "元数据翻译提供方",
+        "metadata_translation_model": "元数据翻译模型",
+        "metadata_translation_updated_at": "元数据翻译更新时间",
+        "notes": "备注",
+        "literature_type": "文献类型",
+        "pdf_path": "PDF路径",
+        "pdf_rel_path": "PDF相对路径",
+        "current_parse_asset_uid": "uid_当前解析资产",
+        "current_parse_uid_attachment": "uid_当前解析附件",
+        "current_parse_level": "当前解析层级",
+        "current_parse_backend": "当前解析后端",
+        "current_parse_path": "当前解析路径",
+        "current_parse_markdown_path": "当前解析Markdown路径",
+        "current_parse_status": "当前解析状态",
+        "current_parse_updated_at": "当前解析更新时间",
+        "parse_state": "解析状态",
+    },
+    ATTACHMENT_TABLE_NAME: {
+        "id": "内部编号",
+        "uid_attachment": "uid_附件",
+        "attachment_name": "附件名称",
+        "attachment_type": "附件类型",
+        "file_ext": "文件扩展名",
+        "storage_path": "存储路径",
+        "source_path": "来源路径",
+        "source_kind": "附件来源类型",
+        "source_affair": "来源事务",
+        "checksum": "校验和",
+        "status": "状态",
+        "created_at": "创建时间",
+        "updated_at": "更新时间",
+        "path_rel": "相对路径",
+        "current_parse_asset_uid": "uid_当前解析资产",
+        "current_parse_level": "当前解析层级",
+        "current_parse_backend": "当前解析后端",
+        "current_parse_path": "当前解析路径",
+        "current_parse_markdown_path": "当前解析Markdown路径",
+        "current_parse_status": "当前解析状态",
+        "current_parse_updated_at": "当前解析更新时间",
+    },
+    ATTACHMENT_LINK_TABLE_NAME: {
+        "id": "内部编号",
+        "uid_attachment_link": "uid_文献附件关联",
+        "uid_literature": "uid_文献",
+        "uid_attachment": "uid_附件",
+        "link_role": "关联角色",
+        "is_primary": "是否主附件",
+        "source_type": "来源类型",
+        "legacy_uid_attachment": "uid_旧附件",
+        "created_at": "创建时间",
+        "updated_at": "更新时间",
+    },
+    AUTHOR_TABLE_NAME: {
+        "id": "内部编号",
+        "uid_author": "uid_作者",
+        "display_name": "显示姓名",
+        "normalized_name": "规范姓名",
+        "surname": "姓",
+        "given_names": "名",
+        "orcid": "研究者标识",
+        "source_type": "来源类型",
+        "created_at": "创建时间",
+        "updated_at": "更新时间",
+    },
+    AUTHOR_LINK_TABLE_NAME: {
+        "id": "内部编号",
+        "uid_literature_author": "uid_文献作者关联",
+        "uid_literature": "uid_文献",
+        "uid_author": "uid_作者",
+        "author_order": "作者顺序",
+        "is_first_author": "是否第一作者",
+        "is_corresponding": "是否通讯作者",
+        "display_name": "显示姓名",
+        "source_type": "来源类型",
+        "created_at": "创建时间",
+        "updated_at": "更新时间",
+    },
+    TAG_TABLE_NAME: {
+        "id": "内部编号",
+        "uid_tag": "uid_标签",
+        "tag": "标签",
+        "tag_norm": "标签规范名",
+        "tag_display": "标签显示名",
+        "tag_group": "标签分组",
+        "created_at": "创建时间",
+        "updated_at": "更新时间",
+    },
+    LITERATURE_TAG_TABLE_NAME: {
+        "id": "内部编号",
+        "uid_literature": "uid_文献",
+        "cite_key": "题录键",
+        "tag": "标签",
+        "tag_norm": "标签规范名",
+        "source_type": "来源类型",
+        "created_at": "创建时间",
+        "updated_at": "更新时间",
+    },
+    PARSE_ASSET_TABLE_NAME: {
+        "id": "内部编号",
+        "asset_uid": "uid_资产",
+        "uid_literature": "uid_文献",
+        "cite_key": "题录键",
+        "uid_attachment": "uid_附件",
+        "parse_level": "解析层级",
+        "backend": "解析后端",
+        "model_name": "模型名称",
+        "asset_dir": "资产目录",
+        "normalized_structured_path": "结构化正文路径",
+        "structured_text_path": "结构化正文路径",
+        "reconstructed_markdown_path": "重构文稿路径",
+        "markdown_path": "重构文稿路径",
+        "linear_index_path": "线性索引路径",
+        "elements_path": "元素路径",
+        "chunks_jsonl_path": "分块记录路径",
+        "parse_record_path": "解析记录路径",
+        "parse_log_path": "解析记录路径",
+        "quality_report_path": "质量报告路径",
+        "parse_status": "解析状态",
+        "status": "解析状态",
+        "last_run_uid": "uid_最近运行",
+        "is_current": "是否当前有效",
+        "created_at": "创建时间",
+        "updated_at": "更新时间",
+    },
+    TRANSLATION_ASSET_TABLE_NAME: {
+        "id": "内部编号",
+        "translation_uid": "uid_翻译资产",
+        "uid_literature": "uid_文献",
+        "cite_key": "题录键",
+        "source_asset_uid": "uid_来源资产",
+        "source_kind": "来源类型",
+        "target_lang": "目标语种",
+        "translation_scope": "翻译范围",
+        "provider": "提供方",
+        "model_name": "模型名称",
+        "asset_dir": "资产目录",
+        "translated_markdown_path": "译文文稿路径",
+        "translated_structured_path": "译文结构化路径",
+        "translation_audit_path": "翻译审计路径",
+        "status": "状态",
+        "is_current": "是否当前有效",
+        "created_at": "创建时间",
+        "updated_at": "更新时间",
+    },
+    CHUNK_SET_TABLE_NAME: {
+        "id": "内部编号",
+        "chunks_uid": "uid_分块集",
+        "source_scope": "来源范围",
+        "chunks_path": "分块绝对路径",
+        "source_backend": "来源后端",
+        "chunk_count": "分块数量",
+        "literature_count": "来源文献数",
+        "created_at": "创建时间",
+        "status": "状态",
+    },
+    CHUNK_TABLE_NAME: {
+        "id": "内部编号",
+        "chunks_uid": "uid_分块集",
+        "uid_literature": "uid_文献",
+        "chunk_id": "分块编号",
+        "fragment_path": "分片路径",
+        "chunk_order": "分块序号",
+        "chunk_type": "分块类型",
+        "start_char": "起始字符位",
+        "end_char": "结束字符位",
+        "text_length": "文本长度",
+        "created_at": "创建时间",
+    },
+    KNOWLEDGE_NOTES_TABLE_NAME: {
+        "id": "内部编号",
+        "uid_note": "uid_笔记",
+        "uid_literature": "uid_文献",
+        "note_type": "笔记类型",
+        "note_path": "笔记路径",
+        "title": "标题",
+        "status": "状态",
+        "source_stage": "来源阶段",
+        "source_run_uid": "uid_来源运行",
+        "content_hash": "内容哈希",
+        "created_at": "创建时间",
+        "updated_at": "更新时间",
+    },
+    KNOWLEDGE_LINK_TABLE_NAME: {
+        "id": "内部编号",
+        "uid_knowledge": "uid_知识",
+        "uid_literature": "uid_文献",
+        "relation_type": "关联类型",
+        "is_primary": "是否主项",
+        "source_field": "来源字段",
+        "created_at": "创建时间",
+        "updated_at": "更新时间",
+    },
+    KNOWLEDGE_EVIDENCE_TABLE_NAME: {
+        "id": "内部编号",
+        "uid_knowledge": "uid_知识",
+        "target_uid": "uid_目标对象",
+        "evidence_type": "证据类型",
+        "evidence_role": "证据角色",
+        "source_field": "来源字段",
+        "created_at": "创建时间",
+    },
+    WORKSPACE_NODE_STATE_TABLE_NAME: {
+        "node_code": "节点编码",
+        "node_name": "节点名称",
+        "pending_run": "待执行",
+        "in_progress": "执行中",
+        "completed": "已完成",
+        "gate_status": "闸门状态",
+        "last_task_uid": "uid_最近任务",
+        "current_task_uid": "uid_当前任务",
+        "last_run_at": "最近执行时间",
+        "completed_at": "完成时间",
+        "summary": "摘要",
+        "next_node_code": "下一节点编码",
+        "failure_reason": "失败原因",
+        "retry_count": "重试次数",
+        "updated_at": "更新时间",
+    },
+    FLOW_STATE_TABLE_NAME: {
+        "uid_literature": "uid_文献",
+        "cite_key": "题录键",
+        "parse_asset_uid": "uid_解析资产",
+        "note_uid": "uid_笔记",
+        "source_uid_literature": "uid_来源文献",
+        "parent_uid_literature": "uid_父文献",
+        "stage_code": "阶段编码",
+        "node_code": "节点编码",
+        "literature_role": "文献角色",
+        "flow_track": "流程轨道",
+        "current_stage": "当前阶段",
+        "current_stage_group": "当前阶段组",
+        "current_status": "当前状态",
+        "next_stage": "下一阶段",
+        "source_stage": "来源阶段",
+        "source_type": "来源类型",
+        "recommend_reason": "推荐原因",
+        "topic_relation": "主题关系",
+        "reading_goal": "阅读目标",
+        "human_hint": "人工提示",
+        "failure_reason": "失败原因",
+        "blocked_reason": "阻塞原因",
+        "is_current": "是否当前有效",
+        "is_executable": "是否可执行",
+        "last_task_uid": "uid_最近任务",
+        "last_batch_id": "uid_最近批次",
+        "created_at": "创建时间",
+        "updated_at": "更新时间",
+    },
+    READING_STATE_TABLE_NAME: {
+        "uid_literature": "uid_文献",
+        "cite_key": "题录键",
+        "source_stage": "来源阶段",
+        "source_uid_literature": "uid_来源文献",
+        "source_cite_key": "来源题录键",
+        "recommended_reason": "推荐原因",
+        "theme_relation": "主题关系",
+        "source_origin": "来源口径",
+        "reading_objective": "阅读目标",
+        "manual_guidance": "人工提示",
+        "pending_preprocess": "待预处理",
+        "preprocessed": "已预处理",
+        "allow_unparsed_read": "允许未解析阅读",
+        "unparsed_read_in_effect": "未解析阅读生效",
+        "preprocess_status": "预处理状态",
+        "preprocess_note_path": "预处理笔记路径",
+        "standard_note_path": "标准笔记路径",
+        "pending_rough_read": "待泛读",
+        "in_rough_read": "泛读中",
+        "rough_read_done": "已泛读",
+        "rough_read_note_path": "泛读笔记路径",
+        "rough_read_decision": "泛读决策",
+        "rough_read_reason": "泛读原因",
+        "analysis_light_synced": "轻量分析已同步",
+        "analysis_batch_synced": "批次分析已同步",
+        "pending_deep_read": "待研读",
+        "in_deep_read": "研读中",
+        "deep_read_done": "已研读",
+        "deep_read_count": "研读次数",
+        "deep_read_note_path": "研读笔记路径",
+        "deep_read_decision": "研读决策",
+        "deep_read_reason": "研读原因",
+        "rough_read_without_parse_done": "未解析已泛读",
+        "deep_read_without_parse_done": "未解析已研读",
+        "require_reread_after_parse": "解析后需重读",
+        "analysis_formal_synced": "正式分析已同步",
+        "innovation_synced": "创新点已同步",
+        "last_batch_id": "uid_最近批次",
+        "created_at": "创建时间",
+        "updated_at": "更新时间",
+    },
+    REVIEW_STATE_TABLE_NAME: {
+        "uid_literature": "uid_文献",
+        "pending_review_candidate": "待综述候选",
+        "review_candidate_ready": "综述候选就绪",
+        "pending_review_parse": "待综述解析",
+        "review_parse_ready": "综述解析就绪",
+        "pending_reference_preprocess": "待参考预处理",
+        "reference_preprocessed": "参考预处理完成",
+        "pending_review_read": "待综述阅读",
+        "in_review_read": "综述阅读中",
+        "review_read_done": "综述已读",
+        "review_read_count": "综述阅读次数",
+        "source_stage": "来源阶段",
+        "source_origin": "来源口径",
+        "recommended_reason": "推荐原因",
+        "reading_objective": "阅读目标",
+        "manual_guidance": "人工提示",
+        "parse_asset_uid": "uid_解析资产",
+        "structured_abs_path": "结构化正文路径",
+        "note_uid": "uid_笔记",
+        "updated_at": "更新时间",
+    },
+    READING_QUEUE_TABLE_NAME: {
+        "id": "内部编号",
+        "uid_literature": "uid_文献",
+        "cite_key": "题录键",
+        "queue_uid": "预处理队列UID",
+        "stage": "阶段",
+        "source_affair": "来源事务",
+        "queue_status": "队列状态",
+        "decision": "决策",
+        "priority": "优先级",
+        "bucket": "主题桶",
+        "preferred_next_stage": "推荐下一阶段",
+        "recommended_reason": "推荐原因",
+        "theme_relation": "主题关系",
+        "evidence_note_path": "证据笔记路径",
+        "preprocess_state": "预处理状态",
+        "preprocess_result_path": "预处理结果路径",
+        "preprocess_started_at": "预处理开始时间",
+        "preprocess_finished_at": "预处理完成时间",
+        "preprocess_failure_reason": "预处理失败原因",
+        "source_round": "来源轮次",
+        "run_uid": "uid_运行",
+        "scope_key": "范围键",
+        "is_current": "是否当前有效",
+        "created_at": "创建时间",
+        "updated_at": "更新时间",
+    },
+}
+
+for _column_name in LITERATURE_RUNTIME_SUMMARY_COLUMNS:
+    CONTENTDB_PHYSICAL_COLUMN_ALIASES.setdefault(LITERATURE_TABLE_NAME, {}).setdefault(_column_name, _column_name)
+
+for _column_name in ATTACHMENT_RUNTIME_SUMMARY_COLUMNS:
+    CONTENTDB_PHYSICAL_COLUMN_ALIASES.setdefault(ATTACHMENT_TABLE_NAME, {}).setdefault(_column_name, _column_name)
+
+CONTENTDB_PHYSICAL_COLUMN_ALIASES.setdefault(
+    TRANSLATION_ASSET_STORAGE_TABLE_NAME,
+    dict(CONTENTDB_PHYSICAL_COLUMN_ALIASES.get(TRANSLATION_ASSET_TABLE_NAME, {})),
+)
+
+
+def resolve_content_physical_column(table_name: str, column_name: str) -> str:
+    aliases = CONTENTDB_PHYSICAL_COLUMN_ALIASES.get(table_name, {})
+    return aliases.get(column_name, column_name)
+
+
+def _resolve_physical_column(table_name: str, column_name: str) -> str:
+    return resolve_content_physical_column(table_name, column_name)
+
+
+def _rename_table_columns_to_physical_aliases(conn: sqlite3.Connection, table_name: str) -> None:
+    if _sqlite_object_type(conn, table_name) != "table":
+        return
+    existing_columns = _physical_table_columns(conn, table_name)
+    aliases = CONTENTDB_PHYSICAL_COLUMN_ALIASES.get(table_name, {})
+    for logical_name, physical_name in aliases.items():
+        if logical_name == physical_name:
+            continue
+        if logical_name not in existing_columns or physical_name in existing_columns:
+            continue
+        conn.execute(
+            f"ALTER TABLE {_quote_identifier(table_name)} RENAME COLUMN {_quote_identifier(logical_name)} TO {_quote_identifier(physical_name)}"
+        )
+        existing_columns.remove(logical_name)
+        existing_columns.add(physical_name)
+
+
+def _qualified_physical_column(table_name: str, logical_name: str, table_alias: str | None = None) -> str:
+    physical_name = _quote_identifier(_resolve_physical_column(table_name, logical_name))
+    if not table_alias:
+        return physical_name
+    return f"{table_alias}.{physical_name}"
+
+
+def _build_transaction_name_case(column_name: str = "事务编码") -> str:
+    cases = [f"WHEN {column_name} = '{node_code}' THEN '{node_label}'" for node_code, node_label in TRANSACTION_RELATION_NODE_LABELS]
+    if not cases:
+        return "''"
+    return "CASE\n            " + "\n            ".join(cases) + "\n            ELSE ''\n        END"
+
+
+def _physical_table_columns(conn: sqlite3.Connection, table_name: str) -> set[str]:
+    return {
+        str(row[1]).strip()
+        for row in conn.execute(f"PRAGMA table_info({_quote_identifier(table_name)})")
+        if str(row[1]).strip()
+    }
+
+
+def _adapt_frame_to_physical_schema(
+    conn: sqlite3.Connection,
+    table_name: str,
+    frame: pd.DataFrame,
+) -> pd.DataFrame:
+    if frame is None or frame.empty:
+        return frame
+    physical_columns = _physical_table_columns(conn, table_name)
+    renamed = frame.rename(columns={column: _resolve_physical_column(table_name, str(column)) for column in frame.columns})
+    duplicate_columns = [column for column in renamed.columns if column in physical_columns]
+    if not duplicate_columns:
+        return renamed.iloc[:, 0:0]
+    return renamed.loc[:, ~renamed.columns.duplicated()].loc[:, duplicate_columns]
+
+
+def adapt_frame_to_content_physical_schema(
+    conn: sqlite3.Connection,
+    table_name: str,
+    frame: pd.DataFrame,
+) -> pd.DataFrame:
+    return _adapt_frame_to_physical_schema(conn, table_name, frame)
+
+
 def _replace_table_rows(conn: sqlite3.Connection, table_name: str, frame: pd.DataFrame) -> None:
     if _sqlite_object_type(conn, table_name) != "table":
         return
     conn.execute(f"DELETE FROM {_quote_identifier(table_name)}")
     if frame is None or frame.empty:
         return
-    working = frame.where(pd.notnull(frame), None)
+    physical_frame = _adapt_frame_to_physical_schema(conn, table_name, frame)
+    working = physical_frame.where(pd.notnull(physical_frame), None)
+    if working.empty or not list(working.columns):
+        return
     working.to_sql(table_name, conn, if_exists="append", index=False)
+
+
+def _delete_rows_by_column_values(
+    conn: sqlite3.Connection,
+    table_name: str,
+    column_name: str,
+    values: list[object] | tuple[object, ...] | set[object],
+) -> None:
+    if _sqlite_object_type(conn, table_name) != "table":
+        return
+    normalized_values = [value for value in values if str(value or "").strip()]
+    if not normalized_values:
+        return
+    physical_column_name = _resolve_physical_column(table_name, str(column_name))
+    placeholders = ", ".join(["?"] * len(normalized_values))
+    conn.execute(
+        f"DELETE FROM {_quote_identifier(table_name)} WHERE {_quote_identifier(physical_column_name)} IN ({placeholders})",
+        normalized_values,
+    )
+
+
+def _upsert_table_rows(
+    conn: sqlite3.Connection,
+    table_name: str,
+    frame: pd.DataFrame,
+    *,
+    key_columns: list[str] | tuple[str, ...],
+    update_columns: list[str] | tuple[str, ...] | None = None,
+) -> None:
+    if _sqlite_object_type(conn, table_name) != "table":
+        return
+    if frame is None or frame.empty:
+        return
+
+    physical_frame = _adapt_frame_to_physical_schema(conn, table_name, frame)
+    working = physical_frame.where(pd.notnull(physical_frame), None)
+    if working.empty or not list(working.columns):
+        return
+
+    physical_key_columns = [
+        _resolve_physical_column(table_name, str(column_name))
+        for column_name in key_columns
+        if _resolve_physical_column(table_name, str(column_name)) in working.columns
+    ]
+    if not physical_key_columns:
+        working.to_sql(table_name, conn, if_exists="append", index=False)
+        return
+
+    if update_columns is None:
+        physical_update_columns = [column for column in working.columns if column not in physical_key_columns]
+    else:
+        physical_update_columns = [
+            _resolve_physical_column(table_name, str(column_name))
+            for column_name in update_columns
+            if _resolve_physical_column(table_name, str(column_name)) in working.columns
+            and _resolve_physical_column(table_name, str(column_name)) not in physical_key_columns
+        ]
+
+    insert_columns = list(working.columns)
+    insert_placeholders = ", ".join(["?"] * len(insert_columns))
+    if physical_update_columns:
+        update_clause = ", ".join(
+            [
+                f"{_quote_identifier(column_name)} = excluded.{_quote_identifier(column_name)}"
+                for column_name in physical_update_columns
+            ]
+        )
+        sql = (
+            f"INSERT INTO {_quote_identifier(table_name)} "
+            f"({', '.join(_quote_identifier(column_name) for column_name in insert_columns)}) "
+            f"VALUES ({insert_placeholders}) "
+            f"ON CONFLICT({', '.join(_quote_identifier(column_name) for column_name in physical_key_columns)}) "
+            f"DO UPDATE SET {update_clause}"
+        )
+    else:
+        sql = (
+            f"INSERT OR IGNORE INTO {_quote_identifier(table_name)} "
+            f"({', '.join(_quote_identifier(column_name) for column_name in insert_columns)}) "
+            f"VALUES ({insert_placeholders})"
+        )
+
+    conn.executemany(
+        sql,
+        [tuple(row.get(column_name) for column_name in insert_columns) for row in working.to_dict(orient="records")],
+    )
 
 
 def _sqlite_object_type(conn: sqlite3.Connection, object_name: str) -> str:
@@ -635,172 +1818,528 @@ def _sqlite_object_type(conn: sqlite3.Connection, object_name: str) -> str:
 
 def _create_index_if_table(conn: sqlite3.Connection, table_name: str, index_sql: str) -> None:
     if _sqlite_object_type(conn, table_name) == "table":
-        conn.execute(index_sql)
+        try:
+            conn.execute(index_sql)
+        except sqlite3.OperationalError:
+            return
 
 
 def _ensure_table_columns(conn: sqlite3.Connection, table_name: str, column_types: Mapping[str, str]) -> None:
     if _sqlite_object_type(conn, table_name) != "table":
         return
-    existing_columns = {
-        str(row[1]).strip()
-        for row in conn.execute(f"PRAGMA table_info({_quote_identifier(table_name)})")
-    }
+    existing_columns = _physical_table_columns(conn, table_name)
+    existing_column_lowers = {column.lower() for column in existing_columns}
+    aliases = CONTENTDB_PHYSICAL_COLUMN_ALIASES.get(table_name, {})
+    uses_chinese_schema = any(any("\u4e00" <= char <= "\u9fff" for char in column) for column in existing_columns)
     for column_name, column_type in column_types.items():
-        normalized_name = str(column_name).strip()
-        if not normalized_name or normalized_name in existing_columns:
+        logical_name = str(column_name).strip()
+        if uses_chinese_schema and logical_name not in existing_columns and logical_name not in aliases:
+            continue
+        if uses_chinese_schema:
+            normalized_name = _resolve_physical_column(table_name, logical_name)
+            if (
+                normalized_name
+                and normalized_name != logical_name
+                and logical_name in existing_columns
+                and normalized_name not in existing_columns
+            ):
+                # 旧逻辑列已存在时，后续 rename 会统一收口；这里不要先补一个物理别名列。
+                continue
+        else:
+            normalized_name = logical_name
+        if not normalized_name or normalized_name in existing_columns or normalized_name.lower() in existing_column_lowers:
             continue
         normalized_type = str(column_type or "TEXT").strip() or "TEXT"
         conn.execute(
             f"ALTER TABLE {_quote_identifier(table_name)} ADD COLUMN {_quote_identifier(normalized_name)} {normalized_type}"
         )
         existing_columns.add(normalized_name)
+        existing_column_lowers.add(normalized_name.lower())
 
 
 def _create_or_replace_view(conn: sqlite3.Connection, view_name: str, select_sql: str) -> None:
     object_type = _sqlite_object_type(conn, view_name)
     if object_type == "table":
         raise sqlite3.OperationalError(f"对象 {view_name} 已存在且为表，无法覆盖为视图")
-    if object_type == "view":
+    # 无论探测结果如何，统一先删除同名视图，避免编码/缓存差异下误判导致重复创建失败。
+    conn.execute(f"DROP VIEW IF EXISTS {_quote_identifier(view_name)}")
+    create_sql = f"CREATE VIEW {_quote_identifier(view_name)} AS\n{select_sql.strip()}"
+    try:
+        conn.execute(create_sql)
+    except sqlite3.OperationalError as exc:
+        if "already exists" not in str(exc):
+            raise
         conn.execute(f"DROP VIEW IF EXISTS {_quote_identifier(view_name)}")
-    conn.execute(f"CREATE VIEW {_quote_identifier(view_name)} AS\n{select_sql.strip()}")
+        conn.execute(create_sql)
+
+
+CONTENTDB_CONTRACT_VIEW_ALIAS_OVERRIDES: dict[str, str] = {
+    "id": "内部编号",
+    "entry_type": "题录类型",
+    "orig_entry_type": "原始题录类型",
+}
+
+
+def _resolve_contract_view_alias(source_table_name: str, logical_name: str, proposed_alias: str) -> str:
+    alias = str(proposed_alias or "").strip() or str(logical_name or "").strip()
+    if alias and not alias.isascii():
+        return alias
+
+    physical_alias = CONTENTDB_PHYSICAL_COLUMN_ALIASES.get(source_table_name, {}).get(str(logical_name or "").strip())
+    if physical_alias:
+        normalized_physical_alias = str(physical_alias).strip()
+        if normalized_physical_alias and not normalized_physical_alias.isascii():
+            return normalized_physical_alias
+
+    override = CONTENTDB_CONTRACT_VIEW_ALIAS_OVERRIDES.get(str(logical_name or "").strip())
+    if override:
+        return override
+    return alias
+
+
+def _drop_all_views(conn: sqlite3.Connection) -> None:
+    for row in conn.execute("SELECT name FROM sqlite_master WHERE type='view'").fetchall():
+        view_name = str(row[0]).strip()
+        if view_name:
+            conn.execute(f"DROP VIEW IF EXISTS {_quote_identifier(view_name)}")
+
+
+def _logicalize_runtime_frame(table_name: str, frame: pd.DataFrame) -> pd.DataFrame:
+    if frame is None or frame.empty:
+        return frame
+    alias_map = CONTENTDB_PHYSICAL_COLUMN_ALIASES.get(table_name, {})
+    reverse_map: dict[str, str] = {}
+    for logical_name, physical_name in alias_map.items():
+        reverse_map.setdefault(str(physical_name), str(logical_name))
+    if not reverse_map:
+        return frame
+    logicalized = frame.rename(
+        columns={column: reverse_map.get(str(column), str(column)) for column in frame.columns}
+    )
+    if logicalized.columns.duplicated().any():
+        logicalized = logicalized.loc[:, ~logicalized.columns.duplicated(keep="last")]
+    return logicalized
+
+
+def _update_runtime_summary_rows(
+    conn: sqlite3.Connection,
+    *,
+    target_table: str,
+    key_column: str,
+    frame: pd.DataFrame,
+    column_map: Mapping[str, str],
+) -> None:
+    if frame is None or frame.empty or _sqlite_object_type(conn, target_table) != "table":
+        return
+    target_key_physical = _resolve_physical_column(target_table, key_column)
+    existing_columns = _physical_table_columns(conn, target_table)
+    if target_key_physical not in existing_columns:
+        return
+
+    writable_pairs: list[tuple[str, str]] = []
+    for logical_name, target_summary_name in column_map.items():
+        if logical_name not in frame.columns:
+            continue
+        target_physical = _resolve_physical_column(target_table, target_summary_name)
+        if target_physical not in existing_columns:
+            continue
+        writable_pairs.append((logical_name, target_physical))
+    if not writable_pairs:
+        return
+
+    set_clause = ", ".join(
+        f"{_quote_identifier(target_physical)} = ?"
+        for _, target_physical in writable_pairs
+    )
+    target_sql = _quote_identifier(target_table)
+    key_sql = _quote_identifier(target_key_physical)
+    for _, row in frame.iterrows():
+        key_value = row.get(key_column)
+        if pd.isna(key_value) or key_value in (None, ""):
+            continue
+        params = [None if pd.isna(row.get(source_name)) else row.get(source_name) for source_name, _ in writable_pairs]
+        params.append(key_value)
+        conn.execute(
+            f"UPDATE {target_sql} SET {set_clause} WHERE {key_sql} = ?",
+            tuple(params),
+        )
+
+
+def _migrate_public_translation_asset_table(conn: sqlite3.Connection) -> None:
+    public_type = _sqlite_object_type(conn, TRANSLATION_ASSET_TABLE_NAME)
+    if public_type != "table":
+        return
+
+    storage_type = _sqlite_object_type(conn, TRANSLATION_ASSET_STORAGE_TABLE_NAME)
+    if storage_type != "table":
+        conn.execute(
+            f"ALTER TABLE {_quote_identifier(TRANSLATION_ASSET_TABLE_NAME)} RENAME TO {_quote_identifier(TRANSLATION_ASSET_STORAGE_TABLE_NAME)}"
+        )
+        return
+
+    frame = pd.read_sql_query(
+        f"SELECT * FROM {_quote_identifier(TRANSLATION_ASSET_TABLE_NAME)}",
+        conn,
+    )
+    frame = _logicalize_runtime_frame(TRANSLATION_ASSET_TABLE_NAME, frame)
+    adapted = _adapt_frame_to_physical_schema(conn, TRANSLATION_ASSET_STORAGE_TABLE_NAME, frame)
+    if adapted is not None and not adapted.empty:
+        records = adapted.where(pd.notnull(adapted), None).to_dict(orient="records")
+        writable_columns = list(adapted.columns)
+        for row in records:
+            translation_uid = row.get("translation_uid")
+            if translation_uid in (None, ""):
+                continue
+            update_columns = [column for column in writable_columns if column != "translation_uid"]
+            if update_columns:
+                update_sql = ", ".join(
+                    f"{_quote_identifier(column)} = ?" for column in update_columns
+                )
+                updated = conn.execute(
+                    f"UPDATE {_quote_identifier(TRANSLATION_ASSET_STORAGE_TABLE_NAME)} SET {update_sql} WHERE {_quote_identifier('translation_uid')} = ?",
+                    tuple(row.get(column) for column in update_columns) + (translation_uid,),
+                )
+                if updated.rowcount and updated.rowcount > 0:
+                    continue
+            placeholders = ", ".join(["?"] * len(writable_columns))
+            conn.execute(
+                f"INSERT INTO {_quote_identifier(TRANSLATION_ASSET_STORAGE_TABLE_NAME)} ({', '.join(_quote_identifier(column) for column in writable_columns)}) VALUES ({placeholders})",
+                tuple(row.get(column) for column in writable_columns),
+            )
+
+    conn.execute(f"DROP TABLE IF EXISTS {_quote_identifier(TRANSLATION_ASSET_TABLE_NAME)}")
+
+
+def _migrate_public_parse_asset_table(conn: sqlite3.Connection) -> None:
+    if _sqlite_object_type(conn, PARSE_ASSET_TABLE_NAME) != "table":
+        return
+    frame = pd.read_sql_query(f"SELECT * FROM {_quote_identifier(PARSE_ASSET_TABLE_NAME)}", conn)
+    frame = _logicalize_runtime_frame(PARSE_ASSET_TABLE_NAME, frame)
+    attachment_uid_column = _resolve_physical_column(ATTACHMENT_TABLE_NAME, "uid_attachment")
+    attachment_uids = {
+        str(row[0]).strip()
+        for row in conn.execute(
+            f"SELECT {_quote_identifier(attachment_uid_column)} FROM {_quote_identifier(ATTACHMENT_TABLE_NAME)}"
+        ).fetchall()
+        if row and str(row[0]).strip()
+    }
+    if not frame.empty:
+        for _, row in frame.iterrows():
+            uid_attachment = str(row.get("uid_attachment") or "").strip()
+            uid_literature = str(row.get("uid_literature") or "").strip()
+            target_table = ATTACHMENT_TABLE_NAME if uid_attachment and uid_attachment in attachment_uids else LITERATURE_TABLE_NAME
+            key_column = "uid_attachment" if target_table == ATTACHMENT_TABLE_NAME else "uid_literature"
+            key_value = uid_attachment if target_table == ATTACHMENT_TABLE_NAME else uid_literature
+            if not key_value:
+                continue
+            single = pd.DataFrame([row.to_dict()])
+            _update_runtime_summary_rows(
+                conn,
+                target_table=target_table,
+                key_column=key_column,
+                frame=single,
+                column_map=(
+                    PARSE_ASSET_TO_ATTACHMENT_COLUMN_MAP
+                    if target_table == ATTACHMENT_TABLE_NAME
+                    else PARSE_ASSET_TO_LITERATURE_COLUMN_MAP
+                ),
+            )
+            if target_table != LITERATURE_TABLE_NAME:
+                continue
+            assignments = []
+            params: list[object] = []
+            structured_pairs = (
+                ("parse_status", "structured_status"),
+                ("normalized_structured_path", "structured_abs_path"),
+                ("backend", "structured_backend"),
+                ("parse_level", "structured_task_type"),
+                ("updated_at", "structured_updated_at"),
+            )
+            for source_name, target_name in structured_pairs:
+                target_physical = _resolve_physical_column(LITERATURE_TABLE_NAME, target_name)
+                if target_physical not in _physical_table_columns(conn, LITERATURE_TABLE_NAME):
+                    continue
+                assignments.append(f"{_quote_identifier(target_physical)} = ?")
+                value = row.get(source_name)
+                params.append(None if pd.isna(value) else value)
+            if assignments:
+                params.append(uid_literature)
+                conn.execute(
+                    f"UPDATE {_quote_identifier(LITERATURE_TABLE_NAME)} SET {', '.join(assignments)} WHERE {_quote_identifier(_resolve_physical_column(LITERATURE_TABLE_NAME, 'uid_literature'))} = ?",
+                    tuple(params),
+                )
+    conn.execute(f"DROP TABLE IF EXISTS {_quote_identifier(PARSE_ASSET_TABLE_NAME)}")
+
+
+def _migrate_public_runtime_projection_tables(conn: sqlite3.Connection) -> None:
+    for object_name, column_map in (
+        (READING_STATE_TABLE_NAME, READING_STATE_TO_LITERATURE_COLUMN_MAP),
+        (READING_QUEUE_TABLE_NAME, READING_QUEUE_TO_LITERATURE_COLUMN_MAP),
+        (FLOW_STATE_TABLE_NAME, FLOW_STATE_TO_LITERATURE_COLUMN_MAP),
+    ):
+        if _sqlite_object_type(conn, object_name) != "table":
+            continue
+        frame = pd.read_sql_query(f"SELECT * FROM {_quote_identifier(object_name)}", conn)
+        frame = _logicalize_runtime_frame(object_name, frame)
+        _update_runtime_summary_rows(
+            conn,
+            target_table=LITERATURE_TABLE_NAME,
+            key_column="uid_literature",
+            frame=frame,
+            column_map=column_map,
+        )
+        conn.execute(f"DROP TABLE IF EXISTS {_quote_identifier(object_name)}")
+
+    _migrate_public_parse_asset_table(conn)
+
+
+def _runtime_projection_alias(table_name: str, logical_name: str) -> str:
+    return _quote_identifier(_resolve_physical_column(table_name, logical_name))
+
+
+def _refresh_runtime_projection_views(conn: sqlite3.Connection) -> None:
+    literature_uid = _qualified_physical_column(LITERATURE_TABLE_NAME, "uid_literature", "lit")
+    literature_cite = _qualified_physical_column(LITERATURE_TABLE_NAME, "cite_key", "lit")
+    literature_columns = _physical_table_columns(conn, LITERATURE_TABLE_NAME)
+    attachment_columns = _physical_table_columns(conn, ATTACHMENT_TABLE_NAME)
+
+    def _literature_projection(summary_name: str, default_sql: str = "''") -> str:
+        physical_name = _resolve_physical_column(LITERATURE_TABLE_NAME, summary_name)
+        if physical_name in literature_columns:
+            return _qualified_physical_column(LITERATURE_TABLE_NAME, summary_name, "lit")
+        return default_sql
+
+    def _attachment_projection(summary_name: str, default_sql: str = "''") -> str:
+        physical_name = _resolve_physical_column(ATTACHMENT_TABLE_NAME, summary_name)
+        if physical_name in attachment_columns:
+            return _qualified_physical_column(ATTACHMENT_TABLE_NAME, summary_name, "att")
+        return default_sql
+
+    reading_exprs: dict[str, str] = {
+        "uid_literature": literature_uid,
+        "cite_key": literature_cite,
+    }
+    for logical_name, summary_name in READING_STATE_TO_LITERATURE_COLUMN_MAP.items():
+        reading_exprs[logical_name] = _literature_projection(summary_name)
+    reading_select = ",\n            ".join(
+        f"{expr} AS {_runtime_projection_alias(READING_STATE_TABLE_NAME, logical_name)}"
+        for logical_name, expr in reading_exprs.items()
+    )
+    reading_filter = " OR ".join(
+        [
+            f"COALESCE({_literature_projection('阅读更新时间')}, '') <> ''",
+            f"COALESCE({_literature_projection('阅读待预处理')}, '') <> ''",
+            f"COALESCE({_literature_projection('阅读待泛读')}, '') <> ''",
+            f"COALESCE({_literature_projection('阅读待研读')}, '') <> ''",
+            f"COALESCE({_literature_projection('阅读已预处理')}, '') <> ''",
+            f"COALESCE({_literature_projection('阅读已泛读')}, '') <> ''",
+            f"COALESCE({_literature_projection('阅读已研读')}, '') <> ''",
+        ]
+    )
+    _create_or_replace_view(
+        conn,
+        READING_STATE_TABLE_NAME,
+        f"""
+        SELECT
+            {reading_select}
+        FROM {_quote_identifier(LITERATURE_TABLE_NAME)} AS lit
+        WHERE {reading_filter}
+        """,
+    )
+
+    queue_exprs: dict[str, str] = {
+        "uid_literature": literature_uid,
+        "cite_key": literature_cite,
+    }
+    for logical_name, summary_name in READING_QUEUE_TO_LITERATURE_COLUMN_MAP.items():
+        queue_exprs[logical_name] = _literature_projection(summary_name)
+    queue_select = ",\n            ".join(
+        f"{expr} AS {_runtime_projection_alias(READING_QUEUE_TABLE_NAME, logical_name)}"
+        for logical_name, expr in queue_exprs.items()
+    )
+    queue_filter = " OR ".join(
+        [
+            f"COALESCE({_literature_projection('预处理更新时间')}, '') <> ''",
+            f"COALESCE({_literature_projection('预处理阶段')}, '') <> ''",
+            f"COALESCE({_literature_projection('预处理队列状态')}, '') <> ''",
+            f"COALESCE({_literature_projection('预处理队列UID')}, '') <> ''",
+        ]
+    )
+    _create_or_replace_view(
+        conn,
+        READING_QUEUE_TABLE_NAME,
+        f"""
+        SELECT
+            {queue_select}
+        FROM {_quote_identifier(LITERATURE_TABLE_NAME)} AS lit
+        WHERE {queue_filter}
+        """,
+    )
+
+    flow_exprs: dict[str, str] = {
+        "uid_literature": literature_uid,
+        "cite_key": literature_cite,
+    }
+    for logical_name, summary_name in FLOW_STATE_TO_LITERATURE_COLUMN_MAP.items():
+        flow_exprs[logical_name] = _literature_projection(summary_name)
+    flow_select = ",\n            ".join(
+        f"{expr} AS {_runtime_projection_alias(FLOW_STATE_TABLE_NAME, logical_name)}"
+        for logical_name, expr in flow_exprs.items()
+    )
+    flow_filter = " OR ".join(
+        [
+            f"COALESCE({_literature_projection('流程更新时间')}, '') <> ''",
+            f"COALESCE({_literature_projection('流程节点编码')}, '') <> ''",
+            f"COALESCE({_literature_projection('流程当前阶段')}, '') <> ''",
+            f"COALESCE({_literature_projection('流程当前状态')}, '') <> ''",
+        ]
+    )
+    _create_or_replace_view(
+        conn,
+        FLOW_STATE_TABLE_NAME,
+        f"""
+        SELECT
+            {flow_select}
+        FROM {_quote_identifier(LITERATURE_TABLE_NAME)} AS lit
+        WHERE {flow_filter}
+        """,
+    )
+
+    attachment_uid = _qualified_physical_column(ATTACHMENT_TABLE_NAME, "uid_attachment", "att")
+    parse_select_literature = ",\n            ".join(
+        [
+            f"{_literature_projection('current_parse_asset_uid')} AS {_runtime_projection_alias(PARSE_ASSET_TABLE_NAME, 'asset_uid')}",
+            f"{literature_uid} AS {_runtime_projection_alias(PARSE_ASSET_TABLE_NAME, 'uid_literature')}",
+            f"{literature_cite} AS {_runtime_projection_alias(PARSE_ASSET_TABLE_NAME, 'cite_key')}",
+            f"{_literature_projection('current_parse_uid_attachment')} AS {_runtime_projection_alias(PARSE_ASSET_TABLE_NAME, 'uid_attachment')}",
+            f"{_literature_projection('current_parse_level')} AS {_runtime_projection_alias(PARSE_ASSET_TABLE_NAME, 'parse_level')}",
+            f"{_literature_projection('current_parse_backend')} AS {_runtime_projection_alias(PARSE_ASSET_TABLE_NAME, 'backend')}",
+            f"'' AS {_runtime_projection_alias(PARSE_ASSET_TABLE_NAME, 'model_name')}",
+            f"'' AS {_runtime_projection_alias(PARSE_ASSET_TABLE_NAME, 'asset_dir')}",
+            f"{_literature_projection('current_parse_path')} AS {_runtime_projection_alias(PARSE_ASSET_TABLE_NAME, 'normalized_structured_path')}",
+            f"{_literature_projection('current_parse_markdown_path')} AS {_runtime_projection_alias(PARSE_ASSET_TABLE_NAME, 'reconstructed_markdown_path')}",
+            f"'' AS {_runtime_projection_alias(PARSE_ASSET_TABLE_NAME, 'linear_index_path')}",
+            f"'' AS {_runtime_projection_alias(PARSE_ASSET_TABLE_NAME, 'elements_path')}",
+            f"'' AS {_runtime_projection_alias(PARSE_ASSET_TABLE_NAME, 'chunks_jsonl_path')}",
+            f"'' AS {_runtime_projection_alias(PARSE_ASSET_TABLE_NAME, 'parse_record_path')}",
+            f"'' AS {_runtime_projection_alias(PARSE_ASSET_TABLE_NAME, 'quality_report_path')}",
+            f"{_literature_projection('current_parse_status')} AS {_runtime_projection_alias(PARSE_ASSET_TABLE_NAME, 'parse_status')}",
+            f"'' AS {_runtime_projection_alias(PARSE_ASSET_TABLE_NAME, 'last_run_uid')}",
+            f"1 AS {_runtime_projection_alias(PARSE_ASSET_TABLE_NAME, 'is_current')}",
+            f"{_literature_projection('current_parse_updated_at')} AS {_runtime_projection_alias(PARSE_ASSET_TABLE_NAME, 'created_at')}",
+            f"{_literature_projection('current_parse_updated_at')} AS {_runtime_projection_alias(PARSE_ASSET_TABLE_NAME, 'updated_at')}",
+        ]
+    )
+    parse_select_attachment = ",\n            ".join(
+        [
+            f"{_attachment_projection('current_parse_asset_uid')} AS {_runtime_projection_alias(PARSE_ASSET_TABLE_NAME, 'asset_uid')}",
+            f"{_qualified_physical_column(ATTACHMENT_LINK_TABLE_NAME, 'uid_literature', 'lnk')} AS {_runtime_projection_alias(PARSE_ASSET_TABLE_NAME, 'uid_literature')}",
+            f"COALESCE({literature_cite}, '') AS {_runtime_projection_alias(PARSE_ASSET_TABLE_NAME, 'cite_key')}",
+            f"{attachment_uid} AS {_runtime_projection_alias(PARSE_ASSET_TABLE_NAME, 'uid_attachment')}",
+            f"{_attachment_projection('current_parse_level')} AS {_runtime_projection_alias(PARSE_ASSET_TABLE_NAME, 'parse_level')}",
+            f"{_attachment_projection('current_parse_backend')} AS {_runtime_projection_alias(PARSE_ASSET_TABLE_NAME, 'backend')}",
+            f"'' AS {_runtime_projection_alias(PARSE_ASSET_TABLE_NAME, 'model_name')}",
+            f"'' AS {_runtime_projection_alias(PARSE_ASSET_TABLE_NAME, 'asset_dir')}",
+            f"{_attachment_projection('current_parse_path')} AS {_runtime_projection_alias(PARSE_ASSET_TABLE_NAME, 'normalized_structured_path')}",
+            f"{_attachment_projection('current_parse_markdown_path')} AS {_runtime_projection_alias(PARSE_ASSET_TABLE_NAME, 'reconstructed_markdown_path')}",
+            f"'' AS {_runtime_projection_alias(PARSE_ASSET_TABLE_NAME, 'linear_index_path')}",
+            f"'' AS {_runtime_projection_alias(PARSE_ASSET_TABLE_NAME, 'elements_path')}",
+            f"'' AS {_runtime_projection_alias(PARSE_ASSET_TABLE_NAME, 'chunks_jsonl_path')}",
+            f"'' AS {_runtime_projection_alias(PARSE_ASSET_TABLE_NAME, 'parse_record_path')}",
+            f"'' AS {_runtime_projection_alias(PARSE_ASSET_TABLE_NAME, 'quality_report_path')}",
+            f"{_attachment_projection('current_parse_status')} AS {_runtime_projection_alias(PARSE_ASSET_TABLE_NAME, 'parse_status')}",
+            f"'' AS {_runtime_projection_alias(PARSE_ASSET_TABLE_NAME, 'last_run_uid')}",
+            f"1 AS {_runtime_projection_alias(PARSE_ASSET_TABLE_NAME, 'is_current')}",
+            f"{_attachment_projection('current_parse_updated_at')} AS {_runtime_projection_alias(PARSE_ASSET_TABLE_NAME, 'created_at')}",
+            f"{_attachment_projection('current_parse_updated_at')} AS {_runtime_projection_alias(PARSE_ASSET_TABLE_NAME, 'updated_at')}",
+        ]
+    )
+    parse_literature_filter = " OR ".join(
+        [
+            f"COALESCE({_literature_projection('current_parse_asset_uid')}, '') <> ''",
+            f"COALESCE({_literature_projection('current_parse_status')}, '') <> ''",
+            f"COALESCE({_literature_projection('current_parse_path')}, '') <> ''",
+        ]
+    )
+    parse_attachment_filter = " OR ".join(
+        [
+            f"COALESCE({_attachment_projection('current_parse_asset_uid')}, '') <> ''",
+            f"COALESCE({_attachment_projection('current_parse_status')}, '') <> ''",
+            f"COALESCE({_attachment_projection('current_parse_path')}, '') <> ''",
+        ]
+    )
+    _create_or_replace_view(
+        conn,
+        PARSE_ASSET_TABLE_NAME,
+        f"""
+        SELECT
+            {parse_select_literature}
+        FROM {_quote_identifier(LITERATURE_TABLE_NAME)} AS lit
+        WHERE {parse_literature_filter}
+        UNION ALL
+        SELECT
+            {parse_select_attachment}
+        FROM {_quote_identifier(ATTACHMENT_TABLE_NAME)} AS att
+        LEFT JOIN {_quote_identifier(ATTACHMENT_LINK_TABLE_NAME)} AS lnk
+            ON lnk.{_quote_identifier(_resolve_physical_column(ATTACHMENT_LINK_TABLE_NAME, 'uid_attachment'))} = {attachment_uid}
+        LEFT JOIN {_quote_identifier(LITERATURE_TABLE_NAME)} AS lit
+            ON lit.{_quote_identifier(_resolve_physical_column(LITERATURE_TABLE_NAME, 'uid_literature'))} = lnk.{_quote_identifier(_resolve_physical_column(ATTACHMENT_LINK_TABLE_NAME, 'uid_literature'))}
+        WHERE ({parse_attachment_filter})
+          AND COALESCE(lnk.{_quote_identifier(_resolve_physical_column(ATTACHMENT_LINK_TABLE_NAME, 'uid_literature'))}, '') <> ''
+        """,
+    )
+
+
+def _refresh_chinese_contract_views(conn: sqlite3.Connection) -> None:
+    for view_name, (source_table_name, column_map) in CONTENTDB_CHINESE_CONTRACT_VIEWS.items():
+        if _sqlite_object_type(conn, source_table_name) != "table":
+            continue
+        if _sqlite_object_type(conn, view_name) == "table":
+            continue
+        existing_columns = {
+            str(row[1])
+            for row in conn.execute(f"PRAGMA table_info({_quote_identifier(source_table_name)})")
+        }
+        selected_columns = []
+        for old_name, new_name in column_map.items():
+            source_column = _resolve_physical_column(source_table_name, old_name)
+            if source_column not in existing_columns:
+                continue
+            display_name = _resolve_contract_view_alias(source_table_name, old_name, new_name)
+            selected_columns.append(f"{_quote_identifier(source_column)} AS {_quote_identifier(display_name)}")
+        if not selected_columns:
+            continue
+        select_sql = "SELECT\n            " + ",\n            ".join(selected_columns)
+        select_sql += f"\n        FROM {_quote_identifier(source_table_name)}"
+        _create_or_replace_view(conn, view_name, select_sql)
 
 
 def _refresh_reading_state_views(conn: sqlite3.Connection) -> None:
-    for legacy_view_name in LEGACY_REVIEW_VIEW_NAMES:
-        if legacy_view_name == REVIEW_STATE_OVERVIEW_VIEW_NAME:
-            continue
-        if any(legacy_view_name == current_name for current_name, _ in REVIEW_STATE_FILTER_VIEWS):
-            continue
-        conn.execute(f"DROP VIEW IF EXISTS {_quote_identifier(legacy_view_name)}")
-
-    overview_select_sql = f"""
-    WITH attachment_summary AS (
-        SELECT
-            lnk.uid_literature,
-            COUNT(*) AS attachment_count,
-            MAX(CASE WHEN COALESCE(lnk.is_primary, 0) = 1 THEN att.attachment_name ELSE '' END) AS primary_attachment_name,
-            MAX(CASE WHEN COALESCE(lnk.is_primary, 0) = 1 THEN att.storage_path ELSE '' END) AS primary_attachment_path,
-            MAX(CASE WHEN COALESCE(lnk.is_primary, 0) = 1 THEN att.status ELSE '' END) AS primary_attachment_status
-        FROM {ATTACHMENT_LINK_TABLE_NAME} AS lnk
-        LEFT JOIN {ATTACHMENT_TABLE_NAME} AS att
-            ON att.uid_attachment = lnk.uid_attachment
-        GROUP BY lnk.uid_literature
-    ),
-    parse_summary AS (
-        SELECT
-            uid_literature,
-            MAX(CASE WHEN COALESCE(is_current, 0) = 1 THEN parse_level ELSE '' END) AS current_parse_level,
-            MAX(CASE WHEN COALESCE(is_current, 0) = 1 THEN parse_status ELSE '' END) AS current_parse_status,
-            MAX(CASE WHEN COALESCE(is_current, 0) = 1 THEN normalized_structured_path ELSE '' END) AS current_structured_path
-        FROM literature_parse_assets
-        GROUP BY uid_literature
-    )
-    SELECT
-        rs.uid_literature,
-        COALESCE(rs.cite_key, lit.cite_key) AS cite_key,
-        COALESCE(lit.title, '') AS title,
-        COALESCE(lit.first_author, '') AS first_author,
-        COALESCE(lit.year, '') AS year,
-        COALESCE(lit.entry_type, '') AS entry_type,
-        COALESCE(lit.source_type, '') AS source_type,
-        COALESCE(lit.has_fulltext, 0) AS has_fulltext,
-        COALESCE(lit.is_placeholder, 0) AS is_placeholder,
-        COALESCE(lit.placeholder_status, '') AS placeholder_status,
-        COALESCE(rs.source_stage, '') AS source_stage,
-        COALESCE(rs.source_origin, '') AS source_origin,
-        COALESCE(rs.recommended_reason, '') AS recommended_reason,
-        COALESCE(rs.theme_relation, '') AS theme_relation,
-        COALESCE(rs.reading_objective, '') AS reading_objective,
-        COALESCE(rs.manual_guidance, '') AS manual_guidance,
-        COALESCE(rs.pending_preprocess, 0) AS pending_preprocess,
-        COALESCE(rs.preprocessed, 0) AS preprocessed,
-        COALESCE(rs.allow_unparsed_read, 0) AS allow_unparsed_read,
-        COALESCE(rs.unparsed_read_in_effect, 0) AS unparsed_read_in_effect,
-        COALESCE(rs.preprocess_status, '') AS preprocess_status,
-        COALESCE(rs.preprocess_note_path, '') AS preprocess_note_path,
-        COALESCE(rs.standard_note_path, '') AS standard_note_path,
-        COALESCE(rs.pending_rough_read, 0) AS pending_rough_read,
-        COALESCE(rs.in_rough_read, 0) AS in_rough_read,
-        COALESCE(rs.rough_read_done, 0) AS rough_read_done,
-        COALESCE(rs.rough_read_note_path, '') AS rough_read_note_path,
-        COALESCE(rs.rough_read_decision, '') AS rough_read_decision,
-        COALESCE(rs.rough_read_reason, '') AS rough_read_reason,
-        COALESCE(rs.analysis_light_synced, 0) AS analysis_light_synced,
-        COALESCE(rs.analysis_batch_synced, 0) AS analysis_batch_synced,
-        COALESCE(rs.pending_deep_read, 0) AS pending_deep_read,
-        COALESCE(rs.in_deep_read, 0) AS in_deep_read,
-        COALESCE(rs.deep_read_done, 0) AS deep_read_done,
-        COALESCE(rs.deep_read_count, 0) AS deep_read_count,
-        COALESCE(rs.deep_read_note_path, '') AS deep_read_note_path,
-        COALESCE(rs.deep_read_decision, '') AS deep_read_decision,
-        COALESCE(rs.deep_read_reason, '') AS deep_read_reason,
-        COALESCE(rs.rough_read_without_parse_done, 0) AS rough_read_without_parse_done,
-        COALESCE(rs.deep_read_without_parse_done, 0) AS deep_read_without_parse_done,
-        COALESCE(rs.require_reread_after_parse, 0) AS require_reread_after_parse,
-        COALESCE(rs.analysis_formal_synced, 0) AS analysis_formal_synced,
-        COALESCE(rs.innovation_synced, 0) AS innovation_synced,
-        COALESCE(rs.last_batch_id, '') AS last_batch_id,
-        COALESCE(att.attachment_count, 0) AS attachment_count,
-        COALESCE(att.primary_attachment_name, '') AS primary_attachment_name,
-        COALESCE(att.primary_attachment_path, '') AS primary_attachment_path,
-        COALESCE(att.primary_attachment_status, '') AS primary_attachment_status,
-        COALESCE(parse.current_parse_level, '') AS current_parse_level,
-        COALESCE(parse.current_parse_status, '') AS current_parse_status,
-        COALESCE(parse.current_structured_path, '') AS current_structured_path,
-        CASE
-            WHEN COALESCE(rs.pending_preprocess, 0) = 1 AND COALESCE(rs.preprocess_status, '') = 'missing_attachment' THEN '补件待办'
-            WHEN COALESCE(rs.pending_preprocess, 0) = 1 THEN '待预处理'
-            WHEN COALESCE(rs.pending_rough_read, 0) = 1 AND COALESCE(rs.preprocessed, 0) = 0 AND COALESCE(rs.allow_unparsed_read, 0) = 1 THEN '未解析待泛读'
-            WHEN COALESCE(rs.pending_rough_read, 0) = 1 THEN '待泛读'
-            WHEN COALESCE(rs.in_rough_read, 0) = 1 THEN '正泛读'
-            WHEN COALESCE(rs.rough_read_done, 0) = 1 AND COALESCE(rs.analysis_batch_synced, 0) = 0 THEN '待批次汇总'
-            WHEN COALESCE(rs.pending_deep_read, 0) = 1 THEN '待研读'
-            WHEN COALESCE(rs.deep_read_decision, '') = 'parse_ready' AND COALESCE(rs.deep_read_done, 0) = 0 THEN '待批判性研读'
-            WHEN COALESCE(rs.in_deep_read, 0) = 1 THEN '正研读'
-            WHEN COALESCE(rs.deep_read_done, 0) = 1 THEN '已研读'
-            WHEN COALESCE(rs.preprocessed, 0) = 1 THEN '已预处理'
-            ELSE '未归类'
-        END AS current_list_name,
-        CASE
-            WHEN COALESCE(rs.pending_preprocess, 0) = 1 AND COALESCE(rs.preprocess_status, '') = 'missing_attachment' THEN 1
-            ELSE 0
-        END AS is_attachment_backlog,
-        COALESCE(rs.created_at, '') AS created_at,
-        COALESCE(rs.updated_at, '') AS updated_at
-    FROM {READING_STATE_TABLE_NAME} AS rs
-    LEFT JOIN literatures AS lit
-        ON lit.uid_literature = rs.uid_literature
-    LEFT JOIN attachment_summary AS att
-        ON att.uid_literature = rs.uid_literature
-    LEFT JOIN parse_summary AS parse
-        ON parse.uid_literature = rs.uid_literature
-    ORDER BY COALESCE(rs.updated_at, '') DESC, COALESCE(lit.year, '') DESC, COALESCE(rs.cite_key, lit.cite_key, rs.uid_literature)
-    """
-    _create_or_replace_view(conn, READING_STATE_OVERVIEW_VIEW_NAME, overview_select_sql)
-
-    quoted_overview_name = _quote_identifier(READING_STATE_OVERVIEW_VIEW_NAME)
-    for view_name, where_clause in READING_STATE_FILTER_VIEWS:
-        view_sql = f"""
-        SELECT *
-        FROM {quoted_overview_name}
-        WHERE {where_clause}
-        ORDER BY updated_at DESC, year DESC, cite_key, uid_literature
-        """
-        _create_or_replace_view(conn, view_name, view_sql)
+    node_code_col = _qualified_physical_column(WORKSPACE_NODE_STATE_TABLE_NAME, "node_code")
+    node_name_col = _qualified_physical_column(WORKSPACE_NODE_STATE_TABLE_NAME, "node_name")
+    pending_col = _qualified_physical_column(WORKSPACE_NODE_STATE_TABLE_NAME, "pending_run")
+    running_col = _qualified_physical_column(WORKSPACE_NODE_STATE_TABLE_NAME, "in_progress")
+    completed_col = _qualified_physical_column(WORKSPACE_NODE_STATE_TABLE_NAME, "completed")
+    gate_col = _qualified_physical_column(WORKSPACE_NODE_STATE_TABLE_NAME, "gate_status")
+    last_task_col = _qualified_physical_column(WORKSPACE_NODE_STATE_TABLE_NAME, "last_task_uid")
+    current_task_col = _qualified_physical_column(WORKSPACE_NODE_STATE_TABLE_NAME, "current_task_uid")
+    next_node_col = _qualified_physical_column(WORKSPACE_NODE_STATE_TABLE_NAME, "next_node_code")
+    failure_col = _qualified_physical_column(WORKSPACE_NODE_STATE_TABLE_NAME, "failure_reason")
+    workspace_updated_col = _qualified_physical_column(WORKSPACE_NODE_STATE_TABLE_NAME, "updated_at")
 
     workspace_overview_sql = f"""
     SELECT
-        node_code AS 节点编码,
-        COALESCE(node_name, '') AS 节点名称,
-        COALESCE(pending_run, 0) AS 待执行,
-        COALESCE(in_progress, 0) AS 执行中,
-        COALESCE(completed, 0) AS 已完成,
-        COALESCE(gate_status, '') AS 闸门状态,
-        COALESCE(last_task_uid, '') AS 最近任务,
-        COALESCE(current_task_uid, '') AS 当前任务,
-        COALESCE(next_node_code, '') AS 下一节点,
-        COALESCE(failure_reason, '') AS 失败原因,
-        COALESCE(updated_at, '') AS 更新时间
+        {node_code_col} AS 节点编码,
+        COALESCE({node_name_col}, '') AS 节点名称,
+        COALESCE({pending_col}, 0) AS 待执行,
+        COALESCE({running_col}, 0) AS 执行中,
+        COALESCE({completed_col}, 0) AS 已完成,
+        COALESCE({gate_col}, '') AS 闸门状态,
+        COALESCE({last_task_col}, '') AS 最近任务,
+        COALESCE({current_task_col}, '') AS 当前任务,
+        COALESCE({next_node_col}, '') AS 下一节点,
+        COALESCE({failure_col}, '') AS 失败原因,
+        COALESCE({workspace_updated_col}, '') AS 更新时间
     FROM {WORKSPACE_NODE_STATE_TABLE_NAME}
     ORDER BY 更新时间 DESC, 节点编码
     """
@@ -815,93 +2354,307 @@ def _refresh_reading_state_views(conn: sqlite3.Connection) -> None:
         """
         _create_or_replace_view(conn, view_name, view_sql)
 
-    review_overview_sql = f"""
+    flow_columns = {
+        str(row[1])
+        for row in conn.execute(f"PRAGMA table_info({_quote_identifier(FLOW_STATE_TABLE_NAME)})")
+    }
+    flow_cite_key_column = _resolve_physical_column(FLOW_STATE_TABLE_NAME, "cite_key")
+    if flow_cite_key_column not in flow_columns:
+        if "题录键" in flow_columns:
+            flow_cite_key_column = "题录键"
+        elif "cite_key" in flow_columns:
+            flow_cite_key_column = "cite_key"
+        else:
+            flow_cite_key_column = ""
+
+    flow_cite_key_expr = (
+        f"fs.{_quote_identifier(flow_cite_key_column)}"
+        if flow_cite_key_column
+        else "''"
+    )
+
+    flow_overview_sql = f"""
+    WITH parse_summary AS (
+        SELECT
+            {_qualified_physical_column(PARSE_ASSET_TABLE_NAME, 'uid_literature')} AS uid_literature,
+            MAX(CASE WHEN COALESCE({_qualified_physical_column(PARSE_ASSET_TABLE_NAME, 'is_current')}, 0) = 1 THEN {_qualified_physical_column(PARSE_ASSET_TABLE_NAME, 'parse_level')} ELSE '' END) AS current_parse_level,
+            MAX(CASE WHEN COALESCE({_qualified_physical_column(PARSE_ASSET_TABLE_NAME, 'is_current')}, 0) = 1 THEN {_qualified_physical_column(PARSE_ASSET_TABLE_NAME, 'parse_status')} ELSE '' END) AS current_parse_status,
+            MAX(CASE WHEN COALESCE({_qualified_physical_column(PARSE_ASSET_TABLE_NAME, 'is_current')}, 0) = 1 THEN {_qualified_physical_column(PARSE_ASSET_TABLE_NAME, 'structured_text_path')} ELSE '' END) AS current_structured_path
+        FROM {_quote_identifier(PARSE_ASSET_TABLE_NAME)}
+        GROUP BY uid_literature
+    )
     SELECT
-        rs.uid_literature AS 文献标识,
-        COALESCE(rs.cite_key, lit.cite_key, '') AS 引文键,
-        COALESCE(lit.title, '') AS 标题,
-        COALESCE(lit.first_author, '') AS 作者,
-        COALESCE(lit.year, '') AS 年份,
-        COALESCE(rs.pending_review_candidate, 0) AS 待综述筛选,
-        COALESCE(rs.review_candidate_ready, 0) AS 已入综述候选,
-        COALESCE(rs.pending_review_parse, 0) AS 待综述解析确认,
-        COALESCE(rs.review_parse_ready, 0) AS 综述解析已就绪,
-        COALESCE(rs.pending_reference_preprocess, 0) AS 待参考文献预处理,
-        COALESCE(rs.reference_preprocessed, 0) AS 参考文献预处理完成,
-        COALESCE(rs.pending_review_read, 0) AS 待综述阅读,
-        COALESCE(rs.in_review_read, 0) AS 正综述阅读,
-        COALESCE(rs.review_read_done, 0) AS 已综述阅读,
-        COALESCE(rs.review_read_count, 0) AS 阅读次数,
-        COALESCE(rs.source_stage, '') AS 来源阶段,
-        COALESCE(rs.source_origin, '') AS 来源类型,
-        COALESCE(rs.recommended_reason, '') AS 推荐原因,
-        COALESCE(rs.reading_objective, '') AS 阅读目标,
-        COALESCE(rs.manual_guidance, '') AS 手动提示语,
-        COALESCE(rs.structured_abs_path, '') AS 结构化正文路径,
-        COALESCE(rs.note_uid, '') AS 标准笔记,
-        COALESCE(rs.updated_at, '') AS 更新时间
-    FROM {REVIEW_STATE_TABLE_NAME} AS rs
-    LEFT JOIN literatures AS lit
-        ON lit.uid_literature = rs.uid_literature
-    ORDER BY 更新时间 DESC, 文献标识
+        fs.{_quote_identifier(_resolve_physical_column(FLOW_STATE_TABLE_NAME, 'uid_literature'))} AS 文献标识,
+        COALESCE({flow_cite_key_expr}, lit.{_quote_identifier(_resolve_physical_column(LITERATURE_TABLE_NAME, 'cite_key'))}, '') AS 引文键,
+        COALESCE(lit.{_quote_identifier(_resolve_physical_column(LITERATURE_TABLE_NAME, 'title'))}, '') AS 标题,
+        COALESCE(lit.{_quote_identifier(_resolve_physical_column(LITERATURE_TABLE_NAME, 'first_author'))}, '') AS 第一作者,
+        COALESCE(lit.{_quote_identifier(_resolve_physical_column(LITERATURE_TABLE_NAME, 'year'))}, '') AS 年份,
+        COALESCE(fs.{_quote_identifier(_resolve_physical_column(FLOW_STATE_TABLE_NAME, 'literature_role'))}, '') AS 文献角色,
+        COALESCE(fs.{_quote_identifier(_resolve_physical_column(FLOW_STATE_TABLE_NAME, 'flow_track'))}, '') AS 流程轨道,
+        COALESCE(lit.{_quote_identifier(_resolve_physical_column(LITERATURE_TABLE_NAME, 'primary_attachment_name'))}, '') AS 主附件名称,
+        COALESCE(fs.{_quote_identifier(_resolve_physical_column(FLOW_STATE_TABLE_NAME, 'current_stage_group'))}, '') AS 当前阶段组,
+        COALESCE(fs.{_quote_identifier(_resolve_physical_column(FLOW_STATE_TABLE_NAME, 'current_stage'))}, '') AS 当前阶段,
+        COALESCE(fs.{_quote_identifier(_resolve_physical_column(FLOW_STATE_TABLE_NAME, 'current_status'))}, '') AS 当前状态,
+        COALESCE(fs.{_quote_identifier(_resolve_physical_column(FLOW_STATE_TABLE_NAME, 'next_stage'))}, '') AS 下一阶段,
+        COALESCE(fs.{_quote_identifier(_resolve_physical_column(FLOW_STATE_TABLE_NAME, 'recommend_reason'))}, '') AS 推荐原因,
+        COALESCE(fs.{_quote_identifier(_resolve_physical_column(FLOW_STATE_TABLE_NAME, 'failure_reason'))}, '') AS 失败原因,
+        COALESCE(fs.{_quote_identifier(_resolve_physical_column(FLOW_STATE_TABLE_NAME, 'blocked_reason'))}, '') AS 阻塞原因,
+        COALESCE(fs.{_quote_identifier(_resolve_physical_column(FLOW_STATE_TABLE_NAME, 'node_code'))}, '') AS 节点编码,
+        COALESCE(fs.{_quote_identifier(_resolve_physical_column(FLOW_STATE_TABLE_NAME, 'parse_asset_uid'))}, '') AS 解析资产标识,
+        COALESCE(lit.{_quote_identifier(_resolve_physical_column(LITERATURE_TABLE_NAME, 'parse_state'))}, '') AS 解析状态,
+        COALESCE(fs.{_quote_identifier(_resolve_physical_column(FLOW_STATE_TABLE_NAME, 'note_uid'))}, '') AS 标准笔记标识,
+        COALESCE(parse.current_parse_status, '') AS 当前解析状态,
+        COALESCE(fs.{_quote_identifier(_resolve_physical_column(FLOW_STATE_TABLE_NAME, 'is_current'))}, 1) AS 是否当前有效,
+        COALESCE(fs.{_quote_identifier(_resolve_physical_column(FLOW_STATE_TABLE_NAME, 'is_executable'))}, 1) AS 是否可执行,
+        COALESCE(fs.{_quote_identifier(_resolve_physical_column(FLOW_STATE_TABLE_NAME, 'last_task_uid'))}, '') AS 最近任务标识,
+        COALESCE(fs.{_quote_identifier(_resolve_physical_column(FLOW_STATE_TABLE_NAME, 'updated_at'))}, '') AS 更新时间
+    FROM {_quote_identifier(FLOW_STATE_TABLE_NAME)} AS fs
+    LEFT JOIN {_quote_identifier(LITERATURE_TABLE_NAME)} AS lit
+        ON lit.{_quote_identifier(_resolve_physical_column(LITERATURE_TABLE_NAME, 'uid_literature'))} = fs.{_quote_identifier(_resolve_physical_column(FLOW_STATE_TABLE_NAME, 'uid_literature'))}
+    LEFT JOIN parse_summary AS parse
+        ON parse.uid_literature = fs.{_quote_identifier(_resolve_physical_column(FLOW_STATE_TABLE_NAME, 'uid_literature'))}
+    ORDER BY 更新时间 DESC, 年份 DESC, 引文键, 文献标识
     """
-    _create_or_replace_view(conn, REVIEW_STATE_OVERVIEW_VIEW_NAME, review_overview_sql)
-    quoted_review_name = _quote_identifier(REVIEW_STATE_OVERVIEW_VIEW_NAME)
-    for view_name, where_clause in REVIEW_STATE_FILTER_VIEWS:
+    _create_or_replace_view(conn, FLOW_STATE_OVERVIEW_VIEW_NAME, flow_overview_sql)
+    quoted_flow_name = _quote_identifier(FLOW_STATE_OVERVIEW_VIEW_NAME)
+    for view_name, where_clause in FLOW_STATE_FILTER_VIEWS:
         view_sql = f"""
         SELECT *
-        FROM {quoted_review_name}
+        FROM {quoted_flow_name}
         WHERE {where_clause}
-        ORDER BY 更新时间 DESC, 文献标识
+        ORDER BY 更新时间 DESC, 年份 DESC, 引文键, 文献标识
+        """
+        _create_or_replace_view(conn, view_name, view_sql)
+    for view_name, where_clause in FLOW_STAGE_LIST_VIEWS:
+        view_sql = f"""
+        SELECT *
+        FROM {quoted_flow_name}
+        WHERE {where_clause}
+        ORDER BY 更新时间 DESC, 年份 DESC, 引文键, 文献标识
+        """
+        _create_or_replace_view(conn, view_name, view_sql)
+
+    flow_transaction_name_case = _build_transaction_name_case("节点编码")
+    queue_transaction_name_case = _build_transaction_name_case("qb.事务编码")
+    queue_transaction_code_case = "CASE\n"
+    for node_code, _node_label in TRANSACTION_RELATION_NODE_LABELS:
+        queue_transaction_code_case += (
+            f"            WHEN COALESCE(q.{_quote_identifier(_resolve_physical_column(READING_QUEUE_TABLE_NAME, 'source_affair'))}, '') = '{node_code}' THEN '{node_code}'\n"
+        )
+    for node_code, _node_label in TRANSACTION_RELATION_NODE_LABELS:
+        queue_transaction_code_case += (
+            f"            WHEN COALESCE(q.{_quote_identifier(_resolve_physical_column(READING_QUEUE_TABLE_NAME, 'stage'))}, '') = '{node_code}' THEN '{node_code}'\n"
+        )
+    queue_transaction_code_case += "            ELSE ''\n        END"
+    queue_stage_name_case = "CASE\n"
+    for node_code, node_label in TRANSACTION_RELATION_NODE_LABELS:
+        queue_stage_name_case += (
+            f"            WHEN COALESCE(q.{_quote_identifier(_resolve_physical_column(READING_QUEUE_TABLE_NAME, 'stage'))}, '') = '{node_code}' THEN '{node_label}'\n"
+        )
+    queue_stage_name_case += (
+        f"            ELSE COALESCE(q.{_quote_identifier(_resolve_physical_column(READING_QUEUE_TABLE_NAME, 'stage'))}, '')\n"
+        "        END"
+    )
+    queue_next_stage_name_case = "CASE\n"
+    for node_code, node_label in TRANSACTION_RELATION_NODE_LABELS:
+        queue_next_stage_name_case += (
+            f"            WHEN COALESCE(q.{_quote_identifier(_resolve_physical_column(READING_QUEUE_TABLE_NAME, 'preferred_next_stage'))}, '') = '{node_code}' THEN '{node_label}'\n"
+        )
+    queue_next_stage_name_case += (
+        f"            ELSE COALESCE(q.{_quote_identifier(_resolve_physical_column(READING_QUEUE_TABLE_NAME, 'preferred_next_stage'))}, '')\n"
+        "        END"
+    )
+    queue_status_case = f"""
+        CASE
+            WHEN COALESCE(q.{_quote_identifier(_resolve_physical_column(READING_QUEUE_TABLE_NAME, 'queue_status'))}, '') IN ('queued', 'pending', 'ready') THEN '待处理'
+            WHEN COALESCE(q.{_quote_identifier(_resolve_physical_column(READING_QUEUE_TABLE_NAME, 'queue_status'))}, '') IN ('running', 'processing', 'in_progress') THEN '处理中'
+            WHEN COALESCE(q.{_quote_identifier(_resolve_physical_column(READING_QUEUE_TABLE_NAME, 'queue_status'))}, '') IN ('blocked', 'missing_attachment') THEN '阻塞'
+            WHEN COALESCE(q.{_quote_identifier(_resolve_physical_column(READING_QUEUE_TABLE_NAME, 'queue_status'))}, '') IN ('failed', 'error') THEN '失败'
+            WHEN COALESCE(q.{_quote_identifier(_resolve_physical_column(READING_QUEUE_TABLE_NAME, 'queue_status'))}, '') IN ('done', 'completed', 'succeeded', 'success') THEN '已完成'
+            ELSE COALESCE(q.{_quote_identifier(_resolve_physical_column(READING_QUEUE_TABLE_NAME, 'queue_status'))}, '')
+        END
+    """
+    transaction_overview_sql = f"""
+    WITH flow_base AS (
+        SELECT
+            节点编码 AS 事务编码,
+            {flow_transaction_name_case} AS 事务名称,
+            文献标识,
+            引文键,
+            标题,
+            第一作者,
+            年份,
+            文献角色,
+            流程轨道,
+            主附件名称,
+            当前阶段组,
+            当前阶段,
+            当前状态,
+            下一阶段,
+            推荐原因,
+            失败原因,
+            阻塞原因,
+            解析资产标识,
+            标准笔记标识,
+            解析状态,
+            当前解析状态,
+            是否当前有效,
+            是否可执行,
+            最近任务标识,
+            更新时间
+        FROM {quoted_flow_name}
+        WHERE IFNULL(节点编码, '') <> ''
+    ),
+    queue_base AS (
+        SELECT
+            {queue_transaction_code_case} AS 事务编码,
+            COALESCE(lit.{_quote_identifier(_resolve_physical_column(LITERATURE_TABLE_NAME, 'uid_literature'))}, q.{_quote_identifier(_resolve_physical_column(READING_QUEUE_TABLE_NAME, 'uid_literature'))}) AS 文献标识,
+            COALESCE(q.{_quote_identifier(_resolve_physical_column(READING_QUEUE_TABLE_NAME, 'cite_key'))}, lit.{_quote_identifier(_resolve_physical_column(LITERATURE_TABLE_NAME, 'cite_key'))}, '') AS 引文键,
+            COALESCE(lit.{_quote_identifier(_resolve_physical_column(LITERATURE_TABLE_NAME, 'title'))}, '') AS 标题,
+            COALESCE(lit.{_quote_identifier(_resolve_physical_column(LITERATURE_TABLE_NAME, 'first_author'))}, '') AS 第一作者,
+            COALESCE(lit.{_quote_identifier(_resolve_physical_column(LITERATURE_TABLE_NAME, 'year'))}, '') AS 年份,
+            '' AS 文献角色,
+            CASE
+                WHEN COALESCE(q.{_quote_identifier(_resolve_physical_column(READING_QUEUE_TABLE_NAME, 'stage'))}, '') IN ('A050', 'A055', 'A060', 'A065', 'A070') THEN '综述主链'
+                WHEN COALESCE(q.{_quote_identifier(_resolve_physical_column(READING_QUEUE_TABLE_NAME, 'stage'))}, '') IN ('A075', 'A080', 'A090', 'A095', 'A100', 'A105', 'A110', 'A120', 'A130', 'A140', 'A150', 'A160') THEN '普通主链'
+                ELSE ''
+            END AS 流程轨道,
+            COALESCE(lit.{_quote_identifier(_resolve_physical_column(LITERATURE_TABLE_NAME, 'primary_attachment_name'))}, '') AS 主附件名称,
+            '队列表' AS 当前阶段组,
+            {queue_stage_name_case} AS 当前阶段,
+            {queue_status_case} AS 当前状态,
+            {queue_next_stage_name_case} AS 下一阶段,
+            COALESCE(q.{_quote_identifier(_resolve_physical_column(READING_QUEUE_TABLE_NAME, 'recommended_reason'))}, '') AS 推荐原因,
+            COALESCE(q.{_quote_identifier(_resolve_physical_column(READING_QUEUE_TABLE_NAME, 'preprocess_failure_reason'))}, '') AS 失败原因,
+            CASE
+                WHEN COALESCE(q.{_quote_identifier(_resolve_physical_column(READING_QUEUE_TABLE_NAME, 'queue_status'))}, '') IN ('blocked', 'missing_attachment')
+                THEN COALESCE(q.{_quote_identifier(_resolve_physical_column(READING_QUEUE_TABLE_NAME, 'preprocess_failure_reason'))}, '')
+                ELSE ''
+            END AS 阻塞原因,
+            COALESCE(lit.{_quote_identifier(_resolve_physical_column(LITERATURE_TABLE_NAME, 'current_parse_asset_uid'))}, '') AS 解析资产标识,
+            COALESCE(lit.{_quote_identifier(_resolve_physical_column(LITERATURE_TABLE_NAME, 'standard_note_uid'))}, '') AS 标准笔记标识,
+            COALESCE(lit.{_quote_identifier(_resolve_physical_column(LITERATURE_TABLE_NAME, 'parse_state'))}, '') AS 解析状态,
+            COALESCE(lit.{_quote_identifier(_resolve_physical_column(LITERATURE_TABLE_NAME, 'current_parse_status'))}, '') AS 当前解析状态,
+            COALESCE(q.{_quote_identifier(_resolve_physical_column(READING_QUEUE_TABLE_NAME, 'is_current'))}, 1) AS 是否当前有效,
+            CASE
+                WHEN COALESCE(q.{_quote_identifier(_resolve_physical_column(READING_QUEUE_TABLE_NAME, 'queue_status'))}, '') IN ('blocked', 'missing_attachment', 'failed', 'error') THEN 0
+                ELSE 1
+            END AS 是否可执行,
+            COALESCE(q.{_quote_identifier(_resolve_physical_column(READING_QUEUE_TABLE_NAME, 'run_uid'))}, '') AS 最近任务标识,
+            COALESCE(q.{_quote_identifier(_resolve_physical_column(READING_QUEUE_TABLE_NAME, 'updated_at'))}, '') AS 更新时间
+        FROM {_quote_identifier(READING_QUEUE_TABLE_NAME)} AS q
+        LEFT JOIN {_quote_identifier(LITERATURE_TABLE_NAME)} AS lit
+            ON lit.{_quote_identifier(_resolve_physical_column(LITERATURE_TABLE_NAME, 'uid_literature'))} = q.{_quote_identifier(_resolve_physical_column(READING_QUEUE_TABLE_NAME, 'uid_literature'))}
+        WHERE CAST(COALESCE(q.{_quote_identifier(_resolve_physical_column(READING_QUEUE_TABLE_NAME, 'is_current'))}, '1') AS INTEGER) = 1
+    )
+    SELECT *
+    FROM flow_base
+    UNION ALL
+    SELECT
+        qb.事务编码,
+        {queue_transaction_name_case} AS 事务名称,
+        qb.文献标识,
+        qb.引文键,
+        qb.标题,
+        qb.第一作者,
+        qb.年份,
+        qb.文献角色,
+        qb.流程轨道,
+        qb.主附件名称,
+        qb.当前阶段组,
+        qb.当前阶段,
+        qb.当前状态,
+        qb.下一阶段,
+        qb.推荐原因,
+        qb.失败原因,
+        qb.阻塞原因,
+        qb.解析资产标识,
+        qb.标准笔记标识,
+        qb.解析状态,
+        qb.当前解析状态,
+        qb.是否当前有效,
+        qb.是否可执行,
+        qb.最近任务标识,
+        qb.更新时间
+    FROM queue_base AS qb
+        WHERE IFNULL(qb.事务编码, '') <> ''
+      AND NOT EXISTS (
+          SELECT 1
+          FROM flow_base AS fb
+                    WHERE fb.事务编码 = qb.事务编码
+            AND COALESCE(fb.文献标识, '') = COALESCE(qb.文献标识, '')
+            AND COALESCE(fb.引文键, '') = COALESCE(qb.引文键, '')
+      )
+        ORDER BY 事务编码, 更新时间 DESC, 年份 DESC, 引文键, 文献标识
+    """
+    current_transaction_views = {TRANSACTION_RELATION_OVERVIEW_VIEW_NAME, *(view_name for view_name, _ in TRANSACTION_RELATION_FILTER_VIEWS)}
+    legacy_transaction_views = {*LEGACY_TRANSACTION_RELATION_OVERVIEW_VIEW_NAMES, *LEGACY_TRANSACTION_RELATION_FILTER_VIEW_NAMES}
+    for legacy_view_name in legacy_transaction_views:
+        if legacy_view_name in current_transaction_views:
+            continue
+        conn.execute(f"DROP VIEW IF EXISTS {_quote_identifier(legacy_view_name)}")
+
+    _create_or_replace_view(conn, TRANSACTION_RELATION_OVERVIEW_VIEW_NAME, transaction_overview_sql)
+    quoted_transaction_name = _quote_identifier(TRANSACTION_RELATION_OVERVIEW_VIEW_NAME)
+    for view_name, node_code in TRANSACTION_RELATION_FILTER_VIEWS:
+        view_sql = f"""
+        SELECT *
+        FROM {quoted_transaction_name}
+            WHERE 事务编码 = '{node_code}'
+        ORDER BY 更新时间 DESC, 年份 DESC, 引文键, 文献标识
         """
         _create_or_replace_view(conn, view_name, view_sql)
 
     workflow_overview_sql = f"""
-    SELECT '节点推进' AS 类别, COUNT(1) AS 数量, '执行中' AS 状态
-    FROM {WORKSPACE_NODE_STATE_TABLE_NAME}
-    WHERE IFNULL(in_progress, 0) = 1
-    UNION ALL
-    SELECT '综述链' AS 类别, COUNT(1) AS 数量, '待解析' AS 状态
-    FROM {REVIEW_STATE_TABLE_NAME}
-    WHERE IFNULL(pending_review_parse, 0) = 1
-    UNION ALL
-    SELECT '综述链' AS 类别, COUNT(1) AS 数量, '待阅读' AS 状态
-    FROM {REVIEW_STATE_TABLE_NAME}
-    WHERE IFNULL(pending_review_read, 0) = 1
-    UNION ALL
-    SELECT '普通阅读链' AS 类别, COUNT(1) AS 数量, '待预处理' AS 状态
-    FROM {READING_STATE_TABLE_NAME}
-    WHERE IFNULL(pending_preprocess, 0) = 1
-    UNION ALL
-    SELECT '普通阅读链' AS 类别, COUNT(1) AS 数量, '待泛读' AS 状态
-    FROM {READING_STATE_TABLE_NAME}
-    WHERE IFNULL(pending_rough_read, 0) = 1
-    UNION ALL
-    SELECT '普通阅读链' AS 类别, COUNT(1) AS 数量, '待研读' AS 状态
-    FROM {READING_STATE_TABLE_NAME}
-    WHERE IFNULL(pending_deep_read, 0) = 1
+    SELECT *
+    FROM (
+        SELECT '节点推进' AS 类别, COUNT(1) AS 数量, '执行中' AS 状态
+                FROM {WORKSPACE_NODE_STATE_TABLE_NAME}
+                WHERE IFNULL({_quote_identifier(_resolve_physical_column(WORKSPACE_NODE_STATE_TABLE_NAME, 'in_progress'))}, 0) = 1
+        UNION ALL
+        SELECT
+                        CASE WHEN COALESCE({_quote_identifier(_resolve_physical_column(FLOW_STATE_TABLE_NAME, 'flow_track'))}, '') = '综述主链' THEN '综述链' ELSE '普通阅读链' END AS 类别,
+            COUNT(1) AS 数量,
+            CASE
+                                WHEN COALESCE({_quote_identifier(_resolve_physical_column(FLOW_STATE_TABLE_NAME, 'current_stage'))}, '') = '综述候选构建' THEN '待筛选'
+                                WHEN COALESCE({_quote_identifier(_resolve_physical_column(FLOW_STATE_TABLE_NAME, 'current_stage'))}, '') = '综述正文解析' THEN '待解析'
+                                WHEN COALESCE({_quote_identifier(_resolve_physical_column(FLOW_STATE_TABLE_NAME, 'current_stage'))}, '') = '综述参考扩展' THEN '待参考扩展'
+                                WHEN COALESCE({_quote_identifier(_resolve_physical_column(FLOW_STATE_TABLE_NAME, 'current_stage'))}, '') = '综述综合研读' THEN CASE WHEN COALESCE({_quote_identifier(_resolve_physical_column(FLOW_STATE_TABLE_NAME, 'current_status'))}, '') = '处理中' THEN '阅读中' ELSE '待阅读' END
+                                WHEN COALESCE({_quote_identifier(_resolve_physical_column(FLOW_STATE_TABLE_NAME, 'current_stage'))}, '') = '普通文献预处理' THEN CASE WHEN COALESCE({_quote_identifier(_resolve_physical_column(FLOW_STATE_TABLE_NAME, 'current_status'))}, '') = '阻塞' THEN '补件待办' ELSE '待预处理' END
+                                WHEN COALESCE({_quote_identifier(_resolve_physical_column(FLOW_STATE_TABLE_NAME, 'current_stage'))}, '') = '普通文献泛读' THEN CASE WHEN COALESCE({_quote_identifier(_resolve_physical_column(FLOW_STATE_TABLE_NAME, 'current_status'))}, '') = '处理中' THEN '泛读中' ELSE '待泛读' END
+                                WHEN COALESCE({_quote_identifier(_resolve_physical_column(FLOW_STATE_TABLE_NAME, 'current_stage'))}, '') = '泛读批次汇总' THEN '待批次汇总'
+                                WHEN COALESCE({_quote_identifier(_resolve_physical_column(FLOW_STATE_TABLE_NAME, 'current_stage'))}, '') = '深度解析准备' THEN '待研读'
+                                WHEN COALESCE({_quote_identifier(_resolve_physical_column(FLOW_STATE_TABLE_NAME, 'current_stage'))}, '') = '批判性研读' THEN CASE WHEN COALESCE({_quote_identifier(_resolve_physical_column(FLOW_STATE_TABLE_NAME, 'current_status'))}, '') = '处理中' THEN '研读中' ELSE '待批判性研读' END
+                                ELSE COALESCE({_quote_identifier(_resolve_physical_column(FLOW_STATE_TABLE_NAME, 'current_status'))}, '未归类')
+            END AS 状态
+        FROM {_quote_identifier(FLOW_STATE_TABLE_NAME)}
+                WHERE COALESCE({_quote_identifier(_resolve_physical_column(FLOW_STATE_TABLE_NAME, 'is_current'))}, 1) = 1
+                    AND COALESCE({_quote_identifier(_resolve_physical_column(FLOW_STATE_TABLE_NAME, 'current_status'))}, '') IN ('待处理', '处理中', '阻塞')
+        GROUP BY 类别, 状态
+    )
+    WHERE 数量 > 0
     """
     _create_or_replace_view(conn, "工作流总览视图", workflow_overview_sql)
 
     attachment_overview_sql = f"""
     SELECT
-        lnk.uid_attachment_link AS 附件关联标识,
-        lnk.uid_literature AS 文献标识,
-        COALESCE(lit.cite_key, '') AS 引文键,
-        COALESCE(lit.title, '') AS 文献标题,
-        lnk.uid_attachment AS 附件标识,
-        COALESCE(att.attachment_name, '') AS 附件名称,
-        COALESCE(att.storage_path, '') AS 当前存储路径,
-        COALESCE(att.source_path, '') AS 原始来源路径,
-        COALESCE(att.status, '') AS 附件状态,
-        COALESCE(lnk.link_role, '') AS 关联角色,
-        COALESCE(lnk.is_primary, 0) AS 是否主附件,
-        COALESCE(lnk.updated_at, att.updated_at, '') AS 更新时间
+        lnk.{_quote_identifier(_resolve_physical_column(ATTACHMENT_LINK_TABLE_NAME, 'uid_attachment_link'))} AS 附件关联标识,
+        lnk.{_quote_identifier(_resolve_physical_column(ATTACHMENT_LINK_TABLE_NAME, 'uid_literature'))} AS 文献标识,
+        COALESCE(lit.{_quote_identifier(_resolve_physical_column(LITERATURE_TABLE_NAME, 'cite_key'))}, '') AS 引文键,
+        COALESCE(lit.{_quote_identifier(_resolve_physical_column(LITERATURE_TABLE_NAME, 'title'))}, '') AS 文献标题,
+        lnk.{_quote_identifier(_resolve_physical_column(ATTACHMENT_LINK_TABLE_NAME, 'uid_attachment'))} AS 附件标识,
+        COALESCE(att.{_quote_identifier(_resolve_physical_column(ATTACHMENT_TABLE_NAME, 'attachment_name'))}, '') AS 附件名称,
+        COALESCE(att.{_quote_identifier(_resolve_physical_column(ATTACHMENT_TABLE_NAME, 'storage_path'))}, '') AS 当前存储路径,
+        COALESCE(att.{_quote_identifier(_resolve_physical_column(ATTACHMENT_TABLE_NAME, 'source_path'))}, '') AS 原始来源路径,
+        COALESCE(att.{_quote_identifier(_resolve_physical_column(ATTACHMENT_TABLE_NAME, 'status'))}, '') AS 附件状态,
+        COALESCE(lnk.{_quote_identifier(_resolve_physical_column(ATTACHMENT_LINK_TABLE_NAME, 'link_role'))}, '') AS 关联角色,
+        COALESCE(lnk.{_quote_identifier(_resolve_physical_column(ATTACHMENT_LINK_TABLE_NAME, 'is_primary'))}, 0) AS 是否主附件,
+        COALESCE(lnk.{_quote_identifier(_resolve_physical_column(ATTACHMENT_LINK_TABLE_NAME, 'updated_at'))}, att.{_quote_identifier(_resolve_physical_column(ATTACHMENT_TABLE_NAME, 'updated_at'))}, '') AS 更新时间
     FROM {ATTACHMENT_LINK_TABLE_NAME} AS lnk
     LEFT JOIN {ATTACHMENT_TABLE_NAME} AS att
-        ON att.uid_attachment = lnk.uid_attachment
-    LEFT JOIN literatures AS lit
-        ON lit.uid_literature = lnk.uid_literature
+        ON att.{_quote_identifier(_resolve_physical_column(ATTACHMENT_TABLE_NAME, 'uid_attachment'))} = lnk.{_quote_identifier(_resolve_physical_column(ATTACHMENT_LINK_TABLE_NAME, 'uid_attachment'))}
+    LEFT JOIN {_quote_identifier(LITERATURE_TABLE_NAME)} AS lit
+        ON lit.{_quote_identifier(_resolve_physical_column(LITERATURE_TABLE_NAME, 'uid_literature'))} = lnk.{_quote_identifier(_resolve_physical_column(ATTACHMENT_LINK_TABLE_NAME, 'uid_literature'))}
     ORDER BY 更新时间 DESC, 引文键, 附件名称
     """
     _create_or_replace_view(conn, "文献附件总视图", attachment_overview_sql)
@@ -916,72 +2669,75 @@ def _refresh_reading_state_views(conn: sqlite3.Connection) -> None:
 
     tag_overview_sql = f"""
     SELECT
-        t.uid_tag AS 标签标识,
-        COALESCE(t.tag_display, t.tag, '') AS 标签显示名,
-        COALESCE(t.tag_norm, '') AS 标签规范名,
-        COALESCE(t.tag_group, '') AS 标签分组,
-        COUNT(DISTINCT lnk.uid_literature) AS 关联文献数,
-        COALESCE(MAX(lnk.updated_at), MAX(t.updated_at), '') AS 更新时间
+        t.{_quote_identifier(_resolve_physical_column(TAG_TABLE_NAME, 'uid_tag'))} AS 标签标识,
+        COALESCE(t.{_quote_identifier(_resolve_physical_column(TAG_TABLE_NAME, 'tag_display'))}, t.{_quote_identifier(_resolve_physical_column(TAG_TABLE_NAME, 'tag'))}, '') AS 标签显示名,
+        COALESCE(t.{_quote_identifier(_resolve_physical_column(TAG_TABLE_NAME, 'tag_norm'))}, '') AS 标签规范名,
+        COALESCE(t.{_quote_identifier(_resolve_physical_column(TAG_TABLE_NAME, 'tag_group'))}, '') AS 标签分组,
+        COUNT(DISTINCT lnk.{_quote_identifier(_resolve_physical_column(LITERATURE_TAG_TABLE_NAME, 'uid_literature'))}) AS 关联文献数,
+        COALESCE(MAX(lnk.{_quote_identifier(_resolve_physical_column(LITERATURE_TAG_TABLE_NAME, 'updated_at'))}), MAX(t.{_quote_identifier(_resolve_physical_column(TAG_TABLE_NAME, 'updated_at'))}), '') AS 更新时间
     FROM {TAG_TABLE_NAME} AS t
-    LEFT JOIN literature_tags AS lnk
-        ON lnk.tag_norm = t.tag_norm
-    GROUP BY t.uid_tag, t.tag_display, t.tag, t.tag_norm, t.tag_group
+    LEFT JOIN {_quote_identifier(LITERATURE_TAG_TABLE_NAME)} AS lnk
+        ON lnk.{_quote_identifier(_resolve_physical_column(LITERATURE_TAG_TABLE_NAME, 'tag_norm'))} = t.{_quote_identifier(_resolve_physical_column(TAG_TABLE_NAME, 'tag_norm'))}
+    GROUP BY t.{_quote_identifier(_resolve_physical_column(TAG_TABLE_NAME, 'uid_tag'))}, t.{_quote_identifier(_resolve_physical_column(TAG_TABLE_NAME, 'tag_display'))}, t.{_quote_identifier(_resolve_physical_column(TAG_TABLE_NAME, 'tag'))}, t.{_quote_identifier(_resolve_physical_column(TAG_TABLE_NAME, 'tag_norm'))}, t.{_quote_identifier(_resolve_physical_column(TAG_TABLE_NAME, 'tag_group'))}
     ORDER BY 关联文献数 DESC, 标签显示名
     """
     _create_or_replace_view(conn, "标签总表", tag_overview_sql)
 
     literature_tag_overview_sql = f"""
     SELECT
-        lnk.uid_literature AS 文献标识,
-        COALESCE(lit.cite_key, '') AS 引文键,
-        COALESCE(lit.title, '') AS 文献标题,
-        t.uid_tag AS 标签标识,
-        COALESCE(t.tag_display, t.tag, lnk.tag) AS 标签显示名,
-        COALESCE(t.tag_group, '') AS 标签分组,
-        COALESCE(lnk.source_type, '') AS 来源类型,
-        COALESCE(lnk.updated_at, '') AS 更新时间
-    FROM literature_tags AS lnk
+        lnk.{_quote_identifier(_resolve_physical_column(LITERATURE_TAG_TABLE_NAME, 'uid_literature'))} AS 文献标识,
+        COALESCE(lit.{_quote_identifier(_resolve_physical_column(LITERATURE_TABLE_NAME, 'cite_key'))}, '') AS 引文键,
+        COALESCE(lit.{_quote_identifier(_resolve_physical_column(LITERATURE_TABLE_NAME, 'title'))}, '') AS 文献标题,
+        t.{_quote_identifier(_resolve_physical_column(TAG_TABLE_NAME, 'uid_tag'))} AS 标签标识,
+        COALESCE(t.{_quote_identifier(_resolve_physical_column(TAG_TABLE_NAME, 'tag_display'))}, t.{_quote_identifier(_resolve_physical_column(TAG_TABLE_NAME, 'tag'))}, lnk.{_quote_identifier(_resolve_physical_column(LITERATURE_TAG_TABLE_NAME, 'tag'))}) AS 标签显示名,
+        COALESCE(t.{_quote_identifier(_resolve_physical_column(TAG_TABLE_NAME, 'tag_group'))}, '') AS 标签分组,
+        COALESCE(lnk.{_quote_identifier(_resolve_physical_column(LITERATURE_TAG_TABLE_NAME, 'source_type'))}, '') AS 来源类型,
+        COALESCE(lnk.{_quote_identifier(_resolve_physical_column(LITERATURE_TAG_TABLE_NAME, 'updated_at'))}, '') AS 更新时间
+    FROM {_quote_identifier(LITERATURE_TAG_TABLE_NAME)} AS lnk
     LEFT JOIN {TAG_TABLE_NAME} AS t
-        ON t.tag_norm = lnk.tag_norm
-    LEFT JOIN literatures AS lit
-        ON lit.uid_literature = lnk.uid_literature
+        ON t.{_quote_identifier(_resolve_physical_column(TAG_TABLE_NAME, 'tag_norm'))} = lnk.{_quote_identifier(_resolve_physical_column(LITERATURE_TAG_TABLE_NAME, 'tag_norm'))}
+    LEFT JOIN {_quote_identifier(LITERATURE_TABLE_NAME)} AS lit
+        ON lit.{_quote_identifier(_resolve_physical_column(LITERATURE_TABLE_NAME, 'uid_literature'))} = lnk.{_quote_identifier(_resolve_physical_column(LITERATURE_TAG_TABLE_NAME, 'uid_literature'))}
     ORDER BY 更新时间 DESC, 引文键, 标签显示名
     """
     _create_or_replace_view(conn, "文献标签关联总视图", literature_tag_overview_sql)
 
     author_overview_sql = f"""
     SELECT
-        a.uid_author AS 作者标识,
-        COALESCE(a.display_name, '') AS 作者姓名,
-        COALESCE(a.normalized_name, '') AS 作者规范名,
-        COUNT(DISTINCT la.uid_literature) AS 关联文献数,
-        COALESCE(MAX(la.updated_at), MAX(a.updated_at), '') AS 更新时间
+        a.{_quote_identifier(_resolve_physical_column(AUTHOR_TABLE_NAME, 'uid_author'))} AS 作者标识,
+        COALESCE(a.{_quote_identifier(_resolve_physical_column(AUTHOR_TABLE_NAME, 'display_name'))}, '') AS 作者姓名,
+        COALESCE(a.{_quote_identifier(_resolve_physical_column(AUTHOR_TABLE_NAME, 'normalized_name'))}, '') AS 作者规范名,
+        COUNT(DISTINCT la.{_quote_identifier(_resolve_physical_column(AUTHOR_LINK_TABLE_NAME, 'uid_literature'))}) AS 关联文献数,
+        COALESCE(MAX(la.{_quote_identifier(_resolve_physical_column(AUTHOR_LINK_TABLE_NAME, 'updated_at'))}), MAX(a.{_quote_identifier(_resolve_physical_column(AUTHOR_TABLE_NAME, 'updated_at'))}), '') AS 更新时间
     FROM {AUTHOR_TABLE_NAME} AS a
     LEFT JOIN {AUTHOR_LINK_TABLE_NAME} AS la
-        ON la.uid_author = a.uid_author
-    GROUP BY a.uid_author, a.display_name, a.normalized_name
+        ON la.{_quote_identifier(_resolve_physical_column(AUTHOR_LINK_TABLE_NAME, 'uid_author'))} = a.{_quote_identifier(_resolve_physical_column(AUTHOR_TABLE_NAME, 'uid_author'))}
+    GROUP BY a.{_quote_identifier(_resolve_physical_column(AUTHOR_TABLE_NAME, 'uid_author'))}, a.{_quote_identifier(_resolve_physical_column(AUTHOR_TABLE_NAME, 'display_name'))}, a.{_quote_identifier(_resolve_physical_column(AUTHOR_TABLE_NAME, 'normalized_name'))}
     ORDER BY 关联文献数 DESC, 作者姓名
     """
     _create_or_replace_view(conn, "作者总表", author_overview_sql)
 
     literature_author_overview_sql = f"""
     SELECT
-        la.uid_literature AS 文献标识,
-        COALESCE(lit.cite_key, '') AS 引文键,
-        COALESCE(lit.title, '') AS 文献标题,
-        la.uid_author AS 作者标识,
-        COALESCE(la.display_name, a.display_name, '') AS 作者姓名,
-        COALESCE(la.author_order, 0) AS 作者顺序,
-        COALESCE(la.is_first_author, 0) AS 是否第一作者,
-        COALESCE(la.updated_at, '') AS 更新时间
+        la.{_quote_identifier(_resolve_physical_column(AUTHOR_LINK_TABLE_NAME, 'uid_literature'))} AS 文献标识,
+        COALESCE(lit.{_quote_identifier(_resolve_physical_column(LITERATURE_TABLE_NAME, 'cite_key'))}, '') AS 引文键,
+        COALESCE(lit.{_quote_identifier(_resolve_physical_column(LITERATURE_TABLE_NAME, 'title'))}, '') AS 文献标题,
+        la.{_quote_identifier(_resolve_physical_column(AUTHOR_LINK_TABLE_NAME, 'uid_author'))} AS 作者标识,
+        COALESCE(la.{_quote_identifier(_resolve_physical_column(AUTHOR_LINK_TABLE_NAME, 'display_name'))}, a.{_quote_identifier(_resolve_physical_column(AUTHOR_TABLE_NAME, 'display_name'))}, '') AS 作者姓名,
+        COALESCE(la.{_quote_identifier(_resolve_physical_column(AUTHOR_LINK_TABLE_NAME, 'author_order'))}, 0) AS 作者顺序,
+        COALESCE(la.{_quote_identifier(_resolve_physical_column(AUTHOR_LINK_TABLE_NAME, 'is_first_author'))}, 0) AS 是否第一作者,
+        COALESCE(la.{_quote_identifier(_resolve_physical_column(AUTHOR_LINK_TABLE_NAME, 'updated_at'))}, '') AS 更新时间
     FROM {AUTHOR_LINK_TABLE_NAME} AS la
     LEFT JOIN {AUTHOR_TABLE_NAME} AS a
-        ON a.uid_author = la.uid_author
-    LEFT JOIN literatures AS lit
-        ON lit.uid_literature = la.uid_literature
+        ON a.{_quote_identifier(_resolve_physical_column(AUTHOR_TABLE_NAME, 'uid_author'))} = la.{_quote_identifier(_resolve_physical_column(AUTHOR_LINK_TABLE_NAME, 'uid_author'))}
+    LEFT JOIN {_quote_identifier(LITERATURE_TABLE_NAME)} AS lit
+        ON lit.{_quote_identifier(_resolve_physical_column(LITERATURE_TABLE_NAME, 'uid_literature'))} = la.{_quote_identifier(_resolve_physical_column(AUTHOR_LINK_TABLE_NAME, 'uid_literature'))}
     ORDER BY 更新时间 DESC, 引文键, 作者顺序
     """
     _create_or_replace_view(conn, "文献作者关联总视图", literature_author_overview_sql)
+
+def _refresh_legacy_attachment_projections(conn: sqlite3.Connection) -> None:
+    return
 
 
 def _attachment_entity_uid(
@@ -1095,22 +2851,22 @@ def _build_legacy_attachment_projection(conn: sqlite3.Connection) -> pd.DataFram
     return pd.read_sql_query(
         f"""
         SELECT
-            COALESCE(lnk.legacy_uid_attachment, lnk.uid_attachment_link, att.uid_attachment) AS uid_attachment,
-            lnk.uid_literature,
-            att.attachment_name,
-            COALESCE(NULLIF(lnk.link_role, ''), att.attachment_type) AS attachment_type,
-            att.file_ext,
-            att.storage_path,
-            att.source_path,
-            att.checksum,
-            COALESCE(lnk.is_primary, 0) AS is_primary,
-            att.status,
-            COALESCE(lnk.created_at, att.created_at) AS created_at,
-            COALESCE(lnk.updated_at, att.updated_at) AS updated_at
+            COALESCE(lnk.{_quote_identifier(_resolve_physical_column(ATTACHMENT_LINK_TABLE_NAME, 'legacy_uid_attachment'))}, lnk.{_quote_identifier(_resolve_physical_column(ATTACHMENT_LINK_TABLE_NAME, 'uid_attachment_link'))}, att.{_quote_identifier(_resolve_physical_column(ATTACHMENT_TABLE_NAME, 'uid_attachment'))}) AS uid_attachment,
+            lnk.{_quote_identifier(_resolve_physical_column(ATTACHMENT_LINK_TABLE_NAME, 'uid_literature'))} AS uid_literature,
+            att.{_quote_identifier(_resolve_physical_column(ATTACHMENT_TABLE_NAME, 'attachment_name'))} AS attachment_name,
+            COALESCE(NULLIF(lnk.{_quote_identifier(_resolve_physical_column(ATTACHMENT_LINK_TABLE_NAME, 'link_role'))}, ''), att.{_quote_identifier(_resolve_physical_column(ATTACHMENT_TABLE_NAME, 'attachment_type'))}) AS attachment_type,
+            att.{_quote_identifier(_resolve_physical_column(ATTACHMENT_TABLE_NAME, 'file_ext'))} AS file_ext,
+            att.{_quote_identifier(_resolve_physical_column(ATTACHMENT_TABLE_NAME, 'storage_path'))} AS storage_path,
+            att.{_quote_identifier(_resolve_physical_column(ATTACHMENT_TABLE_NAME, 'source_path'))} AS source_path,
+            att.{_quote_identifier(_resolve_physical_column(ATTACHMENT_TABLE_NAME, 'checksum'))} AS checksum,
+            COALESCE(lnk.{_quote_identifier(_resolve_physical_column(ATTACHMENT_LINK_TABLE_NAME, 'is_primary'))}, 0) AS is_primary,
+            att.{_quote_identifier(_resolve_physical_column(ATTACHMENT_TABLE_NAME, 'status'))} AS status,
+            COALESCE(lnk.{_quote_identifier(_resolve_physical_column(ATTACHMENT_LINK_TABLE_NAME, 'created_at'))}, att.{_quote_identifier(_resolve_physical_column(ATTACHMENT_TABLE_NAME, 'created_at'))}) AS created_at,
+            COALESCE(lnk.{_quote_identifier(_resolve_physical_column(ATTACHMENT_LINK_TABLE_NAME, 'updated_at'))}, att.{_quote_identifier(_resolve_physical_column(ATTACHMENT_TABLE_NAME, 'updated_at'))}) AS updated_at
         FROM {ATTACHMENT_LINK_TABLE_NAME} AS lnk
         LEFT JOIN {ATTACHMENT_TABLE_NAME} AS att
-            ON att.uid_attachment = lnk.uid_attachment
-        ORDER BY lnk.uid_literature, COALESCE(lnk.is_primary, 0) DESC, att.attachment_name
+            ON att.{_quote_identifier(_resolve_physical_column(ATTACHMENT_TABLE_NAME, 'uid_attachment'))} = lnk.{_quote_identifier(_resolve_physical_column(ATTACHMENT_LINK_TABLE_NAME, 'uid_attachment'))}
+        ORDER BY lnk.{_quote_identifier(_resolve_physical_column(ATTACHMENT_LINK_TABLE_NAME, 'uid_literature'))}, COALESCE(lnk.{_quote_identifier(_resolve_physical_column(ATTACHMENT_LINK_TABLE_NAME, 'is_primary'))}, 0) DESC, att.{_quote_identifier(_resolve_physical_column(ATTACHMENT_TABLE_NAME, 'attachment_name'))}
         """,
         conn,
     )
@@ -1136,12 +2892,11 @@ def _migrate_and_drop_legacy_attachment_table(conn: sqlite3.Connection) -> None:
 
 
 def _sync_tag_entities(conn: sqlite3.Connection) -> None:
-    if _sqlite_object_type(conn, "literature_tags") != "table":
+    if _sqlite_object_type(conn, LITERATURE_TAG_TABLE_NAME) != "table":
         return
 
-    tag_links_df = pd.read_sql_query("SELECT * FROM literature_tags", conn)
+    tag_links_df = pd.read_sql_query(f"SELECT * FROM {_quote_identifier(LITERATURE_TAG_TABLE_NAME)}", conn)
     if tag_links_df.empty:
-        _replace_table_rows(conn, TAG_TABLE_NAME, pd.DataFrame(columns=list(TAG_REQUIRED_COLUMNS.keys())))
         return
 
     now = _utc_now_iso()
@@ -1163,23 +2918,23 @@ def _sync_tag_entities(conn: sqlite3.Connection) -> None:
         }
 
     tags_df = pd.DataFrame(list(rows_by_uid.values()), columns=list(TAG_REQUIRED_COLUMNS.keys()))
-    _replace_table_rows(conn, TAG_TABLE_NAME, tags_df)
+    _upsert_table_rows(conn, TAG_TABLE_NAME, tags_df, key_columns=["uid_tag"])
 
 
-def _sync_author_entities(conn: sqlite3.Connection) -> None:
-    if _sqlite_object_type(conn, "literatures") != "table":
-        return
-
-    literatures_df = pd.read_sql_query("SELECT uid_literature, authors, created_at, updated_at FROM literatures", conn)
-    if literatures_df.empty:
-        _replace_table_rows(conn, AUTHOR_TABLE_NAME, pd.DataFrame(columns=list(AUTHOR_REQUIRED_COLUMNS.keys())))
-        _replace_table_rows(conn, AUTHOR_LINK_TABLE_NAME, pd.DataFrame(columns=list(AUTHOR_LINK_REQUIRED_COLUMNS.keys())))
-        return
+def _build_author_entity_and_link_frames_from_literature_df(
+    literature_df: pd.DataFrame | None,
+    *,
+    source_type: str = "文献主表.authors",
+) -> tuple[pd.DataFrame, pd.DataFrame]:
+    empty_authors = pd.DataFrame(columns=list(AUTHOR_REQUIRED_COLUMNS.keys()))
+    empty_links = pd.DataFrame(columns=list(AUTHOR_LINK_REQUIRED_COLUMNS.keys()))
+    if literature_df is None or literature_df.empty:
+        return empty_authors, empty_links
 
     now = _utc_now_iso()
     author_rows_by_uid: dict[str, dict[str, object]] = {}
     author_link_rows: list[dict[str, object]] = []
-    for _, row in literatures_df.fillna("").iterrows():
+    for _, row in literature_df.fillna("").iterrows():
         uid_literature = str(row.get("uid_literature") or "").strip()
         if not uid_literature:
             continue
@@ -1192,17 +2947,18 @@ def _sync_author_entities(conn: sqlite3.Connection) -> None:
             canonical_name = str(author_meta.get("标准作者名") or cleaned_author_name or author_name).strip()
             display_name = cleaned_author_name or str(author_name or "").strip()
             uid_author = _stable_author_uid(normalized_name)
+            surname, given_names = _split_author_name_components(canonical_name or display_name)
             author_rows_by_uid[uid_author] = {
                 "uid_author": uid_author,
                 "display_name": display_name,
                 "normalized_name": normalized_name,
-                "surname": canonical_name.split()[0] if canonical_name.split() else canonical_name,
-                "given_names": " ".join(canonical_name.split()[1:]) if len(canonical_name.split()) > 1 else "",
+                "surname": surname,
+                "given_names": given_names,
                 "标准作者名": str(author_meta.get("标准作者名") or ""),
                 "作者类型": str(author_meta.get("作者类型") or "个人作者"),
                 "作者质量标记": str(author_meta.get("作者质量标记") or ""),
                 "orcid": "",
-                "source_type": "literatures.authors",
+                "source_type": source_type,
                 "created_at": str(row.get("created_at") or now).strip() or now,
                 "updated_at": str(row.get("updated_at") or now).strip() or now,
             }
@@ -1215,17 +2971,825 @@ def _sync_author_entities(conn: sqlite3.Connection) -> None:
                     "is_first_author": 1 if index == 1 else 0,
                     "is_corresponding": 0,
                     "display_name": display_name,
-                    "source_type": "literatures.authors",
+                    "source_type": source_type,
                     "created_at": str(row.get("created_at") or now).strip() or now,
                     "updated_at": str(row.get("updated_at") or now).strip() or now,
                 }
             )
 
+    if not author_rows_by_uid and not author_link_rows:
+        return empty_authors, empty_links
     authors_df = pd.DataFrame(list(author_rows_by_uid.values()), columns=list(AUTHOR_REQUIRED_COLUMNS.keys()))
     links_df = pd.DataFrame(author_link_rows, columns=list(AUTHOR_LINK_REQUIRED_COLUMNS.keys()))
-    _replace_table_rows(conn, AUTHOR_LINK_TABLE_NAME, pd.DataFrame(columns=list(AUTHOR_LINK_REQUIRED_COLUMNS.keys())))
-    _replace_table_rows(conn, AUTHOR_TABLE_NAME, authors_df)
-    _replace_table_rows(conn, AUTHOR_LINK_TABLE_NAME, links_df)
+    if not links_df.empty:
+        links_df = links_df.drop_duplicates(subset=["uid_literature_author"], keep="last")
+    return authors_df, links_df
+
+
+def sync_author_entities_from_literature_rows(
+    db_path: str | Path,
+    literature_df: pd.DataFrame | None,
+    *,
+    replace_link_scope: list[str] | tuple[str, ...] | set[str] | None = None,
+) -> dict[str, int]:
+    """根据文献主表作者串直接维护作者实体与作者关系。"""
+
+    init_content_db(db_path)
+    authors_df, links_df = _build_author_entity_and_link_frames_from_literature_df(literature_df)
+    with connect_sqlite(db_path) as conn:
+        if replace_link_scope:
+            _delete_rows_by_column_values(conn, AUTHOR_LINK_TABLE_NAME, "uid_literature", replace_link_scope)
+        if not authors_df.empty:
+            _upsert_table_rows(conn, AUTHOR_TABLE_NAME, authors_df, key_columns=["uid_author"])
+        if not links_df.empty:
+            try:
+                _upsert_table_rows(conn, AUTHOR_LINK_TABLE_NAME, links_df, key_columns=["uid_literature_author"])
+            except Exception:
+                pass
+        conn.commit()
+    return {
+        "author_count": int(len(authors_df)),
+        "author_link_count": int(len(links_df)),
+    }
+
+
+def _sync_author_entities(conn: sqlite3.Connection) -> None:
+    if _sqlite_object_type(conn, AUTHOR_LINK_TABLE_NAME) != "table":
+        return
+
+    author_link_columns = _physical_table_columns(conn, AUTHOR_LINK_TABLE_NAME)
+    if not author_link_columns:
+        return
+    author_links_df = pd.read_sql_query(
+        f"SELECT "
+        f"{_quote_identifier(resolve_content_physical_column(AUTHOR_LINK_TABLE_NAME, 'uid_author'))} AS uid_author, "
+        f"{_quote_identifier(resolve_content_physical_column(AUTHOR_LINK_TABLE_NAME, 'display_name'))} AS display_name, "
+        f"{_quote_identifier(resolve_content_physical_column(AUTHOR_LINK_TABLE_NAME, 'source_type'))} AS source_type, "
+        f"{_quote_identifier(resolve_content_physical_column(AUTHOR_LINK_TABLE_NAME, 'created_at'))} AS created_at, "
+        f"{_quote_identifier(resolve_content_physical_column(AUTHOR_LINK_TABLE_NAME, 'updated_at'))} AS updated_at "
+        f"FROM {_quote_identifier(AUTHOR_LINK_TABLE_NAME)}",
+        conn,
+    )
+    if author_links_df.empty:
+        return
+
+    now = _utc_now_iso()
+    author_rows_by_uid: dict[str, dict[str, object]] = {}
+    for _, row in author_links_df.fillna("").iterrows():
+        display_name = str(row.get("display_name") or "").strip()
+        uid_author = str(row.get("uid_author") or "").strip()
+        if not display_name and not uid_author:
+            continue
+        cleaned_author_name, _ = _clean_author_display_name(display_name)
+        normalized_name = _normalize_person_name(cleaned_author_name or display_name)
+        if not uid_author:
+            if not normalized_name:
+                continue
+            uid_author = _stable_author_uid(normalized_name)
+        author_meta = _classify_author_display_name(cleaned_author_name or display_name)
+        canonical_name = str(author_meta.get("标准作者名") or cleaned_author_name or display_name).strip()
+        surname, given_names = _split_author_name_components(canonical_name or display_name)
+        author_rows_by_uid[uid_author] = {
+            "uid_author": uid_author,
+            "display_name": cleaned_author_name or display_name,
+            "normalized_name": normalized_name,
+            "surname": surname,
+            "given_names": given_names,
+            "标准作者名": str(author_meta.get("标准作者名") or ""),
+            "作者类型": str(author_meta.get("作者类型") or "个人作者"),
+            "作者质量标记": str(author_meta.get("作者质量标记") or ""),
+            "orcid": "",
+            "source_type": str(row.get("source_type") or "文献作者关联").strip() or "文献作者关联",
+            "created_at": str(row.get("created_at") or now).strip() or now,
+            "updated_at": str(row.get("updated_at") or now).strip() or now,
+        }
+
+    if not author_rows_by_uid:
+        return
+    authors_df = pd.DataFrame(list(author_rows_by_uid.values()), columns=list(AUTHOR_REQUIRED_COLUMNS.keys()))
+    _upsert_table_rows(conn, AUTHOR_TABLE_NAME, authors_df, key_columns=["uid_author"])
+
+
+def _load_knowledge_relation_source_frames(
+    conn: sqlite3.Connection,
+) -> tuple[pd.DataFrame, pd.DataFrame]:
+    literatures = pd.read_sql_query(
+        f"SELECT {_quote_identifier(resolve_content_physical_column(LITERATURE_TABLE_NAME, 'uid_literature'))} AS uid_literature, "
+        f"{_quote_identifier(resolve_content_physical_column(LITERATURE_TABLE_NAME, 'cite_key'))} AS cite_key, "
+        f"{_quote_identifier(resolve_content_physical_column(LITERATURE_TABLE_NAME, 'standard_note_uid'))} AS standard_note_uid "
+        f"FROM {_quote_identifier(LITERATURE_TABLE_NAME)}",
+        conn,
+    )
+    if _sqlite_object_type(conn, KNOWLEDGE_INDEX_TABLE_NAME) == "table":
+        uid_knowledge_column = resolve_content_physical_column(KNOWLEDGE_INDEX_TABLE_NAME, "uid_knowledge")
+        note_type_column = resolve_content_physical_column(KNOWLEDGE_INDEX_TABLE_NAME, "note_type")
+        uid_literature_column = resolve_content_physical_column(KNOWLEDGE_INDEX_TABLE_NAME, "uid_literature")
+        cite_key_column = resolve_content_physical_column(KNOWLEDGE_INDEX_TABLE_NAME, "cite_key")
+        evidence_uids_column = resolve_content_physical_column(KNOWLEDGE_INDEX_TABLE_NAME, "evidence_uids")
+        knowledge = pd.read_sql_query(
+            f"SELECT {_quote_identifier(uid_knowledge_column)} AS uid_knowledge, "
+            f"{_quote_identifier(note_type_column)} AS note_type, "
+            f"{_quote_identifier(uid_literature_column)} AS uid_literature, "
+            f"{_quote_identifier(cite_key_column)} AS cite_key, "
+            f"{_quote_identifier(evidence_uids_column)} AS evidence_uids "
+            f"FROM {_quote_identifier(KNOWLEDGE_INDEX_TABLE_NAME)}",
+            conn,
+        )
+    else:
+        knowledge = pd.DataFrame(
+            columns=["uid_knowledge", "note_type", "uid_literature", "cite_key", "evidence_uids"]
+        )
+    return literatures, knowledge
+
+
+def _build_knowledge_relation_frames(
+    literatures: pd.DataFrame,
+    knowledge: pd.DataFrame,
+) -> tuple[pd.DataFrame, pd.DataFrame]:
+    literature_uid_set = {
+        str(uid).strip()
+        for uid in literatures.get("uid_literature", pd.Series(dtype=str)).tolist()
+        if str(uid).strip()
+    }
+    knowledge_uid_set = {
+        str(uid).strip()
+        for uid in knowledge.get("uid_knowledge", pd.Series(dtype=str)).tolist()
+        if str(uid).strip()
+    }
+    literature_cite_lookup = {
+        str(row.get("uid_literature") or "").strip(): str(row.get("cite_key") or "").strip()
+        for _, row in literatures.fillna("").iterrows()
+        if str(row.get("uid_literature") or "").strip()
+    }
+    literature_standard_note_lookup = {
+        str(row.get("uid_literature") or "").strip(): str(row.get("standard_note_uid") or "").strip()
+        for _, row in literatures.fillna("").iterrows()
+        if str(row.get("uid_literature") or "").strip()
+    }
+
+    link_rows: list[dict[str, object]] = []
+    now = _utc_now_iso()
+    for _, row in knowledge.fillna("").iterrows():
+        uid_knowledge = str(row.get("uid_knowledge") or "").strip()
+        uid_literature = str(row.get("uid_literature") or "").strip()
+        if uid_knowledge and uid_literature and uid_knowledge in knowledge_uid_set and uid_literature in literature_uid_set:
+            note_type = str(row.get("note_type") or "").strip()
+            designated_standard_note_uid = literature_standard_note_lookup.get(uid_literature, "")
+            if note_type == "literature_standard_note":
+                if designated_standard_note_uid:
+                    relation_type = "standard_note" if designated_standard_note_uid == uid_knowledge else "mention"
+                else:
+                    relation_type = "standard_note"
+            else:
+                relation_type = "mention"
+            link_rows.append(
+                {
+                    "uid_knowledge": uid_knowledge,
+                    "uid_literature": uid_literature,
+                    "relation_type": relation_type,
+                    "is_primary": 1 if relation_type == "standard_note" else 0,
+                    "cite_key": str(row.get("cite_key") or literature_cite_lookup.get(uid_literature) or "").strip(),
+                    "source_field": "知识索引",
+                    "created_at": now,
+                    "updated_at": now,
+                }
+            )
+
+    evidence_rows: list[dict[str, object]] = []
+    for _, row in knowledge.fillna("").iterrows():
+        uid_knowledge = str(row.get("uid_knowledge") or "").strip()
+        if not uid_knowledge or uid_knowledge not in knowledge_uid_set:
+            continue
+        for evidence_uid in _split_pipe_values(row.get("evidence_uids")):
+            evidence_rows.append(
+                {
+                    "uid_knowledge": uid_knowledge,
+                    "evidence_type": "literature" if evidence_uid in literature_uid_set else "unknown",
+                    "target_uid": evidence_uid,
+                    "evidence_role": "supporting",
+                    "source_field": "知识索引.evidence_uids",
+                    "created_at": now,
+                }
+            )
+
+    for _, row in literatures.fillna("").iterrows():
+        uid_literature = str(row.get("uid_literature") or "").strip()
+        uid_knowledge = str(row.get("standard_note_uid") or "").strip()
+        if uid_literature and uid_knowledge and uid_literature in literature_uid_set and uid_knowledge in knowledge_uid_set:
+            link_rows.append(
+                {
+                    "uid_knowledge": uid_knowledge,
+                    "uid_literature": uid_literature,
+                    "relation_type": "standard_note",
+                    "is_primary": 1,
+                    "cite_key": str(row.get("cite_key") or "").strip(),
+                    "source_field": "文献主表.standard_note_uid",
+                    "created_at": now,
+                    "updated_at": now,
+                }
+            )
+
+    link_df = pd.DataFrame(link_rows)
+    if not link_df.empty:
+        link_df = link_df.drop_duplicates(subset=["uid_knowledge", "uid_literature", "relation_type"], keep="last")
+    else:
+        link_df = pd.DataFrame(
+            columns=[
+                "uid_knowledge",
+                "uid_literature",
+                "relation_type",
+                "is_primary",
+                "cite_key",
+                "source_field",
+                "created_at",
+                "updated_at",
+            ]
+        )
+
+    evidence_df = pd.DataFrame(evidence_rows)
+    if not evidence_df.empty:
+        evidence_df = evidence_df.drop_duplicates(
+            subset=["uid_knowledge", "evidence_type", "target_uid", "evidence_role"],
+            keep="last",
+        )
+    else:
+        evidence_df = pd.DataFrame(
+            columns=[
+                "uid_knowledge",
+                "evidence_type",
+                "target_uid",
+                "evidence_role",
+                "source_field",
+                "created_at",
+            ]
+        )
+
+    return link_df, evidence_df
+
+
+def _delete_auto_managed_knowledge_rows(
+    conn: sqlite3.Connection,
+    *,
+    knowledge_scope: set[str],
+    literature_scope: set[str],
+) -> None:
+    try:
+        if knowledge_scope and _sqlite_object_type(conn, KNOWLEDGE_EVIDENCE_TABLE_NAME) == "table":
+            source_field_column = resolve_content_physical_column(KNOWLEDGE_EVIDENCE_TABLE_NAME, "source_field")
+            uid_knowledge_column = resolve_content_physical_column(KNOWLEDGE_EVIDENCE_TABLE_NAME, "uid_knowledge")
+            source_placeholders = ", ".join(["?"] * len(AUTO_KNOWLEDGE_EVIDENCE_SOURCE_FIELDS))
+            scope_placeholders = ", ".join(["?"] * len(knowledge_scope))
+            conn.execute(
+                f"DELETE FROM {_quote_identifier(KNOWLEDGE_EVIDENCE_TABLE_NAME)} "
+                f"WHERE {_quote_identifier(source_field_column)} IN ({source_placeholders}) "
+                f"AND {_quote_identifier(uid_knowledge_column)} IN ({scope_placeholders})",
+                tuple(AUTO_KNOWLEDGE_EVIDENCE_SOURCE_FIELDS) + tuple(sorted(knowledge_scope)),
+            )
+
+        if (knowledge_scope or literature_scope) and _sqlite_object_type(conn, KNOWLEDGE_LINK_TABLE_NAME) == "table":
+            source_field_column = resolve_content_physical_column(KNOWLEDGE_LINK_TABLE_NAME, "source_field")
+            uid_knowledge_column = resolve_content_physical_column(KNOWLEDGE_LINK_TABLE_NAME, "uid_knowledge")
+            uid_literature_column = resolve_content_physical_column(KNOWLEDGE_LINK_TABLE_NAME, "uid_literature")
+            source_placeholders = ", ".join(["?"] * len(AUTO_KNOWLEDGE_LINK_SOURCE_FIELDS))
+            conditions: list[str] = []
+            params: list[object] = list(AUTO_KNOWLEDGE_LINK_SOURCE_FIELDS)
+            if knowledge_scope:
+                knowledge_placeholders = ", ".join(["?"] * len(knowledge_scope))
+                conditions.append(f"{_quote_identifier(uid_knowledge_column)} IN ({knowledge_placeholders})")
+                params.extend(sorted(knowledge_scope))
+            if literature_scope:
+                literature_placeholders = ", ".join(["?"] * len(literature_scope))
+                conditions.append(f"{_quote_identifier(uid_literature_column)} IN ({literature_placeholders})")
+                params.extend(sorted(literature_scope))
+            if conditions:
+                conn.execute(
+                    f"DELETE FROM {_quote_identifier(KNOWLEDGE_LINK_TABLE_NAME)} "
+                    f"WHERE {_quote_identifier(source_field_column)} IN ({source_placeholders}) "
+                    f"AND ({' OR '.join(conditions)})",
+                    tuple(params),
+                )
+    except sqlite3.OperationalError:
+        return
+
+
+def sync_knowledge_relationships(
+    db_path: str | Path,
+    *,
+    replace_knowledge_scope: list[str] | tuple[str, ...] | set[str] | None = None,
+    replace_literature_scope: list[str] | tuple[str, ...] | set[str] | None = None,
+) -> dict[str, int]:
+    """根据当前文献表与知识索引直接维护自动生成的知识关系。"""
+
+    init_content_db(db_path)
+    knowledge_scope = {
+        str(value).strip()
+        for value in (replace_knowledge_scope or [])
+        if str(value).strip()
+    }
+    literature_scope = {
+        str(value).strip()
+        for value in (replace_literature_scope or [])
+        if str(value).strip()
+    }
+    with connect_sqlite(db_path) as conn:
+        literatures, knowledge = _load_knowledge_relation_source_frames(conn)
+        link_df, evidence_df = _build_knowledge_relation_frames(literatures, knowledge)
+
+        if knowledge_scope or literature_scope:
+            _delete_auto_managed_knowledge_rows(
+                conn,
+                knowledge_scope=knowledge_scope,
+                literature_scope=literature_scope,
+            )
+            if not link_df.empty:
+                link_mask = pd.Series(False, index=link_df.index)
+                if knowledge_scope:
+                    link_mask = link_mask | link_df["uid_knowledge"].astype(str).isin(knowledge_scope)
+                if literature_scope:
+                    link_mask = link_mask | link_df["uid_literature"].astype(str).isin(literature_scope)
+                link_df = link_df.loc[link_mask].reset_index(drop=True)
+            if not evidence_df.empty:
+                if knowledge_scope:
+                    evidence_df = evidence_df.loc[
+                        evidence_df["uid_knowledge"].astype(str).isin(knowledge_scope)
+                    ].reset_index(drop=True)
+                else:
+                    evidence_df = evidence_df.iloc[0:0].copy()
+
+        try:
+            _upsert_table_rows(
+                conn,
+                KNOWLEDGE_LINK_TABLE_NAME,
+                link_df,
+                key_columns=["uid_knowledge", "uid_literature", "relation_type"],
+            )
+            _upsert_table_rows(
+                conn,
+                KNOWLEDGE_EVIDENCE_TABLE_NAME,
+                evidence_df,
+                key_columns=["uid_knowledge", "evidence_type", "target_uid", "evidence_role"],
+            )
+        except sqlite3.OperationalError:
+            try:
+                with sqlite3.connect(str(Path(db_path)), timeout=60) as fallback_conn:
+                    _upsert_table_rows(
+                        fallback_conn,
+                        KNOWLEDGE_LINK_TABLE_NAME,
+                        link_df,
+                        key_columns=["uid_knowledge", "uid_literature", "relation_type"],
+                    )
+                    _upsert_table_rows(
+                        fallback_conn,
+                        KNOWLEDGE_EVIDENCE_TABLE_NAME,
+                        evidence_df,
+                        key_columns=["uid_knowledge", "evidence_type", "target_uid", "evidence_role"],
+                    )
+                    fallback_conn.commit()
+            except sqlite3.OperationalError:
+                pass
+        conn.commit()
+    return {
+        "knowledge_link_count": int(len(link_df)),
+        "knowledge_evidence_count": int(len(evidence_df)),
+    }
+
+
+def _known_contentdb_table_has_rows(conn: sqlite3.Connection, table_name: str) -> bool:
+    if _sqlite_object_type(conn, table_name) != "table":
+        return False
+    try:
+        row = conn.execute(f"SELECT COUNT(*) FROM {_quote_identifier(table_name)}").fetchone()
+    except sqlite3.Error:
+        return True
+    return bool(row and int(row[0] or 0) > 0)
+
+
+def _enforce_empty_chinese_physical_schema(conn: sqlite3.Connection) -> None:
+    """在空库初始化时重建中文物理字段 schema。"""
+
+    tracked_tables = (
+        LITERATURE_TABLE_NAME,
+        ATTACHMENT_TABLE_NAME,
+        ATTACHMENT_LINK_TABLE_NAME,
+        AUTHOR_TABLE_NAME,
+        AUTHOR_LINK_TABLE_NAME,
+        TAG_TABLE_NAME,
+        LITERATURE_TAG_TABLE_NAME,
+        PARSE_ASSET_TABLE_NAME,
+        TRANSLATION_ASSET_TABLE_NAME,
+        CHUNK_SET_TABLE_NAME,
+        CHUNK_TABLE_NAME,
+        KNOWLEDGE_NOTES_TABLE_NAME,
+        KNOWLEDGE_LINK_TABLE_NAME,
+        KNOWLEDGE_EVIDENCE_TABLE_NAME,
+        WORKSPACE_NODE_STATE_TABLE_NAME,
+        FLOW_STATE_TABLE_NAME,
+        READING_STATE_TABLE_NAME,
+        REVIEW_STATE_TABLE_NAME,
+        "literature_reading_queue",
+        KNOWLEDGE_INDEX_TABLE_NAME,
+        KNOWLEDGE_ATTACHMENT_TABLE_NAME,
+    )
+    if any(_known_contentdb_table_has_rows(conn, table_name) for table_name in tracked_tables):
+        return
+
+    all_views = [
+        str(row[0]).strip()
+        for row in conn.execute("SELECT name FROM sqlite_master WHERE type='view'").fetchall()
+        if row and str(row[0]).strip()
+    ]
+    for view_name in all_views:
+        conn.execute(f"DROP VIEW IF EXISTS {_quote_identifier(view_name)}")
+
+    conn.execute("PRAGMA foreign_keys=OFF")
+    for table_name in tracked_tables:
+        if _sqlite_object_type(conn, table_name) == "table":
+            conn.execute(f"DROP TABLE IF EXISTS {_quote_identifier(table_name)}")
+
+    conn.executescript(
+        '''
+        CREATE TABLE IF NOT EXISTS "文献主表" (
+            "内部编号" INTEGER PRIMARY KEY AUTOINCREMENT,
+            "uid_文献" TEXT UNIQUE,
+            "题录键" TEXT,
+            bib_doi TEXT,
+            bib_isbn TEXT,
+            bib_issn TEXT,
+            bib_entry_type TEXT,
+            bib_orig_entry_type TEXT,
+            bib_journal TEXT,
+            bib_booktitle TEXT,
+            bib_pages TEXT,
+            bib_volume TEXT,
+            bib_number TEXT,
+            bib_month TEXT,
+            bib_publisher TEXT,
+            bib_editor TEXT,
+            bib_school TEXT,
+            bib_author TEXT,
+            bib_file TEXT,
+            bib_url TEXT,
+            bib_urldate TEXT,
+            bib_langid TEXT,
+            bib_note TEXT,
+            bib_howpublished TEXT,
+            "标题" TEXT,
+            "标题清洗" TEXT,
+            "标题标准化" TEXT,
+            "作者串" TEXT,
+            "第一作者" TEXT,
+            "年份" TEXT,
+            "摘要" TEXT,
+            "关键词" TEXT,
+            "PDF路径" TEXT,
+            "是否占位" INTEGER,
+            "占位原因" TEXT,
+            "占位状态" TEXT,
+            "uid_占位运行" TEXT,
+            "是否有全文" INTEGER,
+            "主附件名称" TEXT,
+            "主附件源路径" TEXT,
+            "uid_标准笔记" TEXT,
+            "来源类型" TEXT,
+            "来源路径" TEXT,
+            "导入来源" TEXT,
+            "创建时间" TEXT,
+            "更新时间" TEXT,
+            "导入时间" TEXT,
+            "结构化状态" TEXT,
+            "结构化正文路径" TEXT,
+            "结构化后端" TEXT,
+            "结构化任务类型" TEXT,
+            "结构化更新时间" TEXT,
+            "结构化Schema版本" TEXT,
+            "结构化文本长度" INTEGER,
+            "结构化参考文献数" INTEGER,
+            "文献语种" TEXT,
+            "标题译文" TEXT,
+            "摘要译文" TEXT,
+            "关键词译文" TEXT,
+            "元数据翻译状态" TEXT,
+            "元数据翻译提供方" TEXT,
+            "元数据翻译模型" TEXT,
+            "元数据翻译更新时间" TEXT,
+            "备注" TEXT,
+            "文献类型" TEXT,
+            "PDF相对路径" TEXT,
+            "uid_当前解析资产" TEXT,
+            "uid_当前解析附件" TEXT,
+            "当前解析层级" TEXT,
+            "当前解析后端" TEXT,
+            "当前解析路径" TEXT,
+            "当前解析Markdown路径" TEXT,
+            "当前解析状态" TEXT,
+            "当前解析更新时间" TEXT
+        );
+
+        CREATE TABLE IF NOT EXISTS "附件表" (
+            "内部编号" INTEGER PRIMARY KEY AUTOINCREMENT,
+            uid_attachment TEXT UNIQUE,
+            "附件名称" TEXT,
+            "附件类型" TEXT,
+            "文件扩展名" TEXT,
+            "存储路径" TEXT,
+            "来源路径" TEXT,
+            "附件来源类型" TEXT,
+            "来源事务" TEXT,
+            "校验和" TEXT,
+            "状态" TEXT,
+            "创建时间" TEXT,
+            "更新时间" TEXT,
+            "相对路径" TEXT
+        );
+
+        CREATE TABLE IF NOT EXISTS "文献附件关联" (
+            "内部编号" INTEGER PRIMARY KEY AUTOINCREMENT,
+            uid_attachment_link TEXT UNIQUE,
+            uid_literature TEXT,
+            uid_attachment TEXT,
+            "关联角色" TEXT,
+            "是否主附件" INTEGER,
+            "来源类型" TEXT,
+            legacy_uid_attachment TEXT,
+            "创建时间" TEXT,
+            "更新时间" TEXT,
+            UNIQUE(uid_literature, uid_attachment)
+        );
+
+        CREATE TABLE IF NOT EXISTS "作者表" (
+            "内部编号" INTEGER PRIMARY KEY AUTOINCREMENT,
+            uid_author TEXT UNIQUE,
+            "显示姓名" TEXT,
+            "规范姓名" TEXT,
+            "姓" TEXT,
+            "名" TEXT,
+            "研究者标识" TEXT,
+            "来源类型" TEXT,
+            "创建时间" TEXT,
+            "更新时间" TEXT,
+            "标准作者名" TEXT,
+            "作者类型" TEXT,
+            "作者质量标记" TEXT
+        );
+
+        CREATE TABLE IF NOT EXISTS "文献作者关联" (
+            "内部编号" INTEGER PRIMARY KEY AUTOINCREMENT,
+            uid_literature_author TEXT UNIQUE,
+            uid_literature TEXT,
+            uid_author TEXT,
+            "作者顺序" INTEGER,
+            "是否第一作者" INTEGER,
+            "是否通讯作者" INTEGER,
+            "显示姓名" TEXT,
+            "来源类型" TEXT,
+            "创建时间" TEXT,
+            "更新时间" TEXT,
+            UNIQUE(uid_literature, uid_author, "作者顺序")
+        );
+
+        CREATE TABLE IF NOT EXISTS "标签表" (
+            "内部编号" INTEGER PRIMARY KEY AUTOINCREMENT,
+            uid_tag TEXT UNIQUE,
+            "标签" TEXT,
+            "标签规范名" TEXT,
+            "标签显示名" TEXT,
+            "标签分组" TEXT,
+            "创建时间" TEXT,
+            "更新时间" TEXT
+        );
+
+        CREATE TABLE IF NOT EXISTS "文献标签关联" (
+            "内部编号" INTEGER PRIMARY KEY AUTOINCREMENT,
+            uid_literature TEXT,
+            cite_key TEXT,
+            "标签" TEXT,
+            "标签规范名" TEXT,
+            "来源类型" TEXT,
+            "创建时间" TEXT,
+            "更新时间" TEXT,
+            UNIQUE(uid_literature, "标签")
+        );
+
+        CREATE TABLE IF NOT EXISTS "文献解析资产" (
+            "内部编号" INTEGER PRIMARY KEY AUTOINCREMENT,
+            asset_uid TEXT UNIQUE,
+            uid_literature TEXT,
+            cite_key TEXT,
+            uid_attachment TEXT,
+            "解析层级" TEXT,
+            "解析后端" TEXT,
+            "模型名称" TEXT,
+            "资产目录" TEXT,
+            "结构化正文路径" TEXT,
+            "重构Markdown路径" TEXT,
+            "线性索引路径" TEXT,
+            "元素路径" TEXT,
+            "分块JSONL路径" TEXT,
+            "解析记录路径" TEXT,
+            "质量报告路径" TEXT,
+            "解析状态" TEXT,
+            last_run_uid TEXT,
+            "是否当前有效" INTEGER,
+            "创建时间" TEXT,
+            "更新时间" TEXT
+        );
+
+        CREATE TABLE IF NOT EXISTS "文献翻译资产" (
+            "内部编号" INTEGER PRIMARY KEY AUTOINCREMENT,
+            translation_uid TEXT UNIQUE,
+            uid_literature TEXT,
+            cite_key TEXT,
+            source_asset_uid TEXT,
+            "来源类型" TEXT,
+            "目标语种" TEXT,
+            "翻译范围" TEXT,
+            "提供方" TEXT,
+            "模型名称" TEXT,
+            "资产目录" TEXT,
+            "译文Markdown路径" TEXT,
+            "译文结构化路径" TEXT,
+            "翻译审计路径" TEXT,
+            "状态" TEXT,
+            "是否当前有效" INTEGER,
+            "创建时间" TEXT,
+            "更新时间" TEXT
+        );
+
+        CREATE TABLE IF NOT EXISTS "文献分块集" (
+            "内部编号" INTEGER PRIMARY KEY AUTOINCREMENT,
+            chunks_uid TEXT UNIQUE,
+            "来源范围" TEXT,
+            "分块绝对路径" TEXT,
+            "来源后端" TEXT,
+            "分块数量" INTEGER,
+            "来源文献数" INTEGER,
+            "创建时间" TEXT,
+            "状态" TEXT
+        );
+
+        CREATE TABLE IF NOT EXISTS "文献分块" (
+            "内部编号" INTEGER PRIMARY KEY AUTOINCREMENT,
+            "分块编号" TEXT UNIQUE,
+            chunks_uid TEXT,
+            uid_literature TEXT,
+            cite_key TEXT,
+            "分片路径" TEXT,
+            "分块序号" INTEGER,
+            "分块类型" TEXT,
+            "起始字符位" INTEGER,
+            "结束字符位" INTEGER,
+            "文本长度" INTEGER,
+            "创建时间" TEXT
+        );
+
+        CREATE TABLE IF NOT EXISTS "知识笔记" (
+            "内部编号" INTEGER PRIMARY KEY AUTOINCREMENT,
+            uid_note TEXT UNIQUE,
+            uid_literature TEXT,
+            cite_key TEXT,
+            "笔记类型" TEXT,
+            "笔记路径" TEXT,
+            "标题" TEXT,
+            "状态" TEXT,
+            "来源阶段" TEXT,
+            source_run_uid TEXT,
+            "内容哈希" TEXT,
+            "创建时间" TEXT,
+            "更新时间" TEXT
+        );
+
+        CREATE TABLE IF NOT EXISTS "知识文献关联" (
+            "内部编号" INTEGER PRIMARY KEY AUTOINCREMENT,
+            uid_knowledge TEXT,
+            uid_literature TEXT,
+            "关联类型" TEXT,
+            "是否主项" INTEGER,
+            cite_key TEXT,
+            "来源字段" TEXT,
+            "创建时间" TEXT,
+            "更新时间" TEXT,
+            UNIQUE(uid_knowledge, uid_literature, "关联类型")
+        );
+
+        CREATE TABLE IF NOT EXISTS "知识证据关联" (
+            "内部编号" INTEGER PRIMARY KEY AUTOINCREMENT,
+            uid_knowledge TEXT,
+            "证据类型" TEXT,
+            target_uid TEXT,
+            "证据角色" TEXT,
+            "来源字段" TEXT,
+            "创建时间" TEXT,
+            UNIQUE(uid_knowledge, "证据类型", target_uid, "证据角色")
+        );
+
+        CREATE TABLE IF NOT EXISTS "工作区节点状态" (
+            "节点编码" TEXT PRIMARY KEY,
+            "节点名称" TEXT,
+            "待执行" INTEGER,
+            "执行中" INTEGER,
+            "已完成" INTEGER,
+            "闸门状态" TEXT,
+            "uid_最近任务" TEXT,
+            "当前任务UID" TEXT,
+            "最近执行时间" TEXT,
+            "完成时间" TEXT,
+            "摘要" TEXT,
+            "下一节点编码" TEXT,
+            "失败原因" TEXT,
+            "重试次数" INTEGER,
+            "更新时间" TEXT
+        );
+
+        CREATE TABLE IF NOT EXISTS "文献流程状态" (
+            uid_literature TEXT PRIMARY KEY,
+            cite_key TEXT,
+            "解析资产UID" TEXT,
+            "笔记UID" TEXT,
+            "来源文献UID" TEXT,
+            "父文献UID" TEXT,
+            "阶段编码" TEXT,
+            "节点编码" TEXT,
+            "文献角色" TEXT,
+            "流程轨道" TEXT,
+            "当前阶段" TEXT,
+            "当前阶段组" TEXT,
+            "当前状态" TEXT,
+            "下一阶段" TEXT,
+            "来源阶段" TEXT,
+            "来源类型" TEXT,
+            "推荐原因" TEXT,
+            "主题关系" TEXT,
+            "阅读目标" TEXT,
+            "人工提示" TEXT,
+            "失败原因" TEXT,
+            "阻塞原因" TEXT,
+            "是否当前有效" INTEGER,
+            "是否可执行" INTEGER,
+            "uid_最近任务" TEXT,
+            "uid_最近批次" TEXT,
+            "创建时间" TEXT,
+            "更新时间" TEXT
+        );
+        '''
+    )
+    conn.executescript(
+        '''
+        CREATE INDEX IF NOT EXISTS idx_lit_uid ON "文献主表"("uid_文献");
+        CREATE INDEX IF NOT EXISTS idx_lit_cite ON "文献主表"("题录键");
+        CREATE INDEX IF NOT EXISTS idx_lit_author_year ON "文献主表"("第一作者", "年份");
+        CREATE INDEX IF NOT EXISTS idx_attachment_path ON "附件表"("存储路径");
+        CREATE INDEX IF NOT EXISTS idx_attachment_checksum ON "附件表"("校验和");
+        CREATE INDEX IF NOT EXISTS idx_attachment_link_lit ON "文献附件关联"(uid_literature);
+        CREATE INDEX IF NOT EXISTS idx_attachment_link_attachment ON "文献附件关联"(uid_attachment);
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_tag_uid ON "标签表"(uid_tag);
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_tag_norm_unique ON "标签表"("标签规范名");
+        CREATE INDEX IF NOT EXISTS idx_tag_lit ON "文献标签关联"(uid_literature);
+        CREATE INDEX IF NOT EXISTS idx_tag_name ON "文献标签关联"("标签");
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_author_uid ON "作者表"(uid_author);
+        CREATE INDEX IF NOT EXISTS idx_author_name ON "作者表"("规范姓名");
+        CREATE INDEX IF NOT EXISTS idx_author_link_lit ON "文献作者关联"(uid_literature);
+        CREATE INDEX IF NOT EXISTS idx_author_link_author ON "文献作者关联"(uid_author);
+        CREATE INDEX IF NOT EXISTS idx_parse_asset_lit_level ON "文献解析资产"(uid_literature, "解析层级");
+        CREATE INDEX IF NOT EXISTS idx_parse_asset_current ON "文献解析资产"("解析层级", "是否当前有效");
+        CREATE INDEX IF NOT EXISTS idx_translation_asset_lit_scope ON "文献翻译资产"(uid_literature, "来源类型", "目标语种", "翻译范围");
+        CREATE INDEX IF NOT EXISTS idx_translation_asset_current ON "文献翻译资产"("来源类型", "目标语种", "是否当前有效");
+        CREATE INDEX IF NOT EXISTS idx_flow_state_stage ON "文献流程状态"("当前阶段", "当前状态");
+        CREATE INDEX IF NOT EXISTS idx_flow_state_track ON "文献流程状态"("流程轨道", "文献角色");
+        CREATE INDEX IF NOT EXISTS idx_flow_state_cite ON "文献流程状态"(cite_key);
+        CREATE INDEX IF NOT EXISTS idx_workspace_node_gate ON "工作区节点状态"("闸门状态", "执行中", "待执行");
+        CREATE VIEW IF NOT EXISTS "工作区节点状态总视图" AS SELECT * FROM "工作区节点状态";
+        CREATE VIEW IF NOT EXISTS "文献流程状态总视图" AS SELECT * FROM "文献流程状态";
+        CREATE VIEW IF NOT EXISTS "文献附件总视图" AS
+            SELECT l.uid_literature, l.cite_key, l."标题", a.uid_attachment, a."附件名称", a."存储路径", la."关联角色", la."是否主附件"
+            FROM "文献附件关联" la
+            LEFT JOIN "文献主表" l ON l.uid_literature = la.uid_literature
+            LEFT JOIN "附件表" a ON a.uid_attachment = la.uid_attachment;
+        CREATE VIEW IF NOT EXISTS "文献主附件视图" AS SELECT * FROM "文献附件总视图" WHERE IFNULL("是否主附件", 0) = 1;
+        CREATE VIEW IF NOT EXISTS "标签总表" AS SELECT * FROM "标签表";
+        CREATE VIEW IF NOT EXISTS "文献标签关联总视图" AS SELECT * FROM "文献标签关联";
+        CREATE VIEW IF NOT EXISTS "作者总表" AS SELECT * FROM "作者表";
+        CREATE VIEW IF NOT EXISTS "文献作者关联总视图" AS SELECT * FROM "文献作者关联";
+        CREATE VIEW IF NOT EXISTS "工作流总览视图" AS
+            SELECT '工作区节点' AS 对象类型, "当前状态" AS 状态, COUNT(*) AS 数量
+            FROM (SELECT CASE WHEN IFNULL("执行中", 0) = 1 THEN '执行中' WHEN IFNULL("已完成", 0) = 1 THEN '已完成' WHEN IFNULL("待执行", 0) = 1 THEN '待执行' ELSE '未开始' END AS "当前状态" FROM "工作区节点状态")
+            GROUP BY "当前状态"
+            UNION ALL
+            SELECT '文献流程' AS 对象类型, IFNULL("当前状态", '') AS 状态, COUNT(*) AS 数量
+            FROM "文献流程状态"
+            GROUP BY IFNULL("当前状态", '');
+        '''
+    )
+    for view_name, condition in WORKSPACE_NODE_FILTER_VIEWS:
+        conn.execute(
+            f'''CREATE VIEW IF NOT EXISTS {_quote_identifier(view_name)} AS
+                SELECT * FROM "工作区节点状态" WHERE {condition}'''
+        )
+    for view_name, condition in FLOW_STATE_FILTER_VIEWS:
+        conn.execute(
+            f'''CREATE VIEW IF NOT EXISTS {_quote_identifier(view_name)} AS
+                SELECT * FROM "文献流程状态" WHERE {condition}'''
+        )
+    conn.execute("PRAGMA foreign_keys=ON")
 
 
 def init_content_db(db_path: str | Path) -> Path:
@@ -1234,62 +3798,20 @@ def init_content_db(db_path: str | Path) -> Path:
     resolved = resolve_content_db_path(db_path)
     with connect_sqlite(resolved) as conn:
         cur = conn.cursor()
+        _migrate_public_translation_asset_table(conn)
+        _enforce_empty_chinese_physical_schema(conn)
         cur.execute(
-            """
-            CREATE TABLE IF NOT EXISTS literatures (
+            f"""
+            CREATE TABLE IF NOT EXISTS {_quote_identifier(LITERATURE_TABLE_NAME)} (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
-                uid_literature TEXT UNIQUE,
-                cite_key TEXT,
-                title TEXT,
-                clean_title TEXT,
-                title_norm TEXT,
-                authors TEXT,
-                first_author TEXT,
-                year TEXT,
-                entry_type TEXT,
-                abstract TEXT,
-                keywords TEXT,
-                pdf_path TEXT,
-                is_placeholder INTEGER,
-                placeholder_reason TEXT,
-                placeholder_status TEXT,
-                placeholder_run_uid TEXT,
-                has_fulltext INTEGER,
-                primary_attachment_name TEXT,
-                primary_attachment_source_path TEXT,
-                standard_note_uid TEXT,
-                source_type TEXT,
-                origin_path TEXT,
-                created_at TEXT,
-                updated_at TEXT,
-                a05_scope_key TEXT,
-                a05_is_review_candidate INTEGER,
-                a05_in_read_pool INTEGER,
-                a05_current_score REAL,
-                a05_current_rank INTEGER,
-                a05_current_status TEXT,
-                a05_last_run_uid TEXT,
-                a05_updated_at TEXT,
-                structured_status TEXT,
-                structured_abs_path TEXT,
-                structured_backend TEXT,
-                structured_task_type TEXT,
-                structured_updated_at TEXT,
-                structured_schema_version TEXT,
-                structured_text_length INTEGER,
-                structured_reference_count INTEGER,
-                structured_path_local_pipeline_v2_reference_context TEXT,
-                structured_path_local_pipeline_v2_full_fine_grained TEXT,
-                structured_path_babeldoc_reference_context TEXT,
-                structured_path_babeldoc_full_fine_grained TEXT
+                uid_literature TEXT UNIQUE
             )
             """
         )
-        _ensure_table_columns(conn, "literatures", LITERATURE_REQUIRED_COLUMNS)
-        _create_index_if_table(conn, "literatures", "CREATE INDEX IF NOT EXISTS idx_lit_uid ON literatures(uid_literature)")
-        _create_index_if_table(conn, "literatures", "CREATE INDEX IF NOT EXISTS idx_lit_cite ON literatures(cite_key)")
-        _create_index_if_table(conn, "literatures", "CREATE INDEX IF NOT EXISTS idx_lit_author_year ON literatures(first_author, year)")
-        _create_index_if_table(conn, "literatures", "CREATE INDEX IF NOT EXISTS idx_lit_a05_rank ON literatures(a05_scope_key, a05_current_rank)")
+        _ensure_table_columns(conn, LITERATURE_TABLE_NAME, LITERATURE_REQUIRED_COLUMNS)
+        _create_index_if_table(conn, LITERATURE_TABLE_NAME, f"CREATE INDEX IF NOT EXISTS idx_lit_uid ON {_quote_identifier(LITERATURE_TABLE_NAME)}(uid_literature)")
+        _create_index_if_table(conn, LITERATURE_TABLE_NAME, f"CREATE INDEX IF NOT EXISTS idx_lit_cite ON {_quote_identifier(LITERATURE_TABLE_NAME)}(cite_key)")
+        _create_index_if_table(conn, LITERATURE_TABLE_NAME, f"CREATE INDEX IF NOT EXISTS idx_lit_author_year ON {_quote_identifier(LITERATURE_TABLE_NAME)}(first_author, year)")
 
         cur.execute(
             f"""
@@ -1310,6 +3832,7 @@ def init_content_db(db_path: str | Path) -> Path:
             )
             """
         )
+        _ensure_table_columns(conn, ATTACHMENT_TABLE_NAME, ATTACHMENT_REQUIRED_COLUMNS)
         _create_index_if_table(conn, ATTACHMENT_TABLE_NAME, f"CREATE INDEX IF NOT EXISTS idx_attachment_path ON {ATTACHMENT_TABLE_NAME}(storage_path)")
         _create_index_if_table(conn, ATTACHMENT_TABLE_NAME, f"CREATE INDEX IF NOT EXISTS idx_attachment_checksum ON {ATTACHMENT_TABLE_NAME}(checksum)")
 
@@ -1327,7 +3850,7 @@ def init_content_db(db_path: str | Path) -> Path:
                 created_at TEXT,
                 updated_at TEXT,
                 UNIQUE(uid_literature, uid_attachment),
-                FOREIGN KEY(uid_literature) REFERENCES literatures(uid_literature),
+                FOREIGN KEY(uid_literature) REFERENCES "文献主表"(uid_literature),
                 FOREIGN KEY(uid_attachment) REFERENCES {ATTACHMENT_TABLE_NAME}(uid_attachment)
             )
             """
@@ -1354,8 +3877,8 @@ def init_content_db(db_path: str | Path) -> Path:
         _create_index_if_table(conn, TAG_TABLE_NAME, f"CREATE UNIQUE INDEX IF NOT EXISTS idx_tag_norm_unique ON {TAG_TABLE_NAME}(tag_norm)")
 
         cur.execute(
-            """
-            CREATE TABLE IF NOT EXISTS literature_tags (
+            f"""
+            CREATE TABLE IF NOT EXISTS {_quote_identifier(LITERATURE_TAG_TABLE_NAME)} (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 uid_literature TEXT,
                 cite_key TEXT,
@@ -1365,12 +3888,12 @@ def init_content_db(db_path: str | Path) -> Path:
                 created_at TEXT,
                 updated_at TEXT,
                 UNIQUE(uid_literature, tag),
-                FOREIGN KEY(uid_literature) REFERENCES literatures(uid_literature)
+                FOREIGN KEY(uid_literature) REFERENCES "文献主表"(uid_literature)
             )
             """
         )
-        _create_index_if_table(conn, "literature_tags", "CREATE INDEX IF NOT EXISTS idx_tag_lit ON literature_tags(uid_literature)")
-        _create_index_if_table(conn, "literature_tags", "CREATE INDEX IF NOT EXISTS idx_tag_name ON literature_tags(tag)")
+        _create_index_if_table(conn, LITERATURE_TAG_TABLE_NAME, f"CREATE INDEX IF NOT EXISTS idx_tag_lit ON {_quote_identifier(LITERATURE_TAG_TABLE_NAME)}(uid_literature)")
+        _create_index_if_table(conn, LITERATURE_TAG_TABLE_NAME, f"CREATE INDEX IF NOT EXISTS idx_tag_name ON {_quote_identifier(LITERATURE_TAG_TABLE_NAME)}(tag)")
 
         cur.execute(
             f"""
@@ -1381,7 +3904,7 @@ def init_content_db(db_path: str | Path) -> Path:
                 normalized_name TEXT,
                 surname TEXT,
                 given_names TEXT,
-                orcid TEXT,
+                "研究者标识" TEXT,
                 source_type TEXT,
                 created_at TEXT,
                 updated_at TEXT
@@ -1407,7 +3930,7 @@ def init_content_db(db_path: str | Path) -> Path:
                 created_at TEXT,
                 updated_at TEXT,
                 UNIQUE(uid_literature, uid_author, author_order),
-                FOREIGN KEY(uid_literature) REFERENCES literatures(uid_literature),
+                FOREIGN KEY(uid_literature) REFERENCES "文献主表"(uid_literature),
                 FOREIGN KEY(uid_author) REFERENCES {AUTHOR_TABLE_NAME}(uid_author)
             )
             """
@@ -1417,39 +3940,8 @@ def init_content_db(db_path: str | Path) -> Path:
         _create_index_if_table(conn, AUTHOR_LINK_TABLE_NAME, f"CREATE INDEX IF NOT EXISTS idx_author_link_author ON {AUTHOR_LINK_TABLE_NAME}(uid_author)")
 
         cur.execute(
-            """
-            CREATE TABLE IF NOT EXISTS literature_parse_assets (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                asset_uid TEXT UNIQUE,
-                uid_literature TEXT,
-                cite_key TEXT,
-                uid_attachment TEXT,
-                parse_level TEXT,
-                backend TEXT,
-                model_name TEXT,
-                asset_dir TEXT,
-                normalized_structured_path TEXT,
-                reconstructed_markdown_path TEXT,
-                linear_index_path TEXT,
-                elements_path TEXT,
-                chunks_jsonl_path TEXT,
-                parse_record_path TEXT,
-                quality_report_path TEXT,
-                parse_status TEXT,
-                last_run_uid TEXT,
-                is_current INTEGER,
-                created_at TEXT,
-                updated_at TEXT,
-                FOREIGN KEY(uid_literature) REFERENCES literatures(uid_literature)
-            )
-            """
-        )
-        _create_index_if_table(conn, "literature_parse_assets", "CREATE INDEX IF NOT EXISTS idx_parse_asset_lit_level ON literature_parse_assets(uid_literature, parse_level)")
-        _create_index_if_table(conn, "literature_parse_assets", "CREATE INDEX IF NOT EXISTS idx_parse_asset_current ON literature_parse_assets(parse_level, is_current)")
-
-        cur.execute(
             f"""
-            CREATE TABLE IF NOT EXISTS {TRANSLATION_ASSET_TABLE_NAME} (
+            CREATE TABLE IF NOT EXISTS {TRANSLATION_ASSET_STORAGE_TABLE_NAME} (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 translation_uid TEXT UNIQUE,
                 uid_literature TEXT,
@@ -1468,103 +3960,21 @@ def init_content_db(db_path: str | Path) -> Path:
                 is_current INTEGER,
                 created_at TEXT,
                 updated_at TEXT,
-                FOREIGN KEY(uid_literature) REFERENCES literatures(uid_literature)
+                FOREIGN KEY(uid_literature) REFERENCES "文献主表"("uid_文献")
             )
             """
         )
-        _ensure_table_columns(conn, TRANSLATION_ASSET_TABLE_NAME, TRANSLATION_ASSET_REQUIRED_COLUMNS)
+        _ensure_table_columns(conn, TRANSLATION_ASSET_STORAGE_TABLE_NAME, TRANSLATION_ASSET_REQUIRED_COLUMNS)
         _create_index_if_table(
             conn,
-            TRANSLATION_ASSET_TABLE_NAME,
-            f"CREATE INDEX IF NOT EXISTS idx_translation_asset_lit_scope ON {TRANSLATION_ASSET_TABLE_NAME}(uid_literature, source_kind, target_lang, translation_scope)",
+            TRANSLATION_ASSET_STORAGE_TABLE_NAME,
+            f"CREATE INDEX IF NOT EXISTS idx_translation_asset_lit_scope ON {TRANSLATION_ASSET_STORAGE_TABLE_NAME}(uid_literature, source_kind, target_lang, translation_scope)",
         )
         _create_index_if_table(
             conn,
-            TRANSLATION_ASSET_TABLE_NAME,
-            f"CREATE INDEX IF NOT EXISTS idx_translation_asset_current ON {TRANSLATION_ASSET_TABLE_NAME}(source_kind, target_lang, is_current)",
+            TRANSLATION_ASSET_STORAGE_TABLE_NAME,
+            f"CREATE INDEX IF NOT EXISTS idx_translation_asset_current ON {TRANSLATION_ASSET_STORAGE_TABLE_NAME}(source_kind, target_lang, is_current)",
         )
-
-        cur.execute(
-            """
-            CREATE TABLE IF NOT EXISTS literature_reading_queue (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                queue_uid TEXT UNIQUE,
-                uid_literature TEXT,
-                cite_key TEXT,
-                stage TEXT,
-                queue_status TEXT,
-                priority REAL,
-                theme_bucket TEXT,
-                recommended_reason TEXT,
-                source_stage TEXT,
-                source_run_uid TEXT,
-                task_batch_id TEXT,
-                decision TEXT,
-                decision_reason TEXT,
-                is_current INTEGER,
-                entered_at TEXT,
-                updated_at TEXT,
-                completed_at TEXT,
-                FOREIGN KEY(uid_literature) REFERENCES literatures(uid_literature)
-            )
-            """
-        )
-        _ensure_table_columns(conn, "literature_reading_queue", READING_QUEUE_REQUIRED_COLUMNS)
-        _create_index_if_table(conn, "literature_reading_queue", "CREATE INDEX IF NOT EXISTS idx_reading_queue_stage_current ON literature_reading_queue(stage, is_current)")
-        _create_index_if_table(conn, "literature_reading_queue", "CREATE INDEX IF NOT EXISTS idx_reading_queue_item ON literature_reading_queue(stage, uid_literature, cite_key)")
-
-        cur.execute(
-            f"""
-            CREATE TABLE IF NOT EXISTS {READING_STATE_TABLE_NAME} (
-                uid_literature TEXT PRIMARY KEY,
-                cite_key TEXT,
-                source_stage TEXT,
-                source_uid_literature TEXT,
-                source_cite_key TEXT,
-                recommended_reason TEXT,
-                theme_relation TEXT,
-                source_origin TEXT,
-                reading_objective TEXT,
-                manual_guidance TEXT,
-                pending_preprocess INTEGER,
-                preprocessed INTEGER,
-                allow_unparsed_read INTEGER,
-                unparsed_read_in_effect INTEGER,
-                preprocess_status TEXT,
-                preprocess_note_path TEXT,
-                standard_note_path TEXT,
-                pending_rough_read INTEGER,
-                in_rough_read INTEGER,
-                rough_read_done INTEGER,
-                rough_read_note_path TEXT,
-                rough_read_decision TEXT,
-                rough_read_reason TEXT,
-                analysis_light_synced INTEGER,
-                analysis_batch_synced INTEGER,
-                pending_deep_read INTEGER,
-                in_deep_read INTEGER,
-                deep_read_done INTEGER,
-                deep_read_count INTEGER,
-                deep_read_note_path TEXT,
-                deep_read_decision TEXT,
-                deep_read_reason TEXT,
-                rough_read_without_parse_done INTEGER,
-                deep_read_without_parse_done INTEGER,
-                require_reread_after_parse INTEGER,
-                analysis_formal_synced INTEGER,
-                innovation_synced INTEGER,
-                last_batch_id TEXT,
-                created_at TEXT,
-                updated_at TEXT,
-                FOREIGN KEY(uid_literature) REFERENCES literatures(uid_literature)
-            )
-            """
-        )
-        _ensure_table_columns(conn, READING_STATE_TABLE_NAME, READING_STATE_REQUIRED_COLUMNS)
-        _create_index_if_table(conn, READING_STATE_TABLE_NAME, f"CREATE INDEX IF NOT EXISTS idx_reading_state_preprocess ON {READING_STATE_TABLE_NAME}(pending_preprocess, preprocessed)")
-        _create_index_if_table(conn, READING_STATE_TABLE_NAME, f"CREATE INDEX IF NOT EXISTS idx_reading_state_rough ON {READING_STATE_TABLE_NAME}(pending_rough_read, rough_read_done)")
-        _create_index_if_table(conn, READING_STATE_TABLE_NAME, f"CREATE INDEX IF NOT EXISTS idx_reading_state_deep ON {READING_STATE_TABLE_NAME}(pending_deep_read, deep_read_done)")
-        _create_index_if_table(conn, READING_STATE_TABLE_NAME, f"CREATE INDEX IF NOT EXISTS idx_reading_state_cite ON {READING_STATE_TABLE_NAME}(cite_key)")
 
         cur.execute(
             f"""
@@ -1591,41 +4001,8 @@ def init_content_db(db_path: str | Path) -> Path:
         _create_index_if_table(conn, WORKSPACE_NODE_STATE_TABLE_NAME, f"CREATE INDEX IF NOT EXISTS idx_workspace_node_gate ON {WORKSPACE_NODE_STATE_TABLE_NAME}(gate_status, in_progress, pending_run)")
 
         cur.execute(
-            f"""
-            CREATE TABLE IF NOT EXISTS {REVIEW_STATE_TABLE_NAME} (
-                uid_literature TEXT PRIMARY KEY,
-                cite_key TEXT,
-                pending_review_candidate INTEGER,
-                review_candidate_ready INTEGER,
-                pending_review_parse INTEGER,
-                review_parse_ready INTEGER,
-                pending_reference_preprocess INTEGER,
-                reference_preprocessed INTEGER,
-                pending_review_read INTEGER,
-                in_review_read INTEGER,
-                review_read_done INTEGER,
-                review_read_count INTEGER,
-                source_stage TEXT,
-                source_origin TEXT,
-                recommended_reason TEXT,
-                reading_objective TEXT,
-                manual_guidance TEXT,
-                parse_asset_uid TEXT,
-                structured_abs_path TEXT,
-                note_uid TEXT,
-                updated_at TEXT,
-                FOREIGN KEY(uid_literature) REFERENCES literatures(uid_literature)
-            )
             """
-        )
-        _ensure_table_columns(conn, REVIEW_STATE_TABLE_NAME, REVIEW_STATE_REQUIRED_COLUMNS)
-        _create_index_if_table(conn, REVIEW_STATE_TABLE_NAME, f"CREATE INDEX IF NOT EXISTS idx_review_state_parse ON {REVIEW_STATE_TABLE_NAME}(pending_review_parse, review_parse_ready)")
-        _create_index_if_table(conn, REVIEW_STATE_TABLE_NAME, f"CREATE INDEX IF NOT EXISTS idx_review_state_ref ON {REVIEW_STATE_TABLE_NAME}(pending_reference_preprocess, reference_preprocessed)")
-        _create_index_if_table(conn, REVIEW_STATE_TABLE_NAME, f"CREATE INDEX IF NOT EXISTS idx_review_state_read ON {REVIEW_STATE_TABLE_NAME}(pending_review_read, review_read_done)")
-
-        cur.execute(
-            """
-            CREATE TABLE IF NOT EXISTS literature_chunk_sets (
+            CREATE TABLE IF NOT EXISTS "文献分块集" (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 chunks_uid TEXT UNIQUE,
                 source_scope TEXT,
@@ -1638,11 +4015,11 @@ def init_content_db(db_path: str | Path) -> Path:
             )
             """
         )
-        _create_index_if_table(conn, "literature_chunk_sets", "CREATE INDEX IF NOT EXISTS idx_chunk_set_uid ON literature_chunk_sets(chunks_uid)")
+        _create_index_if_table(conn, CHUNK_SET_TABLE_NAME, f"CREATE INDEX IF NOT EXISTS idx_chunk_set_uid ON {_quote_identifier(CHUNK_SET_TABLE_NAME)}(chunks_uid)")
 
         cur.execute(
             """
-            CREATE TABLE IF NOT EXISTS literature_chunks (
+            CREATE TABLE IF NOT EXISTS "文献分块" (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 chunk_id TEXT UNIQUE,
                 chunks_uid TEXT,
@@ -1655,18 +4032,18 @@ def init_content_db(db_path: str | Path) -> Path:
                 char_end INTEGER,
                 text_length INTEGER,
                 created_at TEXT,
-                FOREIGN KEY(chunks_uid) REFERENCES literature_chunk_sets(chunks_uid),
-                FOREIGN KEY(uid_literature) REFERENCES literatures(uid_literature)
+                FOREIGN KEY(chunks_uid) REFERENCES "文献分块集"(chunks_uid),
+                FOREIGN KEY(uid_literature) REFERENCES "文献主表"(uid_literature)
             )
             """
         )
-        _create_index_if_table(conn, "literature_chunks", "CREATE INDEX IF NOT EXISTS idx_chunk_uid ON literature_chunks(chunk_id)")
-        _create_index_if_table(conn, "literature_chunks", "CREATE INDEX IF NOT EXISTS idx_chunk_set_ref ON literature_chunks(chunks_uid)")
-        _create_index_if_table(conn, "literature_chunks", "CREATE INDEX IF NOT EXISTS idx_chunk_lit_uid ON literature_chunks(uid_literature)")
+        _create_index_if_table(conn, CHUNK_TABLE_NAME, f"CREATE INDEX IF NOT EXISTS idx_chunk_uid ON {_quote_identifier(CHUNK_TABLE_NAME)}(chunk_id)")
+        _create_index_if_table(conn, CHUNK_TABLE_NAME, f"CREATE INDEX IF NOT EXISTS idx_chunk_set_ref ON {_quote_identifier(CHUNK_TABLE_NAME)}(chunks_uid)")
+        _create_index_if_table(conn, CHUNK_TABLE_NAME, f"CREATE INDEX IF NOT EXISTS idx_chunk_lit_uid ON {_quote_identifier(CHUNK_TABLE_NAME)}(uid_literature)")
 
         cur.execute(
             """
-            CREATE TABLE IF NOT EXISTS knowledge_index (
+            CREATE TABLE IF NOT EXISTS "知识索引" (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 uid_knowledge TEXT UNIQUE,
                 note_name TEXT,
@@ -1686,12 +4063,12 @@ def init_content_db(db_path: str | Path) -> Path:
             )
             """
         )
-        _create_index_if_table(conn, "knowledge_index", "CREATE INDEX IF NOT EXISTS idx_know_uid ON knowledge_index(uid_knowledge)")
-        _create_index_if_table(conn, "knowledge_index", "CREATE INDEX IF NOT EXISTS idx_know_type_status ON knowledge_index(note_type, status)")
+        _create_index_if_table(conn, KNOWLEDGE_INDEX_TABLE_NAME, f"CREATE INDEX IF NOT EXISTS idx_know_uid ON {_quote_identifier(KNOWLEDGE_INDEX_TABLE_NAME)}(uid_knowledge)")
+        _create_index_if_table(conn, KNOWLEDGE_INDEX_TABLE_NAME, f"CREATE INDEX IF NOT EXISTS idx_know_type_status ON {_quote_identifier(KNOWLEDGE_INDEX_TABLE_NAME)}(note_type, status)")
 
         cur.execute(
             """
-            CREATE TABLE IF NOT EXISTS knowledge_attachments (
+            CREATE TABLE IF NOT EXISTS "知识附件" (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 uid_attachment TEXT UNIQUE,
                 uid_knowledge TEXT,
@@ -1704,11 +4081,11 @@ def init_content_db(db_path: str | Path) -> Path:
                 status TEXT,
                 created_at TEXT,
                 updated_at TEXT,
-                FOREIGN KEY(uid_knowledge) REFERENCES knowledge_index(uid_knowledge)
+                FOREIGN KEY(uid_knowledge) REFERENCES "知识索引"(uid_knowledge)
             )
             """
         )
-        _create_index_if_table(conn, "knowledge_attachments", "CREATE INDEX IF NOT EXISTS idx_katt_uid ON knowledge_attachments(uid_knowledge)")
+        _create_index_if_table(conn, KNOWLEDGE_ATTACHMENT_TABLE_NAME, f"CREATE INDEX IF NOT EXISTS idx_katt_uid ON {_quote_identifier(KNOWLEDGE_ATTACHMENT_TABLE_NAME)}(uid_knowledge)")
 
         cur.execute(
             f"""
@@ -1726,7 +4103,7 @@ def init_content_db(db_path: str | Path) -> Path:
                 content_hash TEXT,
                 created_at TEXT,
                 updated_at TEXT,
-                FOREIGN KEY(uid_literature) REFERENCES literatures(uid_literature)
+                FOREIGN KEY(uid_literature) REFERENCES "文献主表"(uid_literature)
             )
             """
         )
@@ -1745,8 +4122,8 @@ def init_content_db(db_path: str | Path) -> Path:
                 created_at TEXT,
                 updated_at TEXT,
                 UNIQUE(uid_knowledge, uid_literature, relation_type),
-                FOREIGN KEY(uid_knowledge) REFERENCES knowledge_index(uid_knowledge),
-                FOREIGN KEY(uid_literature) REFERENCES literatures(uid_literature)
+                FOREIGN KEY(uid_knowledge) REFERENCES "知识索引"(uid_knowledge),
+                FOREIGN KEY(uid_literature) REFERENCES "文献主表"(uid_literature)
             )
             """
         )
@@ -1777,7 +4154,7 @@ def init_content_db(db_path: str | Path) -> Path:
                 source_field TEXT,
                 created_at TEXT,
                 UNIQUE(uid_knowledge, evidence_type, target_uid, evidence_role),
-                FOREIGN KEY(uid_knowledge) REFERENCES knowledge_index(uid_knowledge)
+                FOREIGN KEY(uid_knowledge) REFERENCES "知识索引"(uid_knowledge)
             )
             """
         )
@@ -1790,7 +4167,29 @@ def init_content_db(db_path: str | Path) -> Path:
         _migrate_and_drop_legacy_attachment_table(conn)
         _sync_tag_entities(conn)
         _sync_author_entities(conn)
+        _migrate_public_runtime_projection_tables(conn)
+        _drop_all_views(conn)
+        for table_name in (
+            LITERATURE_TABLE_NAME,
+            ATTACHMENT_TABLE_NAME,
+            ATTACHMENT_LINK_TABLE_NAME,
+            TAG_TABLE_NAME,
+            LITERATURE_TAG_TABLE_NAME,
+            AUTHOR_TABLE_NAME,
+            AUTHOR_LINK_TABLE_NAME,
+            TRANSLATION_ASSET_STORAGE_TABLE_NAME,
+            CHUNK_SET_TABLE_NAME,
+            CHUNK_TABLE_NAME,
+            KNOWLEDGE_NOTES_TABLE_NAME,
+            KNOWLEDGE_LINK_TABLE_NAME,
+            KNOWLEDGE_EVIDENCE_TABLE_NAME,
+            WORKSPACE_NODE_STATE_TABLE_NAME,
+        ):
+            _rename_table_columns_to_physical_aliases(conn, table_name)
+        _refresh_runtime_projection_views(conn)
         _refresh_reading_state_views(conn)
+        _refresh_legacy_attachment_projections(conn)
+        _refresh_chinese_contract_views(conn)
 
         conn.commit()
     return resolved
@@ -1800,6 +4199,18 @@ def load_knowledge_literature_links_df(db_path: str | Path) -> pd.DataFrame:
     init_content_db(db_path)
     with connect_sqlite(db_path) as conn:
         return pd.read_sql_query(f"SELECT * FROM {KNOWLEDGE_LINK_TABLE_NAME}", conn)
+
+
+def load_author_entities_df(db_path: str | Path) -> pd.DataFrame:
+    init_content_db(db_path)
+    with connect_sqlite(db_path) as conn:
+        return _logicalize_runtime_frame(AUTHOR_TABLE_NAME, pd.read_sql_query(f"SELECT * FROM {AUTHOR_TABLE_NAME}", conn))
+
+
+def load_literature_author_links_df(db_path: str | Path) -> pd.DataFrame:
+    init_content_db(db_path)
+    with connect_sqlite(db_path) as conn:
+        return _logicalize_runtime_frame(AUTHOR_LINK_TABLE_NAME, pd.read_sql_query(f"SELECT * FROM {AUTHOR_LINK_TABLE_NAME}", conn))
 
 
 def load_attachment_entities_df(db_path: str | Path) -> pd.DataFrame:
@@ -1812,6 +4223,29 @@ def load_literature_attachment_links_df(db_path: str | Path) -> pd.DataFrame:
     init_content_db(db_path)
     with connect_sqlite(db_path) as conn:
         return pd.read_sql_query(f"SELECT * FROM {ATTACHMENT_LINK_TABLE_NAME}", conn)
+
+
+def load_literature_attachments_df(db_path: str | Path) -> pd.DataFrame:
+    init_content_db(db_path)
+    with connect_sqlite(db_path) as conn:
+        return pd.read_sql_query(
+            """
+            SELECT
+                文献标识 AS uid_literature,
+                引文键 AS cite_key,
+                文献标题 AS title,
+                附件标识 AS uid_attachment,
+                附件名称 AS attachment_name,
+                当前存储路径 AS storage_path,
+                原始来源路径 AS source_path,
+                附件状态 AS status,
+                关联角色 AS link_role,
+                是否主附件 AS is_primary,
+                更新时间 AS updated_at
+            FROM "文献附件总视图"
+            """,
+            conn,
+        )
 
 
 def load_knowledge_evidence_links_df(db_path: str | Path) -> pd.DataFrame:
@@ -1832,7 +4266,7 @@ def load_translation_assets_df(
 
     init_content_db(db_path)
     with connect_sqlite(db_path) as conn:
-        frame = pd.read_sql_query(f"SELECT * FROM {TRANSLATION_ASSET_TABLE_NAME}", conn)
+        frame = pd.read_sql_query(f"SELECT * FROM {_quote_identifier(TRANSLATION_ASSET_TABLE_NAME)}", conn)
 
     if frame.empty:
         return frame
@@ -1840,11 +4274,14 @@ def load_translation_assets_df(
     if uid_literature:
         frame = frame[frame["uid_literature"].astype(str) == str(uid_literature)]
     if source_kind:
-        frame = frame[frame["source_kind"].astype(str) == str(source_kind)]
+        source_kind_column = "来源类型" if "来源类型" in frame.columns else "source_kind"
+        frame = frame[frame[source_kind_column].astype(str) == str(source_kind)]
     if target_lang:
-        frame = frame[frame["target_lang"].astype(str) == str(target_lang)]
+        target_lang_column = "目标语种" if "目标语种" in frame.columns else "target_lang"
+        frame = frame[frame[target_lang_column].astype(str) == str(target_lang)]
     if only_current:
-        frame = frame[frame["is_current"].fillna(0).astype(int) == 1]
+        current_column = "是否当前有效" if "是否当前有效" in frame.columns else "is_current"
+        frame = frame[frame[current_column].fillna(0).astype(int) == 1]
 
     return frame.reset_index(drop=True)
 
@@ -1903,41 +4340,56 @@ def upsert_translation_asset_rows(
             if is_current:
                 conn.execute(
                     f"""
-                    UPDATE {TRANSLATION_ASSET_TABLE_NAME}
-                    SET is_current = 0, updated_at = ?
-                    WHERE uid_literature = ?
-                      AND source_kind = ?
-                      AND target_lang = ?
-                      AND translation_scope = ?
+                    UPDATE {_quote_identifier(TRANSLATION_ASSET_STORAGE_TABLE_NAME)}
+                    SET {_quote_identifier(resolve_content_physical_column(TRANSLATION_ASSET_STORAGE_TABLE_NAME, 'is_current'))} = 0,
+                        {_quote_identifier(resolve_content_physical_column(TRANSLATION_ASSET_STORAGE_TABLE_NAME, 'updated_at'))} = ?
+                    WHERE {_quote_identifier(resolve_content_physical_column(TRANSLATION_ASSET_STORAGE_TABLE_NAME, 'uid_literature'))} = ?
+                      AND {_quote_identifier(resolve_content_physical_column(TRANSLATION_ASSET_STORAGE_TABLE_NAME, 'source_kind'))} = ?
+                      AND {_quote_identifier(resolve_content_physical_column(TRANSLATION_ASSET_STORAGE_TABLE_NAME, 'target_lang'))} = ?
+                      AND {_quote_identifier(resolve_content_physical_column(TRANSLATION_ASSET_STORAGE_TABLE_NAME, 'translation_scope'))} = ?
                     """,
                     (updated_at, uid_literature, source_kind, target_lang, translation_scope),
                 )
 
             conn.execute(
                 f"""
-                INSERT INTO {TRANSLATION_ASSET_TABLE_NAME}
-                    (translation_uid, uid_literature, cite_key, source_asset_uid, source_kind, target_lang,
-                     translation_scope, provider, model_name, asset_dir, translated_markdown_path,
-                     translated_structured_path, translation_audit_path, status, is_current, created_at, updated_at)
+                INSERT INTO {_quote_identifier(TRANSLATION_ASSET_STORAGE_TABLE_NAME)}
+                    ({_quote_identifier(resolve_content_physical_column(TRANSLATION_ASSET_STORAGE_TABLE_NAME, 'translation_uid'))},
+                     {_quote_identifier(resolve_content_physical_column(TRANSLATION_ASSET_STORAGE_TABLE_NAME, 'uid_literature'))},
+                     {_quote_identifier(resolve_content_physical_column(TRANSLATION_ASSET_STORAGE_TABLE_NAME, 'cite_key'))},
+                     {_quote_identifier(resolve_content_physical_column(TRANSLATION_ASSET_STORAGE_TABLE_NAME, 'source_asset_uid'))},
+                     {_quote_identifier(resolve_content_physical_column(TRANSLATION_ASSET_STORAGE_TABLE_NAME, 'source_kind'))},
+                     {_quote_identifier(resolve_content_physical_column(TRANSLATION_ASSET_STORAGE_TABLE_NAME, 'target_lang'))},
+                     {_quote_identifier(resolve_content_physical_column(TRANSLATION_ASSET_STORAGE_TABLE_NAME, 'translation_scope'))},
+                     {_quote_identifier(resolve_content_physical_column(TRANSLATION_ASSET_STORAGE_TABLE_NAME, 'provider'))},
+                     {_quote_identifier(resolve_content_physical_column(TRANSLATION_ASSET_STORAGE_TABLE_NAME, 'model_name'))},
+                     {_quote_identifier(resolve_content_physical_column(TRANSLATION_ASSET_STORAGE_TABLE_NAME, 'asset_dir'))},
+                     {_quote_identifier(resolve_content_physical_column(TRANSLATION_ASSET_STORAGE_TABLE_NAME, 'translated_markdown_path'))},
+                     {_quote_identifier(resolve_content_physical_column(TRANSLATION_ASSET_STORAGE_TABLE_NAME, 'translated_structured_path'))},
+                     {_quote_identifier(resolve_content_physical_column(TRANSLATION_ASSET_STORAGE_TABLE_NAME, 'translation_audit_path'))},
+                     {_quote_identifier(resolve_content_physical_column(TRANSLATION_ASSET_STORAGE_TABLE_NAME, 'status'))},
+                     {_quote_identifier(resolve_content_physical_column(TRANSLATION_ASSET_STORAGE_TABLE_NAME, 'is_current'))},
+                     {_quote_identifier(resolve_content_physical_column(TRANSLATION_ASSET_STORAGE_TABLE_NAME, 'created_at'))},
+                     {_quote_identifier(resolve_content_physical_column(TRANSLATION_ASSET_STORAGE_TABLE_NAME, 'updated_at'))})
                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                ON CONFLICT(translation_uid)
+                ON CONFLICT({_quote_identifier(resolve_content_physical_column(TRANSLATION_ASSET_STORAGE_TABLE_NAME, 'translation_uid'))})
                 DO UPDATE SET
-                    uid_literature=excluded.uid_literature,
-                    cite_key=excluded.cite_key,
-                    source_asset_uid=excluded.source_asset_uid,
-                    source_kind=excluded.source_kind,
-                    target_lang=excluded.target_lang,
-                    translation_scope=excluded.translation_scope,
-                    provider=excluded.provider,
-                    model_name=excluded.model_name,
-                    asset_dir=excluded.asset_dir,
-                    translated_markdown_path=excluded.translated_markdown_path,
-                    translated_structured_path=excluded.translated_structured_path,
-                    translation_audit_path=excluded.translation_audit_path,
-                    status=excluded.status,
-                    is_current=excluded.is_current,
-                    created_at=excluded.created_at,
-                    updated_at=excluded.updated_at
+                    {_quote_identifier(resolve_content_physical_column(TRANSLATION_ASSET_STORAGE_TABLE_NAME, 'uid_literature'))}=excluded.{_quote_identifier(resolve_content_physical_column(TRANSLATION_ASSET_STORAGE_TABLE_NAME, 'uid_literature'))},
+                    {_quote_identifier(resolve_content_physical_column(TRANSLATION_ASSET_STORAGE_TABLE_NAME, 'cite_key'))}=excluded.{_quote_identifier(resolve_content_physical_column(TRANSLATION_ASSET_STORAGE_TABLE_NAME, 'cite_key'))},
+                    {_quote_identifier(resolve_content_physical_column(TRANSLATION_ASSET_STORAGE_TABLE_NAME, 'source_asset_uid'))}=excluded.{_quote_identifier(resolve_content_physical_column(TRANSLATION_ASSET_STORAGE_TABLE_NAME, 'source_asset_uid'))},
+                    {_quote_identifier(resolve_content_physical_column(TRANSLATION_ASSET_STORAGE_TABLE_NAME, 'source_kind'))}=excluded.{_quote_identifier(resolve_content_physical_column(TRANSLATION_ASSET_STORAGE_TABLE_NAME, 'source_kind'))},
+                    {_quote_identifier(resolve_content_physical_column(TRANSLATION_ASSET_STORAGE_TABLE_NAME, 'target_lang'))}=excluded.{_quote_identifier(resolve_content_physical_column(TRANSLATION_ASSET_STORAGE_TABLE_NAME, 'target_lang'))},
+                    {_quote_identifier(resolve_content_physical_column(TRANSLATION_ASSET_STORAGE_TABLE_NAME, 'translation_scope'))}=excluded.{_quote_identifier(resolve_content_physical_column(TRANSLATION_ASSET_STORAGE_TABLE_NAME, 'translation_scope'))},
+                    {_quote_identifier(resolve_content_physical_column(TRANSLATION_ASSET_STORAGE_TABLE_NAME, 'provider'))}=excluded.{_quote_identifier(resolve_content_physical_column(TRANSLATION_ASSET_STORAGE_TABLE_NAME, 'provider'))},
+                    {_quote_identifier(resolve_content_physical_column(TRANSLATION_ASSET_STORAGE_TABLE_NAME, 'model_name'))}=excluded.{_quote_identifier(resolve_content_physical_column(TRANSLATION_ASSET_STORAGE_TABLE_NAME, 'model_name'))},
+                    {_quote_identifier(resolve_content_physical_column(TRANSLATION_ASSET_STORAGE_TABLE_NAME, 'asset_dir'))}=excluded.{_quote_identifier(resolve_content_physical_column(TRANSLATION_ASSET_STORAGE_TABLE_NAME, 'asset_dir'))},
+                    {_quote_identifier(resolve_content_physical_column(TRANSLATION_ASSET_STORAGE_TABLE_NAME, 'translated_markdown_path'))}=excluded.{_quote_identifier(resolve_content_physical_column(TRANSLATION_ASSET_STORAGE_TABLE_NAME, 'translated_markdown_path'))},
+                    {_quote_identifier(resolve_content_physical_column(TRANSLATION_ASSET_STORAGE_TABLE_NAME, 'translated_structured_path'))}=excluded.{_quote_identifier(resolve_content_physical_column(TRANSLATION_ASSET_STORAGE_TABLE_NAME, 'translated_structured_path'))},
+                    {_quote_identifier(resolve_content_physical_column(TRANSLATION_ASSET_STORAGE_TABLE_NAME, 'translation_audit_path'))}=excluded.{_quote_identifier(resolve_content_physical_column(TRANSLATION_ASSET_STORAGE_TABLE_NAME, 'translation_audit_path'))},
+                    {_quote_identifier(resolve_content_physical_column(TRANSLATION_ASSET_STORAGE_TABLE_NAME, 'status'))}=excluded.{_quote_identifier(resolve_content_physical_column(TRANSLATION_ASSET_STORAGE_TABLE_NAME, 'status'))},
+                    {_quote_identifier(resolve_content_physical_column(TRANSLATION_ASSET_STORAGE_TABLE_NAME, 'is_current'))}=excluded.{_quote_identifier(resolve_content_physical_column(TRANSLATION_ASSET_STORAGE_TABLE_NAME, 'is_current'))},
+                    {_quote_identifier(resolve_content_physical_column(TRANSLATION_ASSET_STORAGE_TABLE_NAME, 'created_at'))}=excluded.{_quote_identifier(resolve_content_physical_column(TRANSLATION_ASSET_STORAGE_TABLE_NAME, 'created_at'))},
+                    {_quote_identifier(resolve_content_physical_column(TRANSLATION_ASSET_STORAGE_TABLE_NAME, 'updated_at'))}=excluded.{_quote_identifier(resolve_content_physical_column(TRANSLATION_ASSET_STORAGE_TABLE_NAME, 'updated_at'))}
                 """,
                 (
                     translation_uid,
@@ -1965,130 +4417,7 @@ def upsert_translation_asset_rows(
 def backfill_content_relationships(db_path: str | Path) -> None:
     """根据兼容字段回填跨域关系表。"""
 
-    init_content_db(db_path)
-    with connect_sqlite(db_path) as conn:
-        literatures = pd.read_sql_query(
-            "SELECT uid_literature, cite_key, standard_note_uid FROM literatures",
-            conn,
-        )
-        knowledge = pd.read_sql_query(
-            "SELECT uid_knowledge, note_type, uid_literature, cite_key, evidence_uids FROM knowledge_index",
-            conn,
-        )
-
-        literature_uid_set = {
-            str(uid).strip()
-            for uid in literatures.get("uid_literature", pd.Series(dtype=str)).tolist()
-            if str(uid).strip()
-        }
-        knowledge_uid_set = {
-            str(uid).strip()
-            for uid in knowledge.get("uid_knowledge", pd.Series(dtype=str)).tolist()
-            if str(uid).strip()
-        }
-        literature_cite_lookup = {
-            str(row.get("uid_literature") or "").strip(): str(row.get("cite_key") or "").strip()
-            for _, row in literatures.fillna("").iterrows()
-            if str(row.get("uid_literature") or "").strip()
-        }
-
-        link_rows: list[dict[str, object]] = []
-        now = _utc_now_iso()
-        for _, row in knowledge.fillna("").iterrows():
-            uid_knowledge = str(row.get("uid_knowledge") or "").strip()
-            uid_literature = str(row.get("uid_literature") or "").strip()
-            if uid_knowledge and uid_literature and uid_knowledge in knowledge_uid_set and uid_literature in literature_uid_set:
-                note_type = str(row.get("note_type") or "").strip()
-                relation_type = "standard_note" if note_type == "literature_standard_note" else "mention"
-                link_rows.append(
-                    {
-                        "uid_knowledge": uid_knowledge,
-                        "uid_literature": uid_literature,
-                        "relation_type": relation_type,
-                        "is_primary": 1 if relation_type == "standard_note" else 0,
-                        "cite_key": str(row.get("cite_key") or literature_cite_lookup.get(uid_literature) or "").strip(),
-                        "source_field": "knowledge_index",
-                        "created_at": now,
-                        "updated_at": now,
-                    }
-                )
-
-        evidence_rows: list[dict[str, object]] = []
-        for _, row in knowledge.fillna("").iterrows():
-            uid_knowledge = str(row.get("uid_knowledge") or "").strip()
-            if not uid_knowledge or uid_knowledge not in knowledge_uid_set:
-                continue
-            for evidence_uid in _split_pipe_values(row.get("evidence_uids")):
-                evidence_rows.append(
-                    {
-                        "uid_knowledge": uid_knowledge,
-                        "evidence_type": "literature" if evidence_uid in literature_uid_set else "unknown",
-                        "target_uid": evidence_uid,
-                        "evidence_role": "supporting",
-                        "source_field": "knowledge_index.evidence_uids",
-                        "created_at": now,
-                    }
-                )
-
-        for _, row in literatures.fillna("").iterrows():
-            uid_literature = str(row.get("uid_literature") or "").strip()
-            uid_knowledge = str(row.get("standard_note_uid") or "").strip()
-            if uid_literature and uid_knowledge and uid_literature in literature_uid_set and uid_knowledge in knowledge_uid_set:
-                link_rows.append(
-                    {
-                        "uid_knowledge": uid_knowledge,
-                        "uid_literature": uid_literature,
-                        "relation_type": "standard_note",
-                        "is_primary": 1,
-                        "cite_key": str(row.get("cite_key") or "").strip(),
-                        "source_field": "literatures.standard_note_uid",
-                        "created_at": now,
-                        "updated_at": now,
-                    }
-                )
-
-        link_df = pd.DataFrame(link_rows)
-        if not link_df.empty:
-            link_df = link_df.drop_duplicates(subset=["uid_knowledge", "uid_literature", "relation_type"], keep="last")
-        else:
-            link_df = pd.DataFrame(
-                columns=[
-                    "uid_knowledge",
-                    "uid_literature",
-                    "relation_type",
-                    "is_primary",
-                    "cite_key",
-                    "source_field",
-                    "created_at",
-                    "updated_at",
-                ]
-            )
-
-        evidence_df = pd.DataFrame(evidence_rows)
-        if not evidence_df.empty:
-            evidence_df = evidence_df.drop_duplicates(
-                subset=["uid_knowledge", "evidence_type", "target_uid", "evidence_role"],
-                keep="last",
-            )
-        else:
-            evidence_df = pd.DataFrame(
-                columns=[
-                    "uid_knowledge",
-                    "evidence_type",
-                    "target_uid",
-                    "evidence_role",
-                    "source_field",
-                    "created_at",
-                ]
-            )
-
-        try:
-            _replace_table_rows(conn, KNOWLEDGE_LINK_TABLE_NAME, link_df)
-            _replace_table_rows(conn, KNOWLEDGE_EVIDENCE_TABLE_NAME, evidence_df)
-        except sqlite3.OperationalError:
-            # 兼容旧库：部分工作区把关系对象保留为 view 或历史外键契约，回填失败时跳过。
-            pass
-        conn.commit()
+    sync_knowledge_relationships(db_path)
 
 
 def upsert_knowledge_literature_link(
@@ -2109,14 +4438,14 @@ def upsert_knowledge_literature_link(
         conn.execute(
             f"""
             INSERT INTO {KNOWLEDGE_LINK_TABLE_NAME}
-                (uid_knowledge, uid_literature, relation_type, is_primary, cite_key, source_field, created_at, updated_at)
+                (uid_knowledge, uid_literature, "关联类型", "是否主项", cite_key, "来源字段", "创建时间", "更新时间")
             VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-            ON CONFLICT(uid_knowledge, uid_literature, relation_type)
+            ON CONFLICT(uid_knowledge, uid_literature, "关联类型")
             DO UPDATE SET
-                is_primary = excluded.is_primary,
+                "是否主项" = excluded."是否主项",
                 cite_key = excluded.cite_key,
-                source_field = excluded.source_field,
-                updated_at = excluded.updated_at
+                "来源字段" = excluded."来源字段",
+                "更新时间" = excluded."更新时间"
             """,
             (
                 uid_knowledge,
@@ -2132,33 +4461,138 @@ def upsert_knowledge_literature_link(
         conn.commit()
 
 
+def backfill_content_relative_paths(
+    db_path: str | Path,
+    *,
+    dry_run: bool = True,
+) -> dict[str, object]:
+    """把 content.db 中历史绝对路径回填为相对路径字段。"""
+
+    resolved_db = resolve_content_db_path(db_path)
+    init_content_db(resolved_db)
+    workspace_root = infer_workspace_root_from_content_db(resolved_db)
+    attachment_updates: list[tuple[str, int]] = []
+    literature_updates: list[tuple[str, int]] = []
+
+    with connect_sqlite(resolved_db) as conn:
+        attachment_rows = conn.execute(
+            f"SELECT id, path_rel, storage_path, source_path FROM {ATTACHMENT_TABLE_NAME}"
+        ).fetchall()
+        for row_id, path_rel, storage_path, source_path in attachment_rows:
+            existing_rel = normalize_db_relative_path(path_rel)
+            if existing_rel:
+                continue
+            candidate_rel = ""
+            for candidate in (storage_path, source_path):
+                candidate_rel = build_relative_path_from_workspace(candidate, workspace_root=workspace_root)
+                if candidate_rel:
+                    break
+            if candidate_rel:
+                attachment_updates.append((candidate_rel, int(row_id)))
+
+        literature_rows = conn.execute(
+            f"SELECT id, pdf_rel_path, pdf_path FROM {_quote_identifier(LITERATURE_TABLE_NAME)}"
+        ).fetchall()
+        for row_id, pdf_rel_path, pdf_path in literature_rows:
+            existing_rel = normalize_db_relative_path(pdf_rel_path)
+            if existing_rel:
+                continue
+            candidate_rel = build_relative_path_from_workspace(pdf_path, workspace_root=workspace_root)
+            if candidate_rel:
+                literature_updates.append((candidate_rel, int(row_id)))
+
+        if not dry_run:
+            if attachment_updates:
+                conn.executemany(
+                    f"UPDATE {ATTACHMENT_TABLE_NAME} SET path_rel = ? WHERE id = ?",
+                    attachment_updates,
+                )
+            if literature_updates:
+                conn.executemany(
+                    f"UPDATE {_quote_identifier(LITERATURE_TABLE_NAME)} SET pdf_rel_path = ? WHERE id = ?",
+                    literature_updates,
+                )
+            conn.commit()
+
+    return {
+        "status": "PASS",
+        "dry_run": bool(dry_run),
+        "content_db": str(resolved_db),
+        "workspace_root": str(workspace_root),
+        "attachment_update_count": len(attachment_updates),
+        "literature_update_count": len(literature_updates),
+        "sample_attachment_updates": [
+            {"id": row_id, "path_rel": path_rel}
+            for path_rel, row_id in attachment_updates[:10]
+        ],
+        "sample_literature_updates": [
+            {"id": row_id, "pdf_rel_path": path_rel}
+            for path_rel, row_id in literature_updates[:10]
+        ],
+    }
+
+
 __all__ = [
     "ATTACHMENT_LINK_TABLE_NAME",
     "ATTACHMENT_TABLE_NAME",
+    "AUTHOR_LINK_TABLE_NAME",
+    "AUTHOR_TABLE_NAME",
+    "CHUNK_SET_TABLE_NAME",
+    "CHUNK_TABLE_NAME",
     "CONTENT_DB_DIRECTORY_NAME",
     "DEFAULT_CONTENT_DB_NAME",
+    "FLOW_STATE_OVERVIEW_VIEW_NAME",
+    "FLOW_STATE_REQUIRED_COLUMNS",
+    "FLOW_STATE_TABLE_NAME",
+    "FLOW_STATE_TO_LITERATURE_COLUMN_MAP",
     "KNOWLEDGE_EVIDENCE_TABLE_NAME",
+    "KNOWLEDGE_ATTACHMENT_TABLE_NAME",
+    "KNOWLEDGE_INDEX_TABLE_NAME",
     "KNOWLEDGE_LINK_TABLE_NAME",
     "KNOWLEDGE_NOTES_TABLE_NAME",
+    "LITERATURE_TABLE_NAME",
+    "LITERATURE_TAG_TABLE_NAME",
+    "PARSE_ASSET_TABLE_NAME",
+    "PARSE_ASSET_TO_ATTACHMENT_COLUMN_MAP",
+    "PARSE_ASSET_TO_LITERATURE_COLUMN_MAP",
+    "READING_QUEUE_TABLE_NAME",
+    "READING_QUEUE_TO_LITERATURE_COLUMN_MAP",
+    "READING_STATE_TO_LITERATURE_COLUMN_MAP",
     "TRANSLATION_ASSET_TABLE_NAME",
+    "TRANSACTION_RELATION_FILTER_VIEWS",
+    "TRANSACTION_RELATION_NODE_LABELS",
+    "TRANSACTION_RELATION_OVERVIEW_VIEW_NAME",
     "READING_STATE_TABLE_NAME",
     "PDF_STRUCTURED_VARIANT_SPECS",
     "PDF_STRUCTURED_VARIANT_PATH_COLUMNS",
+    "TAG_TABLE_NAME",
     "backfill_content_relationships",
     "build_pdf_structured_variant_dir_map",
+    "backfill_content_relative_paths",
+    "build_relative_path_from_workspace",
     "connect_sqlite",
     "get_pdf_structured_variant_column",
     "get_pdf_structured_variant_spec",
     "infer_workspace_root_from_content_db",
     "init_content_db",
     "load_attachment_entities_df",
+    "derive_literature_parse_state",
+    "normalize_literature_parse_state",
+    "load_author_entities_df",
     "load_knowledge_evidence_links_df",
     "load_knowledge_literature_links_df",
+    "load_literature_author_links_df",
     "load_literature_attachment_links_df",
     "load_translation_assets_df",
+    "normalize_db_relative_path",
+    "resolve_content_path",
+    "resolve_content_path_candidates",
     "resolve_content_db_config",
     "resolve_content_db_path",
     "resolve_pdf_structured_variant_output_dir",
+    "sync_author_entities_from_literature_rows",
+    "sync_knowledge_relationships",
     "upsert_knowledge_literature_link",
     "upsert_translation_asset_rows",
+    "WORKSPACE_NODE_STATE_TABLE_NAME",
 ]

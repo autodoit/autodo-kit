@@ -5,15 +5,18 @@
 from __future__ import annotations
 
 import json
+import importlib
 import sqlite3
 from pathlib import Path
 from typing import Any, Optional
 
 import pandas as pd
 
-from . import bibliodb_sqlite
 from .contentdb_sqlite import DEFAULT_CONTENT_DB_NAME, resolve_content_db_path
-from . import knowledgedb_sqlite
+
+
+bibliodb_sqlite = importlib.import_module("autodokit.tools.bibliodb_sqlite")
+knowledgedb_sqlite = importlib.import_module("autodokit.tools.knowledgedb_sqlite")
 
 
 DEFAULT_REFERENCES_DB_NAME = DEFAULT_CONTENT_DB_NAME
@@ -201,7 +204,13 @@ def persist_reference_main_table(table: pd.DataFrame, output_path: Path) -> Path
     if output_path.suffix.lower() == ".db":
         resolved_output_path = Path(output_path).resolve()
         existing_attachments = bibliodb_sqlite.load_attachments_df(resolved_output_path) if resolved_output_path.exists() else pd.DataFrame()
-        bibliodb_sqlite.save_tables(resolved_output_path, literatures_df=table, attachments_df=existing_attachments, if_exists="replace")
+        existing_tags = bibliodb_sqlite.load_tags_df(resolved_output_path) if resolved_output_path.exists() else pd.DataFrame()
+        bibliodb_sqlite.replace_reference_tables_only(
+            resolved_output_path,
+            literatures_df=table,
+            attachments_df=existing_attachments,
+            tags_df=existing_tags,
+        )
         return resolve_content_db_path(resolved_output_path)
     output_path.parent.mkdir(parents=True, exist_ok=True)
     table.to_csv(output_path, index=False, encoding="utf-8-sig")

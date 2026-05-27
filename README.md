@@ -12,13 +12,13 @@ autodo-kit 现已内置最小运行时，可在未安装 autodo-engine 时直接
 
 最小安装（仅使用 autodo-kit 内置事务运行时）：
 
-```powershell
+```bash
 uv pip install -e .
 ```
 
 可选增强安装（需要引擎调度能力时）：
 
-```powershell
+```bash
 uv pip install -e ../autodo-engine
 uv pip install -e .
 ```
@@ -75,7 +75,7 @@ AOK 工具采用“函数直调 + 集中导出”方式：
 
 生成事务手册：
 
-```powershell
+```bash
 python scripts/generate_affair_manual.py
 ```
 

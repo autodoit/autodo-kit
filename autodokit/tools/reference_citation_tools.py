@@ -610,7 +610,7 @@ def repair_reference_text_with_llm(
         handler_kind="llm_native",
         handler_name="repair_reference_text_with_llm",
         model_name=_stringify(result.get("model_name")),
-        skill_names=["ar_A050_统一文献预处理解析_v1"],
+        skill_names=["ar_A055_统一文献预处理执行_v1"],
         reasoning_summary="在单条参考文献解析前执行轻量文本修复。",
         payload=payload,
     )

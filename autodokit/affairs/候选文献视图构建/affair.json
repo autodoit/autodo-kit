@@ -1,6 +1,7 @@
 ﻿{
   "input_csv": "",
   "content_db": "",
+  "persist_review_views_to_content_db": false,
   "candidates": [],
   "output_dir": "",
   "source_round": "round_01",

@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import json
 import re
-import sqlite3
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Sequence, Tuple
@@ -13,7 +12,7 @@ import pandas as pd
 
 from autodokit.tools import append_aok_log_event, build_gate_review, build_reference_quality_summary, extract_reference_lines_from_attachment, knowledge_index_sync_from_note, knowledge_note_register, load_json_or_py, process_reference_citation
 from autodokit.tools.contentdb_sqlite import CONTENT_DB_DIRECTORY_NAME, DEFAULT_CONTENT_DB_NAME, resolve_content_db_config
-from autodokit.tools.bibliodb_sqlite import load_reading_state_df, save_dataframe_table, upsert_reading_state_rows
+from autodokit.tools.bibliodb_sqlite import READING_QUEUE_COLUMNS, READING_QUEUE_STORAGE_TABLE, load_reading_queue_df, load_reading_state_df, save_dataframe_table, upsert_reading_queue_rows, upsert_reading_state_rows
 from autodokit.tools.reading_state_tools import (
     ANALYSIS_NOTE_SPECS,
     append_markdown_section,
@@ -23,6 +22,7 @@ from autodokit.tools.reading_state_tools import (
     resolve_analysis_note_paths,
     should_route_back_to_a040,
 )
+from autodokit.tools.affair_request_bus import dispatch_affair_request, register_a040_requests_from_feedback
 from autodokit.tools.storage_backend import (
     load_knowledge_tables,
     load_reference_tables,
@@ -30,6 +30,7 @@ from autodokit.tools.storage_backend import (
     persist_reference_tables,
 )
 from autodokit.tools.atomic.task_aok.post_affair_git_commit import affair_auto_git_commit
+from autodokit.tools.ocr.classic.pdf_structured_data_tools import extract_reference_lines_from_structured_data, load_structured_data
 
 
 NOTE_DIR_NAME = "rough_read_notes"
@@ -37,6 +38,8 @@ OUTPUT_INDEX = "rough_reading_index.csv"
 OUTPUT_MAPPING = "reference_citation_mapping.csv"
 OUTPUT_QUALITY = "reference_citation_quality_summary.json"
 OUTPUT_GATE = "gate_review.json"
+OUTPUT_RELATED_ITEMS_CSV = "related_literature_items.csv"
+OUTPUT_RELATED_ITEMS_MD = "related_literature_items.md"
 
 SENTENCE_GROUP_KEYWORDS: Dict[str, Tuple[str, ...]] = {
     "research_problem": ("本文", "文章", "研究", "探究", "检验", "分析"),
@@ -110,17 +113,189 @@ def _resolve_existing_path(raw_value: str, candidates: Sequence[Path]) -> Path:
     return candidates[0]
 
 
-def _load_rough_pool(content_db: Path, literature_table: pd.DataFrame) -> pd.DataFrame:
-    state_df = load_reading_state_df(content_db, flag_filters={"pending_rough_read": 1})
-    if state_df.empty:
-        return pd.DataFrame()
-    merged = state_df.copy()
+def _load_rough_pool(content_db: Path, literature_table: pd.DataFrame, state_df: pd.DataFrame) -> tuple[pd.DataFrame, str]:
+    queue_df = load_reading_queue_df(
+        content_db,
+        stage="A090",
+        only_current=True,
+        queue_statuses=["queued", "candidate", "in_progress"],
+    )
+    if not queue_df.empty:
+        literature_by_uid = {
+            _stringify(row.get("uid_literature")): row.to_dict()
+            for _, row in literature_table.fillna("").iterrows()
+            if _stringify(row.get("uid_literature"))
+        }
+        state_by_uid = {
+            _stringify(row.get("uid_literature")): row.to_dict()
+            for _, row in state_df.fillna("").iterrows()
+            if _stringify(row.get("uid_literature"))
+        }
+        merged_rows: list[dict[str, Any]] = []
+        for _, row in queue_df.fillna("").iterrows():
+            queue_row = row.to_dict()
+            uid_literature = _stringify(queue_row.get("uid_literature"))
+            combined: dict[str, Any] = {}
+            if uid_literature:
+                combined.update(literature_by_uid.get(uid_literature, {}))
+                combined.update(state_by_uid.get(uid_literature, {}))
+            combined.update(queue_row)
+            combined["cite_key"] = _stringify(combined.get("cite_key")) or uid_literature
+            merged_rows.append(combined)
+        return pd.DataFrame(merged_rows).fillna(""), "queue"
+
+    legacy_df = state_df.loc[
+        pd.to_numeric(state_df.get("pending_rough_read", 0), errors="coerce").fillna(0).astype(int) == 1
+    ].copy()
+    if legacy_df.empty:
+        return pd.DataFrame(), "queue"
+    merged = legacy_df.copy()
     merged["uid_literature"] = merged.get("uid_literature", pd.Series(dtype=str)).astype(str)
     literature = literature_table.copy()
     literature["uid_literature"] = literature.get("uid_literature", pd.Series(dtype=str)).astype(str)
     merged = merged.merge(literature, on="uid_literature", how="left", suffixes=("_state", ""))
     merged["cite_key"] = merged.get("cite_key", merged.get("cite_key_state", pd.Series(dtype=str))).fillna("")
-    return merged.fillna("")
+    return merged.fillna(""), "reading_state"
+
+
+def _read_text_file(path: Path) -> str:
+    try:
+        return path.read_text(encoding="utf-8")
+    except UnicodeDecodeError:
+        return path.read_text(encoding="utf-8-sig")
+
+
+def _extract_reference_source_from_structured(row: Dict[str, Any]) -> Dict[str, Any] | None:
+    structured_candidates = [
+        _stringify(row.get("current_parse_path")),
+        _stringify(row.get("structured_abs_path")),
+    ]
+    markdown_candidates = [
+        _stringify(row.get("current_parse_markdown_path")),
+    ]
+    for candidate in structured_candidates:
+        if not candidate:
+            continue
+        path = Path(candidate)
+        if not path.is_absolute() or not path.exists() or not path.is_file():
+            continue
+        try:
+            structured_data = load_structured_data(path)
+            extract_result = extract_reference_lines_from_structured_data(structured_data)
+            text_payload = structured_data.get("text") if isinstance(structured_data.get("text"), dict) else {}
+            full_text = _stringify(text_payload.get("full_text"))
+            if not full_text:
+                for markdown_candidate in markdown_candidates:
+                    if not markdown_candidate:
+                        continue
+                    markdown_path = Path(markdown_candidate)
+                    if markdown_path.is_absolute() and markdown_path.exists() and markdown_path.is_file():
+                        full_text = _read_text_file(markdown_path)
+                        break
+            return {
+                "attachment_path": str(path),
+                "attachment_type": "structured",
+                "extract_status": "ok",
+                "extract_method": "structured_summary",
+                "reference_lines": list(extract_result.get("reference_lines") or []),
+                "reference_line_details": list(extract_result.get("reference_line_details") or []),
+                "full_text": full_text,
+                "pending_reason": "",
+            }
+        except Exception:
+            continue
+    return None
+
+
+def _consume_current_stage_queue_rows(content_db: Path, *, stage: str, completed_df: pd.DataFrame) -> int:
+    if completed_df is None or completed_df.empty:
+        return 0
+    identities: list[tuple[str, str]] = []
+    for _, row in completed_df.fillna("").iterrows():
+        uid_literature = _stringify(row.get("uid_literature"))
+        cite_key = _stringify(row.get("cite_key"))
+        if not uid_literature and not cite_key:
+            continue
+        identities.append((uid_literature, cite_key))
+    if not identities:
+        return 0
+    queue_df = load_reading_queue_df(content_db).copy()
+    if queue_df.empty:
+        return 0
+    now_iso = datetime.now().isoformat(timespec="seconds")
+    identity_set = set(identities)
+    mask = (
+        queue_df.get("stage", pd.Series(dtype=str)).astype(str).eq(stage)
+        & queue_df.get("is_current", pd.Series(dtype=int)).fillna(0).astype(int).eq(1)
+        & pd.Series(
+            [(_stringify(row.get("uid_literature")), _stringify(row.get("cite_key"))) in identity_set for _, row in queue_df.fillna("").iterrows()],
+            index=queue_df.index,
+        )
+    )
+    affected = int(mask.sum())
+    if affected <= 0:
+        return 0
+    queue_df.loc[mask, "is_current"] = 0
+    queue_df.loc[mask, "queue_status"] = "completed"
+    queue_df.loc[mask, "updated_at"] = now_iso
+    if "id" in queue_df.columns:
+        queue_df = queue_df.drop(columns=["id"])
+    queue_df = queue_df[[column for column in READING_QUEUE_COLUMNS if column in queue_df.columns]].copy()
+    upsert_reading_queue_rows(content_db, queue_df)
+    return affected
+
+
+def _write_related_literature_items(output_dir: Path, frame: pd.DataFrame) -> list[Path]:
+    snapshot_columns = [
+        "uid_literature",
+        "cite_key",
+        "title",
+        "status",
+        "note_path",
+        "result_json",
+        "reference_count",
+        "reference_processed_count",
+        "source_origin",
+        "reading_objective",
+        "manual_guidance",
+        "theme_relation",
+    ]
+    available_columns = [column for column in snapshot_columns if column in frame.columns]
+    snapshot_df = frame[available_columns].copy() if available_columns else pd.DataFrame()
+
+    csv_path = output_dir / OUTPUT_RELATED_ITEMS_CSV
+    md_path = output_dir / OUTPUT_RELATED_ITEMS_MD
+    snapshot_df.to_csv(csv_path, index=False, encoding="utf-8-sig")
+
+    label_map = {
+        "uid_literature": "文献 UID",
+        "cite_key": "题录键",
+        "title": "标题",
+        "status": "处理状态",
+        "note_path": "粗读笔记路径",
+        "result_json": "结果 JSON",
+        "reference_count": "参考文献条数",
+        "reference_processed_count": "已处理参考文献条数",
+        "source_origin": "来源口径",
+        "reading_objective": "阅读目标",
+        "manual_guidance": "人工提示",
+        "theme_relation": "主题关系",
+    }
+    lines = ["# A090 相关文献条目", "", f"共 {len(snapshot_df)} 条。", ""]
+    if snapshot_df.empty:
+        lines.append("当前任务没有产出可记录的相关文献条目。")
+    else:
+        for index, row in snapshot_df.fillna("").iterrows():
+            title = _stringify(row.get("title")) or _stringify(row.get("cite_key")) or _stringify(row.get("uid_literature")) or f"条目 {index + 1}"
+            lines.append(f"## {index + 1}. {title}")
+            for column in available_columns:
+                value = _stringify(row.get(column))
+                if not value:
+                    continue
+                lines.append(f"- {label_map.get(column, column)}：{value}")
+            lines.append("")
+    md_path.write_text("\n".join(lines).rstrip() + "\n", encoding="utf-8")
+    return [csv_path, md_path]
 
 
 def _normalize_full_text(text: str) -> str:
@@ -262,6 +437,7 @@ def _build_discovered_rows_from_mappings(
 def execute(config_path: Path) -> List[Path]:
     raw_cfg = load_json_or_py(config_path)
     workspace_root = _resolve_workspace_root(config_path, raw_cfg)
+    auto_dispatch_feedback_requests = bool(raw_cfg.get("auto_dispatch_feedback_requests_to_a040", True))
         # process_reference_citation 内部已按原子链路执行：匹配 -> 占位 -> 写回 -> cite_key 生成。
     legacy_output_dir = _resolve_output_dir(config_path, raw_cfg)
     output_dir = _build_task_instance_dir(workspace_root, "A090")
@@ -281,11 +457,13 @@ def execute(config_path: Path) -> List[Path]:
         for _, row in existing_state_df.fillna("").iterrows()
         if _stringify(row.get("uid_literature"))
     }
-    rough_pool = _load_rough_pool(content_db, literature_table)
+    rough_pool, input_mode = _load_rough_pool(content_db, literature_table, existing_state_df)
     consume_unparsed_bypass_items = bool(raw_cfg.get("consume_unparsed_bypass_items", False))
     if not rough_pool.empty and not consume_unparsed_bypass_items:
-        preprocessed_series = pd.to_numeric(rough_pool.get("preprocessed", 0), errors="coerce").fillna(0).astype(int)
-        allow_unparsed_series = pd.to_numeric(rough_pool.get("allow_unparsed_read", 0), errors="coerce").fillna(0).astype(int)
+        preprocessed_values = rough_pool.get("preprocessed", pd.Series(0, index=rough_pool.index))
+        allow_unparsed_values = rough_pool.get("allow_unparsed_read", pd.Series(0, index=rough_pool.index))
+        preprocessed_series = pd.to_numeric(preprocessed_values, errors="coerce").fillna(0).astype(int)
+        allow_unparsed_series = pd.to_numeric(allow_unparsed_values, errors="coerce").fillna(0).astype(int)
         rough_pool = rough_pool.loc[~((preprocessed_series == 0) & (allow_unparsed_series == 1))].copy()
     max_items = int(raw_cfg.get("max_items") or 6)
     max_references_per_item = int(raw_cfg.get("max_references_per_item") or 12)
@@ -349,7 +527,9 @@ def execute(config_path: Path) -> List[Path]:
             )
             continue
 
-        extract_result = extract_reference_lines_from_attachment(attachment_value, workspace_root=workspace_root, print_to_stdout=False)
+        extract_result = _extract_reference_source_from_structured(row.to_dict())
+        if extract_result is None:
+            extract_result = extract_reference_lines_from_attachment(attachment_value, workspace_root=workspace_root, print_to_stdout=False)
         full_text = _stringify(extract_result.get("full_text"))
         if not full_text:
             missing_items.append(f"{cite_key}: 未抽到全文")
@@ -523,11 +703,16 @@ def execute(config_path: Path) -> List[Path]:
             {
                 "uid_literature": uid_literature,
                 "cite_key": cite_key,
+                "title": _stringify(row.get("title")) or cite_key,
                 "note_path": str(note_path),
                 "result_json": str(json_path),
                 "reference_count": len(item_reference_lines),
                 "reference_processed_count": processed_count,
                 "status": "completed",
+                "source_origin": source_origin,
+                "reading_objective": reading_objective,
+                "manual_guidance": manual_guidance,
+                "theme_relation": _stringify(row.get("theme_relation")),
             }
         )
         problem_lines = [item.get("sentence") for item in question_sentences if _stringify(item.get("sentence"))]
@@ -586,54 +771,146 @@ def execute(config_path: Path) -> List[Path]:
     feedback_summary_path = output_dir / "retrieval_feedback_summary_A090.json"
     gate_path = output_dir / OUTPUT_GATE
     index_df.to_csv(index_path, index=False, encoding="utf-8-sig")
+    related_item_paths = _write_related_literature_items(output_dir, index_df)
     mapping_df.to_csv(mapping_path, index=False, encoding="utf-8-sig")
     quality_path.write_text(json.dumps(quality_summary, ensure_ascii=False, indent=2), encoding="utf-8")
     merged_feedback_requests = merge_retrieval_feedback_requests(retrieval_feedback_requests)
+    need_retrieval_feedback = len(merged_feedback_requests) > 0
+    need_download_feedback = any(bool(item.get("need_fulltext", False)) for item in merged_feedback_requests)
+    registered_feedback_requests: List[Dict[str, Any]] = []
+    dispatched_feedback_requests: List[Dict[str, Any]] = []
+    dispatch_failures: List[str] = []
+    if merged_feedback_requests:
+        registered_feedback_requests = register_a040_requests_from_feedback(
+            workspace_root=workspace_root,
+            feedback_requests=merged_feedback_requests,
+            source_node="A090",
+            priority="高" if need_download_feedback else "中",
+            creator_type="affair",
+            creator_id="A090_文献泛读与粗读",
+            attribute_vector={
+                "source_stage": "A090",
+                "need_download_feedback": need_download_feedback,
+                "request_count": len(merged_feedback_requests),
+            },
+        )
+        if auto_dispatch_feedback_requests:
+            for record in registered_feedback_requests:
+                request_uid = _stringify(record.get("request_uid") or record.get("uid_请求"))
+                if not request_uid:
+                    continue
+                try:
+                    dispatched_feedback_requests.append(
+                        dispatch_affair_request(
+                            workspace_root=workspace_root,
+                            request_uid=request_uid,
+                            raise_on_error=True,
+                        )
+                    )
+                except Exception as exc:
+                    dispatch_failures.append(f"{request_uid}: {exc}")
     feedback_summary = {
         "task_uid": output_dir.name,
         "source_stage": "A090",
         "request_count": len(merged_feedback_requests),
         "processed_mapping_count": len(mapping_rows),
         "short_loop_mapping_count": max(0, len(mapping_rows) - len(merged_feedback_requests)),
+        "need_retrieval_feedback": need_retrieval_feedback,
+        "need_download_feedback": need_download_feedback,
+        "registered_request_count": len(registered_feedback_requests),
+        "auto_dispatch_feedback_requests": auto_dispatch_feedback_requests,
+        "dispatched_request_count": len(dispatched_feedback_requests),
+        "dispatch_failed_count": len(dispatch_failures),
     }
+    affair_request_result_path = output_dir / "affair_request_dispatch_A090.json"
     feedback_path.write_text(json.dumps(merged_feedback_requests, ensure_ascii=False, indent=2), encoding="utf-8")
     feedback_summary_path.write_text(json.dumps(feedback_summary, ensure_ascii=False, indent=2), encoding="utf-8")
-    written_paths.extend([index_path, mapping_path, quality_path, feedback_path, feedback_summary_path])
+    affair_request_result_path.write_text(
+        json.dumps(
+            {
+                "registered_requests": registered_feedback_requests,
+                "dispatched_results": dispatched_feedback_requests,
+                "dispatch_failures": dispatch_failures,
+            },
+            ensure_ascii=False,
+            indent=2,
+        ),
+        encoding="utf-8",
+    )
+    written_paths.extend([index_path, *related_item_paths, mapping_path, quality_path, feedback_path, feedback_summary_path, affair_request_result_path])
 
     save_dataframe_table(content_db, "a090_rough_reading_index", index_df, if_exists="replace", unique_columns=["uid_literature"] if not index_df.empty else None)
     save_dataframe_table(content_db, "a090_reference_citation_mapping", mapping_df, if_exists="replace")
     persist_reference_tables(literatures_df=literature_table, attachments_df=attachment_table, db_path=content_db)
     persist_knowledge_tables(index_df=knowledge_index, attachments_df=knowledge_attachments, db_path=content_db)
+    a100_queue_rows = [
+        {
+            "uid_literature": _stringify(row.get("uid_literature")),
+            "cite_key": _stringify(row.get("cite_key")),
+            "stage": "A100",
+            "source_affair": "A090",
+            "queue_status": "queued",
+            "priority": 80,
+            "bucket": "non_review_deep_parse",
+            "preferred_next_stage": "A105",
+            "recommended_reason": _stringify(row.get("rough_read_reason")) or "A090 粗读完成，进入 A100 深度解析准备",
+            "theme_relation": _stringify(row.get("theme_relation")) or "a090_to_a100",
+            "source_round": "a090",
+            "scope_key": "a090_to_a100",
+            "is_current": 1,
+        }
+        for row in state_rows
+        if int(row.get("pending_deep_read") or 0) == 1 and _stringify(row.get("uid_literature"))
+    ]
     if state_rows:
         upsert_reading_state_rows(content_db, state_rows)
+    if a100_queue_rows:
+        upsert_reading_queue_rows(content_db, a100_queue_rows)
+    consumed_a090_queue_count = _consume_current_stage_queue_rows(content_db, stage="A090", completed_df=index_df)
 
     gate_review = build_gate_review(
         node_uid="A090",
         node_name="文献泛读与粗读",
         summary=(
-            f"完成粗读 {len(index_df)} 篇，处理参考文献 {quality_summary.get('total_reference_count', 0)} 条，"
-            f"新增占位 {quality_summary.get('placeholder_count', 0)} 条。"
+            f"完成粗读 {len(index_df)} 篇（mode={input_mode}），处理参考文献 {quality_summary.get('total_reference_count', 0)} 条，"
+            f"新增占位 {quality_summary.get('placeholder_count', 0)} 条，推进 A100 队列 {len(a100_queue_rows)} 条。"
         ),
         checks=[
             {"name": "rough_read_count", "value": len(index_df)},
+            {"name": "input_mode", "value": input_mode},
             {"name": "reference_total_count", "value": quality_summary.get("total_reference_count", 0)},
             {"name": "placeholder_count", "value": quality_summary.get("placeholder_count", 0)},
             {"name": "parse_failed_count", "value": quality_summary.get("parse_failed_count", 0)},
             {"name": "missing_item_count", "value": len(missing_items)},
+            {"name": "a100_queue_count", "value": len(a100_queue_rows)},
+            {"name": "consumed_a090_queue_count", "value": consumed_a090_queue_count},
             {"name": "retrieval_feedback_request_count", "value": len(merged_feedback_requests)},
+            {"name": "need_retrieval_feedback", "value": need_retrieval_feedback},
+            {"name": "need_download_feedback", "value": need_download_feedback},
+            {"name": "registered_feedback_request_count", "value": len(registered_feedback_requests)},
+            {"name": "auto_dispatch_feedback_requests", "value": auto_dispatch_feedback_requests},
+            {"name": "dispatched_feedback_request_count", "value": len(dispatched_feedback_requests)},
+            {"name": "dispatch_failure_count", "value": len(dispatch_failures)},
         ],
         artifacts=[str(path) for path in written_paths],
         recommendation="pass" if len(index_df) > 0 else "retry_current",
         score=max(40.0, 92.0 - len(missing_items) * 8.0),
-        issues=missing_items,
-        metadata={"workspace_root": str(workspace_root), "content_db": str(content_db), "db_input_key": db_input_key},
+        issues=[*missing_items, *dispatch_failures],
+        metadata={
+            "workspace_root": str(workspace_root),
+            "content_db": str(content_db),
+            "db_input_key": db_input_key,
+            "input_mode": input_mode,
+            "a100_queue_count": len(a100_queue_rows),
+            "consumed_a090_queue_count": consumed_a090_queue_count,
+        },
     )
     gate_path.write_text(json.dumps(gate_review, ensure_ascii=False, indent=2), encoding="utf-8")
     written_paths.append(gate_path)
 
     if legacy_output_dir != output_dir:
         legacy_output_dir.mkdir(parents=True, exist_ok=True)
-        for artifact_path in [index_path, mapping_path, quality_path, gate_path]:
+        for artifact_path in [index_path, *related_item_paths, mapping_path, quality_path, gate_path]:
             if artifact_path.exists():
                 legacy_target = legacy_output_dir / artifact_path.name
                 legacy_target.write_text(artifact_path.read_text(encoding="utf-8"), encoding="utf-8")
@@ -646,15 +923,17 @@ def execute(config_path: Path) -> List[Path]:
             handler_name="文献泛读与粗读",
             agent_names=["ar_A090_文献泛读与轻量分析事务智能体_v6"],
             skill_names=["ar_文献泛读与粗读_v5", "ar_单篇文献粗读_v2"],
-            reasoning_summary="消费 literature_reading_state.pending_rough_read=1，生成粗读笔记并对五类分析笔记做轻量补写。",
+            reasoning_summary="优先消费 A090 正式阶段队列，并优先读取文献主表 current_parse/结构化摘要生成粗读结果，再推进 A100 队列。",
             gate_review=gate_review,
             gate_review_path=gate_path,
             artifact_paths=written_paths,
             payload={
                 "rough_read_count": len(index_df),
+                "input_mode": input_mode,
                 "reference_total_count": quality_summary.get("total_reference_count", 0),
                 "placeholder_count": quality_summary.get("placeholder_count", 0),
                 "missing_item_count": len(missing_items),
+                "a100_queue_count": len(a100_queue_rows),
                 "retrieval_feedback_request_count": len(merged_feedback_requests),
                 "consume_unparsed_bypass_items": consume_unparsed_bypass_items,
             },

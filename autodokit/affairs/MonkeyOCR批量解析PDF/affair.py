@@ -91,6 +91,7 @@ def _discover_monkey_root() -> Path | None:
     ]
     candidates.extend(
         [
+            REPO_ROOT / "third_party" / "MonkeyOCR-runtime",
             REPO_ROOT / "third_party" / "MonkeyOCR-main",
             REPO_ROOT / "sandbox" / "test monkey ocr cuda" / "MonkeyOCR-main",
             REPO_ROOT / "sandbox" / "MonkeyOCR-main",
@@ -196,6 +197,34 @@ def _resolve_python_executable(value: str | None) -> str:
     if not python_path.exists():
         raise FileNotFoundError(f"python executable not found: {python_path}")
     return str(python_path)
+
+
+def _normalize_local_package_dirs(value: Any) -> list[str]:
+    if value is None:
+        return [str((REPO_ROOT / "third_party").resolve())]
+
+    raw_items: list[str]
+    if isinstance(value, (list, tuple, set)):
+        raw_items = [str(item or "").strip() for item in value]
+    else:
+        text = str(value or "").strip()
+        raw_items = [segment.strip() for segment in text.replace("\r", "\n").replace(";", "\n").split("\n")]
+
+    normalized: list[str] = []
+    seen: set[str] = set()
+    for item in raw_items:
+        if not item:
+            continue
+        path = Path(item).expanduser().resolve()
+        key = str(path).lower()
+        if key in seen:
+            continue
+        seen.add(key)
+        normalized.append(str(path))
+
+    if not normalized:
+        normalized.append(str((REPO_ROOT / "third_party").resolve()))
+    return normalized
 
 
 def _resolve_runtime_root(output_dir: Path, raw_runtime_dir: str | None) -> Path:
@@ -316,9 +345,11 @@ def run_from_payload(raw_cfg: Mapping[str, Any]) -> dict[str, Any]:
         device=str(raw_cfg.get("device") or "cuda"),
         gpu_visible_devices=str(raw_cfg.get("gpu") or raw_cfg.get("gpu_visible_devices") or "0"),
         ensure_runtime=_normalize_bool(raw_cfg.get("ensure_runtime"), default=False),
+        auto_install_triton_windows=_normalize_bool(raw_cfg.get("auto_install_triton_windows"), default=False),
         download_source=str(raw_cfg.get("download_source") or "huggingface"),
         pip_index_url=str(raw_cfg.get("pip_index_url") or "").strip() or None,
         python_executable=_resolve_python_executable(str(raw_cfg.get("python_executable") or "")),
+        local_package_dirs=_normalize_local_package_dirs(raw_cfg.get("local_package_dirs")),
         file_list=file_list,
         runtime_dir=runtime_root,
         stream_output=_normalize_bool(raw_cfg.get("stream_output"), default=False),
@@ -371,6 +402,8 @@ def _build_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument("--priority-pdf-column", default="pdf_path")
     parser.add_argument("--launch-mode", default="auto", choices=["auto", "foreground", "tmux"])
     parser.add_argument("--ensure-runtime", action="store_true")
+    parser.add_argument("--auto-install-triton-windows", action="store_true")
+    parser.add_argument("--local-package-dir", action="append", default=None)
     parser.add_argument("--stream-output", action="store_true")
     parser.add_argument("--no-skip-existing", action="store_true")
     parser.add_argument("--max-retries", type=int, default=2)
@@ -406,6 +439,8 @@ def _cli_payload(args: argparse.Namespace) -> dict[str, Any]:
         "priority_pdf_column": args.priority_pdf_column,
         "launch_mode": args.launch_mode,
         "ensure_runtime": bool(args.ensure_runtime),
+        "auto_install_triton_windows": bool(args.auto_install_triton_windows),
+        "local_package_dirs": [str(Path(item).expanduser().resolve()) for item in (args.local_package_dir or [])],
         "stream_output": bool(args.stream_output),
         "skip_existing": not bool(args.no_skip_existing),
         "max_retries": int(args.max_retries),

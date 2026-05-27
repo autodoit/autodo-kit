@@ -37,8 +37,7 @@
 
 | 事务 | 领域 | 节点类型 | pass_mode | 目录 |
 | --- | --- | --- | --- | --- |
-| AOB一键办公区转换 | business |  | config_path | autodokit/affairs/AOB一键办公区转换 |
-| AOB一键安装部署 | business |  | config_path | autodokit/affairs/AOB一键安装部署 |
+| AOB统一业务事务 | business |  | config_path | autodokit/affairs/AOB统一业务事务 |
 | AOK三库联动示例 | business |  | config_path | autodokit/affairs/AOK三库联动示例 |
 | AOK任务数据库初始化 | business |  | config_path | autodokit/affairs/AOK任务数据库初始化 |
 | AOK任务数据库校验 | business |  | config_path | autodokit/affairs/AOK任务数据库校验 |
@@ -180,6 +179,54 @@
 #### node.outputs
 
 - 无
+
+### AOB用户级内容聚合
+
+| 字段 | 值 |
+| --- | --- |
+| 目录 | autodokit/affairs/AOB用户级内容聚合 |
+| Runner.callable | execute |
+| Runner.pass_mode | config_path |
+
+调用 `autodokit.tools.aob.aob_aggregate_user_content`，用于把用户侧内容聚合为 canonical 资产。
+
+补充口径：该事务支持 `scopes` 与 `project_dirs`。`scopes` 可选 `global`、`system`、`user`、`project`；传 `project_dirs` 且未显式传 `scopes` 时，默认按 `project` 范围展开，并按 profile 把项目根解析到 `.github`、`.claude`、`.cursor` 等 carrier 根。
+
+### AOB用户级内容发布
+
+| 字段 | 值 |
+| --- | --- |
+| 目录 | autodokit/affairs/AOB用户级内容发布 |
+| Runner.callable | execute |
+| Runner.pass_mode | config_path |
+
+调用 `autodokit.tools.aob.aob_publish_user_content`，用于把 canonical 资产发布到目标用户目录。
+
+补充口径：该事务支持 `scopes` 与 `project_dirs`。对 `project` 范围，发布落点是 carrier 根；`CLAUDE.md`、`AGENTS.md`、`GEMINI.md`、`opencode.json` 这类项目根文件会写回 carrier 的父目录。
+
+### AOB用户级内容备份
+
+| 字段 | 值 |
+| --- | --- |
+| 目录 | autodokit/affairs/AOB用户级内容备份 |
+| Runner.callable | execute |
+| Runner.pass_mode | config_path |
+
+调用 `autodokit.tools.aob.aob_backup_user_content`，用于在同步前或单独执行用户资产备份。
+
+补充口径：该事务支持 `scopes` 与 `project_dirs`。对 `project` 范围，备份源是整个项目根，而不是单独的 carrier 根。
+
+### AOB用户级内容同步
+
+| 字段 | 值 |
+| --- | --- |
+| 目录 | autodokit/affairs/AOB用户级内容同步 |
+| Runner.callable | execute |
+| Runner.pass_mode | config_path |
+
+调用 `autodokit.tools.aob.aob_update_user_content`，用于按默认“先备份、再聚合、再发布”的顺序执行同步。
+
+补充口径：该事务支持 `scopes` 与 `project_dirs`。`simulate_only=true` 且未传 `sandbox_dir` 时，默认把沙盒建到 `Downloads/aob-sync-sandbox-YYYYMMDDHHMMSS`；对 `project` 范围会复制整个项目根，但沙盒内同步参与方仍指向 carrier 根。
 
 #### 业务参数表（affair.json）
 
@@ -2496,33 +2543,33 @@ print(outputs)
 
 | 字段 | 必填 | 默认值 | 示例值 |
 | --- | --- | --- | --- |
-| current_transaction_uid | 否 | "" | "" |
+| uid_当前事务 | 否 | "" | "" |
 | goal | 否 | "" | "" |
 | output_dir | 否 | "" | "" |
 | payload | 否 | {} | {} |
 | project_root | 否 | "." | "." |
-| task_uid | 否 | "" | "" |
+| uid_任务 | 否 | "" | "" |
 
 #### 节点默认配置表（node_template.config）
 
 | 字段 | 必填 | 默认值 | 示例值 |
 | --- | --- | --- | --- |
-| current_transaction_uid | 否 | "" | "" |
+| uid_当前事务 | 否 | "" | "" |
 | goal | 否 | "" | "" |
 | output_dir | 否 | "" | "" |
 | payload | 否 | {} | {} |
 | project_root | 否 | "." | "." |
-| task_uid | 否 | "" | "" |
+| uid_任务 | 否 | "" | "" |
 
 #### node.config JSON 示例
 
 ```json
 {
-  "task_uid": "",
+  "uid_任务": "",
   "goal": "",
   "payload": {},
   "project_root": ".",
-  "current_transaction_uid": "",
+  "uid_当前事务": "",
   "output_dir": ""
 }
 ```
@@ -2531,11 +2578,11 @@ print(outputs)
 
 ```json
 {
-  "task_uid": "",
+  "uid_任务": "",
   "goal": "",
   "payload": {},
   "project_root": ".",
-  "current_transaction_uid": "",
+  "uid_当前事务": "",
   "output_dir": ""
 }
 ```
@@ -2548,11 +2595,11 @@ import autodokit as aok
 
 workspace_root = Path("/path/to/my_workspace").resolve()
 outputs = aok.run_affair("单轮调度派发",
-    config={'task_uid': '',
+  config={'uid_任务': '',
      'goal': '',
      'payload': {},
      'project_root': '.',
-     'current_transaction_uid': '',
+   'uid_当前事务': '',
      'output_dir': ''},
     workspace_root=workspace_root,
 )
@@ -5516,36 +5563,36 @@ print(outputs)
 
 ## 8. unknown 类事务
 
-### AOB一键办公区转换
+### AOB统一业务事务
 
 #### 基本信息
 
 | 字段 | 值 |
 | --- | --- |
-| 事务名 | AOB一键办公区转换 |
+| 事务名 | AOB统一业务事务 |
 | 领域 | business |
 | 所有者 | aok |
 | 版本 | migrated |
 | 描述 |  |
-| 目录 | autodokit/affairs/AOB一键办公区转换 |
+| 目录 | autodokit/affairs/AOB统一业务事务 |
 | Runner.module |  |
 | Runner.callable | execute |
 | Runner.pass_mode | config_path |
-| 文档源 | autodokit/affairs/AOB一键办公区转换/affair.md |
+| 文档源 | autodokit/affairs/AOB统一业务事务/affair.md |
 
 #### 模块说明
 
-AOB 一键办公区转换事务。
+AOB 统一业务事务。
 
 #### 事务 Markdown 说明摘录
 
-- AOB一键办公区转换
+- AOB统一业务事务
 
-调用 `autodokit.tools.run_aob_workspace_convert` 执行模板项目办公区跨引擎转换。
+调用 `autodokit.tools.aob` 中的 10 个原子 tool，并通过 `mode` 统一分派执行。
 
 固定输出文件：
 
-- `aob_workspace_convert_result.json`
+- `aob_business_result.json`
 
 #### interface.inputs
 
@@ -5567,13 +5614,34 @@ AOB 一键办公区转换事务。
 
 | 字段 | 必填 | 默认值 | 示例值 |
 | --- | --- | --- | --- |
+| mode | 否 | "validate_content" | "deploy_workflow" |
+| input_path | 否 | "libs" | "libs" |
+| strategy | 否 | "mtime_size_then_hash" | "mtime_size_then_hash" |
 | dry_run | 否 | true | true |
-| output_dir | 否 | "" | "" |
-| project_dir | 否 | "" | "" |
 | repo_root | 否 | "" | "" |
+| source_paths | 否 | [] | ["C:/tmp/demo"] |
+| scopes | 否 | [] | ["project"] |
+| project_dirs | 否 | [] | ["C:/tmp/demo-project"] |
+| target_library_dir_name | 否 | "" | "外部模板导入示例" |
+| tags | 否 | "" | "文档管理" |
+| import_mode | 否 | "add" | "add" |
+| overwrite_existing | 否 | false | false |
+| project_dir | 否 | "" | "projects_templates/AcademicResearch-auto-workflow" |
 | source_engine | 否 | "opencode" | "opencode" |
 | target_engine | 否 | "claude" | "claude" |
-| title | 否 | "" | "" |
+| title | 否 | "" | "办公区转换" |
+| workflow | 否 | "academic" | "academic" |
+| engine_ids | 否 | ["opencode"] | ["claude","copilot"] |
+| target_dir | 否 | "" | "/home/ethan/ProjectS" |
+| project_name | 否 | "" | "AOB回归项目" |
+| on_conflict | 否 | "skip" | "overwrite" |
+| skip_health_check | 否 | false | false |
+| extras | 否 | "none" | "none" |
+| git_init_mode | 否 | "auto" | "auto" |
+| target_root | 否 | "" | "/tmp" |
+| agents_dir | 否 | ".opencode/agents" | ".opencode/agents" |
+| opencode_json | 否 | "opencode.json" | "opencode.json" |
+| output_dir | 否 | "" | "" |
 
 #### 节点默认配置表（node_template.config）
 
@@ -5589,138 +5657,35 @@ AOB 一键办公区转换事务。
 
 ```json
 {
+  "mode": "validate_content",
+  "input_path": "libs",
+  "strategy": "mtime_size_then_hash",
+  "dry_run": true,
+  "repo_root": "",
+  "source_paths": [],
+  "scopes": [],
+  "project_dirs": [],
+  "target_library_dir_name": "",
+  "tags": "",
+  "import_mode": "add",
+  "overwrite_existing": false,
   "project_dir": "",
   "source_engine": "opencode",
   "target_engine": "claude",
   "title": "",
-  "dry_run": true,
-  "repo_root": "",
-  "output_dir": ""
-}
-```
-
-#### 推荐调用示例：run_affair
-
-```python
-from pathlib import Path
-import autodokit as aok
-
-workspace_root = Path("/path/to/my_workspace").resolve()
-outputs = aok.run_affair("AOB一键办公区转换",
-    config={'project_dir': '',
-     'source_engine': 'opencode',
-     'target_engine': 'claude',
-     'title': '',
-     'dry_run': True,
-     'repo_root': '',
-     'output_dir': ''},
-    workspace_root=workspace_root,
-)
-print(outputs)
-```
-
-#### 高级调用示例：直接导入模块
-
-```python
-from pathlib import Path
-from  import execute
-
-config_path = Path("/path/to/my_workspace/configs/affair_config.json").resolve()
-outputs = execute(config_path)
-print(outputs)
-```
-
-### AOB一键安装部署
-
-#### 基本信息
-
-| 字段 | 值 |
-| --- | --- |
-| 事务名 | AOB一键安装部署 |
-| 领域 | business |
-| 所有者 | aok |
-| 版本 | migrated |
-| 描述 |  |
-| 目录 | autodokit/affairs/AOB一键安装部署 |
-| Runner.module |  |
-| Runner.callable | execute |
-| Runner.pass_mode | config_path |
-| 文档源 | autodokit/affairs/AOB一键安装部署/affair.md |
-
-#### 模块说明
-
-AOB 一键安装部署事务。
-
-#### 事务 Markdown 说明摘录
-
-- AOB一键安装部署
-
-调用 `autodokit.tools.run_aob_workflow_deploy` 执行工作流一键部署。
-
-固定输出文件：
-
-- `aob_one_click_deploy_result.json`
-
-#### interface.inputs
-
-- 无
-
-#### interface.outputs
-
-- 无
-
-#### node.inputs
-
-- 无
-
-#### node.outputs
-
-- 无
-
-#### 业务参数表（affair.json）
-
-| 字段 | 必填 | 默认值 | 示例值 |
-| --- | --- | --- | --- |
-| dry_run | 否 | true | true |
-| engine_ids | 否 | ["opencode"] | ["opencode"] |
-| extras | 否 | "none" | "none" |
-| git_init_mode | 否 | "auto" | "auto" |
-| on_conflict | 否 | "skip" | "skip" |
-| output_dir | 否 | "" | "" |
-| project_name | 否 | "" | "" |
-| repo_root | 否 | "" | "" |
-| skip_health_check | 否 | false | false |
-| tags | 否 | "" | "" |
-| target_dir | 否 | "" | "" |
-| workflow | 否 | "academic" | "academic" |
-
-#### 节点默认配置表（node_template.config）
-
-- 无
-
-#### node.config JSON 示例
-
-```json
-{}
-```
-
-#### affair.json 业务参数 JSON 示例
-
-```json
-{
   "workflow": "academic",
   "engine_ids": [
     "opencode"
   ],
   "target_dir": "",
   "project_name": "",
-  "tags": "",
   "on_conflict": "skip",
   "skip_health_check": false,
   "extras": "none",
   "git_init_mode": "auto",
-  "dry_run": true,
-  "repo_root": "",
+  "target_root": "",
+  "agents_dir": ".opencode/agents",
+  "opencode_json": "opencode.json",
   "output_dir": ""
 }
 ```
@@ -5732,19 +5697,14 @@ from pathlib import Path
 import autodokit as aok
 
 workspace_root = Path("/path/to/my_workspace").resolve()
-outputs = aok.run_affair("AOB一键安装部署",
-    config={'workflow': 'academic',
-     'engine_ids': ['opencode'],
-     'target_dir': '',
-     'project_name': '',
-     'tags': '',
-     'on_conflict': 'skip',
-     'skip_health_check': False,
-     'extras': 'none',
-     'git_init_mode': 'auto',
-     'dry_run': True,
-     'repo_root': '',
-     'output_dir': ''},
+outputs = aok.run_affair("AOB统一业务事务",
+  config={'mode': 'deploy_workflow',
+   'workflow': 'academic',
+   'engine_ids': ['opencode'],
+   'target_dir': '/home/ethan/ProjectS',
+   'dry_run': True,
+   'repo_root': '',
+   'output_dir': ''},
     workspace_root=workspace_root,
 )
 print(outputs)
@@ -5754,12 +5714,24 @@ print(outputs)
 
 ```python
 from pathlib import Path
-from  import execute
+from autodokit.affairs.AOB统一业务事务.affair import execute
 
 config_path = Path("/path/to/my_workspace/configs/affair_config.json").resolve()
 outputs = execute(config_path)
 print(outputs)
 ```
+
+模式说明补充：
+
+- `validate_content`：校验内容，不写目标项目。
+- `sync_items`：同步内容库条目，并通过 AOC 归一化模块扫描 `libs/`。
+- `aggregate_user_content` / `publish_user_content` / `backup_user_content` / `update_user_content`：共享 `scopes` 与 `project_dirs` 参数；`project` 范围会按 workspace profile 把项目根转换为 carrier 根参与反编译与发布。
+- `import_external_templates`：导入模板并入库。
+- `convert_workspace`：做模板项目跨引擎办公区转换，支持 `opencode`、`claude`、`copilot`、`gemini`、`codex`，结果包含 canonical AOL dump 与 `L1/L2/L3` capability report。
+- `deploy_workflow`：执行实际安装部署，`engine_ids` 可接收上述五类引擎。
+- `check_opencode_deploy_regression`：对部署结果做 OpenCode 回归验证。
+
+`convert_workspace` 的 capability report 中，`L2` 覆盖 `hooks`、`mcp`、`settings`、`policies`，`L3` 覆盖 `modes`、`plugins`、`tools`、`themes`、`plans`、`engine_overrides`。canonical AOL dump 会保留 `hooks`、`mcp_servers`、`settings`、`policies`、`engine_native` 根字段。
 
 ### AOK三库联动示例
 
@@ -10779,7 +10751,7 @@ A065 承接 A060 已就绪的综述解析资产，执行参考文献扫描、cit
 - 输入
 - `workspace_root`：工作区绝对路径。
 - `content_db`：文献主库 SQLite 路径。
-- `review_read_pool_path`：兼容输入，默认优先使用 `literature_reading_queue(stage='A065')` 当前态。
+- `review_read_pool_path`：兼容输入；新项目默认优先使用 `content.db` 中 `流程轨道='综述主链'`、`节点编码='A065'` 的 `文献流程状态` 当前态。
 - `review_reading_batches_path`：A050 产出的 `review_reading_batches.csv`。
 
 - 输出
@@ -11369,7 +11341,7 @@ CNKI 搜索结果页面自动化收藏脚本（基于 Playwright，针对 Chrome
 1) 初始准备（在你运行脚本前请执行）
    - 在本地确保已安装 Playwright：
 
-     ```powershell
+     ```bash
      python -m pip install playwright
      python -m playwright install
      ```
@@ -11419,9 +11391,9 @@ CNKI 搜索结果页面自动化收藏脚本（基于 Playwright，针对 Chrome
    - 本脚本采用多候选定位器策略（文本、role、常见 class/id），但网站前端随时可能变化，调试时可能需要根据页面 DOM 微调定位器。
    - 如果你希望我把 `DRY_RUN` 或进度保存功能加入脚本，请告诉我，我可以在不运行任何操作的前提下更新代码并交付给你。
 
-使用示例（在 PowerShell 中）
+使用示例（在 Git Bash 中）
 
-```powershell
+```bash
 # 安装 Playwright（若尚未安装）
 python -m pip install playwright
 python -m playwright install

@@ -13,52 +13,46 @@ python -c "import autodokit.tools as t; print('user_tools=', len(t.list_user_too
 
 说明：`autodokit/affairs` 中若仅有 `affair.py` 而缺少 `affair.json`，默认不纳入正式可配置事务索引。
 
-## 0. A080-A105 普通文献阅读状态契约
+## 0. A080-A105 普通文献流程状态契约
 
 当前普通文献阅读主链的正式节点顺序是：A080 -> A090 -> A095 -> A100 -> A105。
 
-状态真相源统一为 `literature_reading_state`：
+状态真相源统一为 `content.db` 的 `文献流程状态`：
 
-1. A070 或上游综述链直接把普通文献候选写入 `pending_preprocess=1`。
-2. A080/A090/A095/A100/A105 的正式当前态真相源统一为 `literature_reading_state`。
+1. A075 或人工候选把普通文献写入 `流程轨道='普通主链'`、`当前阶段='待预处理'`、`当前状态='待处理'`。
+2. A080/A090/A095/A100/A105 统一按 `流程轨道`、`节点编码`、`当前阶段`、`当前状态`、`是否可执行` 筛选和推进。
+3. 事务实现可以继续接受旧 DataFrame 字段作为兼容输入，但写入主库时必须映射为中文物理字段。
 
 这条链显式区分 `待读` 与 `正读`：
 
-- `pending_rough_read` / `pending_deep_read` 表示待进入下一轮处理。
-- `in_rough_read` / `in_deep_read` 表示当前这一轮已被节点接管、正在处理。
+- `当前状态='待处理'` 表示待进入下一轮节点处理。
+- `当前状态='处理中'` 表示当前这一轮已被节点接管。
+- `当前状态='已完成'` 表示本阶段处理完成，可进入 `下一阶段` 或下游节点。
 
-### 0.1 中文清单名 <-> 英文字段名 <-> 节点读写表
+### 0.1 阶段名 <-> 节点读写表
 
-| 中文清单名/状态 | 英文字段名 | 读节点 | 写节点 | 说明 |
+| 阶段/状态 | 关键字段 | 读节点 | 写节点 | 说明 |
 | --- | --- | --- | --- | --- |
-| 待预处理清单 | `pending_preprocess` | A080 | A070 入口灌入、A090、A100 | 新候选或尚未预处理的普通文献。 |
-| 已预处理清单 | `preprocessed` | - | A080 | 已完成解析资产补齐与标准笔记骨架准备。 |
-| 待泛读清单 | `pending_rough_read` | A090 | A080 | 等待下一轮进入泛读。 |
-| 正泛读清单 | `in_rough_read` | - | A090 | 当前轮已被 A090 接管。 |
-| 已泛读清单 | `rough_read_done` | A095 | A090 | 已完成逐篇泛读。 |
-| 待研读清单 | `pending_deep_read` | A100 | A090 | 等待下一轮进入深读资产准备。 |
-| 正研读清单 | `in_deep_read` | - | A100 | 当前轮已被 A100 接管。 |
-| 已研读清单 | `deep_read_done` | A105 | A105 | 已完成至少一轮批判性研读并收口。 |
-| 研读次数 | `deep_read_count` | A105 | A105 | 每完成一轮批判性研读加 1。 |
-| 轻量分析已同步 | `analysis_light_synced` | - | A090 | 五类分析笔记已完成轻量补写。 |
-| 批次分析已同步 | `analysis_batch_synced` | A095 | A095 | 当前条目已进入 A095 批次汇总。 |
-| 正式分析已同步 | `analysis_formal_synced` | - | A105 | 五类分析笔记已完成正式修订。 |
-| 创新点已同步 | `innovation_synced` | - | A105 | 创新点笔记已完成更新。 |
-| 条目来源类型 | `source_origin` | A080/A090/A100 | A080 | 标记 `human`/`auto`/`legacy_queue`/`recovery`。 |
-| 阅读目标 | `reading_objective` | A090/A100 | A080 | 逐文献的阅读目标说明。 |
-| 用户提示语 | `manual_guidance` | A090/A100 | A080 | 逐文献阅读指令，用于影响粗读/深读输出。 |
+| 待预处理 | `当前阶段='待预处理'`、`当前状态='待处理'` | A080 | A075、人工候选、回流节点 | 新候选或尚未预处理的普通文献。 |
+| 预处理完成 | `当前阶段='待泛读'`、`来源阶段='待预处理'` | A090 | A080 | 已完成解析资产补齐与标准笔记骨架准备。 |
+| 泛读中 | `当前阶段='泛读'`、`当前状态='处理中'` | - | A090 | 当前轮已被 A090 接管。 |
+| 泛读完成 | `当前阶段='批次汇总'`、`来源阶段='泛读'` | A095 | A090 | 已完成逐篇泛读。 |
+| 待精解析 | `当前阶段='待精解析'`、`当前状态='待处理'` | A100 | A090/A095 | 等待下一轮进入深读资产准备。 |
+| 精解析中 | `当前阶段='精解析'`、`当前状态='处理中'` | - | A100 | 当前轮已被 A100 接管。 |
+| 批判性研读 | `当前阶段='批判性研读'` | A105 | A100 | 已具备精解析资产，等待标准笔记输出。 |
+| 普通主链完成 | `当前状态='已完成'`、`是否当前有效=1` | 下游节点 | A105 | 已完成至少一轮批判性研读并收口。 |
+| 条目来源 | `来源类型`、`来源阶段`、`推荐原因` | A080/A090/A100 | 上游节点 | 记录人工、自动、回流或恢复来源。 |
+| 阅读提示 | `阅读目标`、`人工提示` | A090/A100/A105 | A075/A080/人工修订 | 逐文献阅读目标与人工提示。 |
 
 ### 0.2 当前实现流程
 
-1. A080 读取 `pending_preprocess=1`，成功后写 `preprocessed=1` 和 `pending_rough_read=1`。
-2. A090 先把当前条目从 `pending_rough_read=1` 迁到 `in_rough_read=1`，处理完成后写 `rough_read_done=1`，并按条件写 `pending_deep_read=1`。
-3. A095 只消费 `rough_read_done=1 AND analysis_batch_synced=0`，不直接做单篇筛选。
-4. A100 先把当前条目从 `pending_deep_read=1` 迁到 `in_deep_read=1`，处理完成后写 `deep_read_decision=parse_ready`。
-5. A105 读取 `deep_read_decision=parse_ready`，完成批判性研读后写 `deep_read_done=1` 和 `deep_read_count += 1`。
-6. A090 与 A100 都允许发现新候选，但不再一律回写到 `pending_preprocess=1`。
-6. 若新候选已完成预处理（`preprocessed=1`），则直接进入 `pending_rough_read=1`。
-7. 若新候选尚未完成预处理，则进入 `pending_preprocess=1`。
-8. 若新候选已经 `rough_read_done=1`，则不再重复回到待泛读清单。
+1. A080 读取 `当前阶段='待预处理' AND 当前状态='待处理' AND 是否可执行=1`，成功后写入解析资产，并把 `下一阶段` 或 `当前阶段` 推进到 `待泛读`。
+2. A090 接管 `待泛读` 条目时先写 `当前状态='处理中'`，完成后写 `当前状态='已完成'`，并按条件把下一阶段置为 `批次汇总` 或 `待精解析`。
+3. A095 消费泛读完成后的批次对象，完成批次汇总后把适合深读的条目推到 `待精解析`。
+4. A100 接管 `待精解析` 条目时先写 `当前状态='处理中'`，成功后登记 `文献解析资产`，并推进到 `批判性研读`。
+5. A105 消费具备精解析资产的条目，完成批判性研读后写 `知识笔记`、`知识文献关联`、`知识证据关联`，并把流程状态收束为 `已完成`。
+6. A090 与 A100 发现的新候选统一回写为 `流程轨道='普通主链'` 的新状态行，由 `当前阶段` 与 `是否可执行` 决定是否立即进入下游。
+7. 已有当前有效流程状态的条目不重复新建状态行；确需改道时更新原状态的 `下一阶段`、`推荐原因` 和 `人工提示`。
 
 ### 0.3 human_seed_contract（A080/A090/A100 共用）
 
@@ -67,7 +61,7 @@ python -c "import autodokit.tools as t; print('user_tools=', len(t.list_user_too
 1. 统一契约：三个节点读取同一配置结构，便于同一批 seed 在不同轮次复用，不需要按节点维护三套格式。
 2. 人工纠偏：真实运行中人工干预常发生在中途；允许在 A090/A100 继续补 seed，可避免“必须回到 A080 才能加单”的流程阻塞。
 3. 职责不变：虽然都可写，但节点仍按状态机消费；A080 只做预处理落位，A090 只做泛读，A100 只做深读，不会越权。
-4. 审计一致：`source_origin`、`manual_guidance`、`reading_objective` 在同一状态表回写，便于追溯“谁在何阶段加了什么种子”。
+4. 审计一致：`来源类型`、`人工提示`、`阅读目标` 在同一状态表回写，便于追溯“谁在何阶段加了什么种子”。
 
 建议在事务配置中统一提供以下结构：
 
@@ -146,6 +140,31 @@ python -c "import autodokit.tools as t; print('user_tools=', len(t.list_user_too
 - 研究脉络梳理事务
 - 创新点池构建事务
 - 创新点可行性验证事务
+
+当前与 A055 相关的调用边界：
+
+1. 主链或事务请求层调用 A055 时，默认仍推荐 `autodokit.run_affair(...)`。
+2. 当调用方已经显式选定 `workspace/config/affairs_config/A055.mode.local_only.minimal.json`、`A055.mode.local_dispatch_remote.minimal.json`、`A055.mode.remote_only_tmux.minimal.json`、`A055.mode.record_parse_results.minimal.json` 这四个直跑配置之一，并且目标就是绕过 AOE / PA 做单节点直跑时，可以直接导入官方 affair module 后执行 `execute(Path(config_path))`。
+3. 这四个 mode 配置的当前正式语义分别是：
+   - `local_only`：只在本地执行预处理；若当前队列为空，输出 `gate_review.json`。
+   - `local_dispatch_remote`：本地负责编排与回写，远端负责实际解析；若当前队列为空，同样输出 `gate_review.json`。
+   - `remote_only_tmux`：只负责把任务派发到远端 tmux，并输出 `a055_remote_dispatch.json`。
+  - `record_parse_results`：不重复启动解析；会按全库文献扫描既有解析资产，优先回收 done marker，若缺 marker 但 `structured_monkeyocr_full` 下对应目录关键产物完整，也会直接登记成功结果并生成 `a055_record_parse_results_index.csv`。该模式会把 `文献主表.解析状态` 回写为 `已完成`，并且为避免漏记，不受 minimal 配置中的 `max_items=1` smoke 限制。
+
+补充口径：`文献主表.解析状态` 现在是 A055 及其下游节点的主解析结果摘要列，正式值域固定为 `未完成`、`在运行`、`已完成`。`当前解析状态` 继续保留，用于承载 parse asset 层的低层状态。
+
+推荐的 A055 direct-affair 直跑示例：
+
+```python
+from pathlib import Path
+
+from autodokit.affairs.统一文献预处理解析.affair import execute
+
+outputs = execute(
+  Path('workspace/config/affairs_config/A055.mode.remote_only_tmux.minimal.json')
+)
+```
+
 ### 1.2 autodokit.prepare_affair_config(...)
 
 用途：调用 autodokit.tools 的统一路径预处理逻辑，对事务配置中的路径字段做绝对化。
@@ -153,7 +172,7 @@ python -c "import autodokit.tools as t; print('user_tools=', len(t.list_user_too
 补充说明：
 
 - 候选与阅读相关事务不再依赖 `review_candidate_current_view`、`review_read_pool_current_view`、`review_priority_current_view` 这类旧 SQLite current view 作为运行时真相源。
-- 新项目默认不再使用 `literature_reading_queue` 作为综述链到普通文献链的入口；普通文献阅读主链 A080-A105 统一以 `literature_reading_state` 为正式真相源。
+- 普通文献阅读主链 A080-A105 统一以 `content.db` 的 `文献流程状态` 为正式真相源；候选入口通过 `流程轨道='普通主链'`、`当前阶段`、`当前状态` 表达。
 - CSV 与 Markdown 导出物用于审计、人工阅读与兼容迁移，不作为 A080-A100 的正式当前态来源。
 
 ### 1.4 autodokit.import_user_affair(...)
@@ -197,7 +216,7 @@ python -c "import autodokit.tools as t; print('user_tools=', len(t.list_user_too
 - `dry_run`：是否只预览不写入。
 - `inventory_only`：是否仅扫描并输出命中清单。
 - `scan_dirs`：需要扫描的工作区目录（默认包括 `config`、`steps`、`knowledge`、`views`、`batches`）。
-- `sqlite_rel_paths`：需要处理的 SQLite 相对路径（默认包括 `database/content/content.db`、`database/logs/aok_log.db`、`database/tasks/tasks.db`）。
+- `sqlite_rel_paths`：需要处理的 SQLite 相对路径（默认包括 `database/content/content.db`、`database/logs/log.db`、`database/tasks/tasks.db`、`database/decision/decision.db`）。
 - `excluded_prefixes`：默认排除前缀之外的额外排除项。
 
 相关结构：
@@ -261,7 +280,7 @@ result = migrate_workspace_paths(
 1. 请求画像层：`profiles/request_profile.py`，负责区分中文、英文、中英文不限。
 2. 路由层：`router/route_entry.py` 与 `online_retrieval_router.py`，负责入口治理与策略分发。
 3. 编排层：`orchestrators/*.py`、`policies/*.py`、`catalogs/*.py`，负责输入归一化、来源发现、来源选择、重试与批量组织。
-4. 执行层：`executors/*.py` 与各 `zh_cnki_*`、`en_open_access_*`、`content_portal_spis.py`，负责单篇 metadata、download、structured extract。
+4. 执行层：`executors/*.py` 与各 `zh_cnki_*`、`en_open_access_*`、`deepxiv_platform.py`、`content_portal_spis.py`，负责单篇 metadata、download、structured extract。
 
 用户不应直接调用的内部文件包括但不限于：
 
@@ -270,9 +289,22 @@ result = migrate_workspace_paths(
 3. `school_foreign_database_portal.py`：学校数据库导航门户适配。
 4. `en_chaoxing_portal_retry.py`：英文失败项学校门户重试。
 
-### 1.11 A040 检索治理事务的特殊渠道参数
+### 1.11 A040/A045/A050/A055 检索、下载与预处理事务入口
 
-A040 的正式事务入口是 `autodokit.affairs.检索治理.affair.execute(...)`。当前特殊渠道不再通过独立 tools 模块承载，而是作为 A040 事务程序的参数分支执行。
+A040 的正式事务入口是 `autodokit.affairs.检索治理.affair.execute(...)`。
+
+A045 的正式事务入口是 `autodokit.affairs.文献下载与主附件入库.affair.execute(...)`。
+
+A050 的正式事务入口是 `autodokit.affairs.统一文献预处理解析.affair.execute(...)`。
+
+A055 的正式事务入口也是 `autodokit.affairs.统一文献预处理解析.affair.execute(...)`。
+
+A040 与 A045 复用同一套在线检索/下载与附件入库底层实现：A040 侧重 metadata 检索治理，A045 侧重已定位条目的 PDF 下载与主附件事实回写。A050 负责预处理优先级生成，把当前队列与执行参数写入 `content.db`；A055 负责消费该当前队列执行统一预处理解析，作为后续结构化正文资产入口。当前特殊渠道不再通过独立 tools 模块承载，而是作为 A040 / A045 事务程序的参数分支执行。
+
+当前英文开放源 provider 至少包括：
+
+- `en_open_access`：通用开放源 metadata、PDF 下载与 HTML 抽取。
+- `deepxiv`：首版支持英文 metadata 检索与单篇/批量 PDF 下载，常用于 A040/A045 对 arXiv 系开放源做补检和补件。
 
 常用参数：
 
@@ -282,16 +314,185 @@ A040 的正式事务入口是 `autodokit.affairs.检索治理.affair.execute(...
 - `special_channel.skip_existing`：是否跳过已具备 fulltext / pdf_path / primary_attachment_source_path / primary link 的条目。
 - `attachments_target_dir`：成功下载后附件落盘目录，默认 `workspace/references/attachments`。
 - `school_library_nav_url` / `library_nav_url` / `portal_url`：学校门户重试入口。
+- `deepxiv_endpoint_family`：DeepXiv 检索端点，当前默认 `arxiv`，可按接口扩展为 `pmc` 等族。
+- `deepxiv_source_filter`：DeepXiv 来源过滤，如 `arxiv`、`biorxiv`、`medrxiv`。
+- `deepxiv_token_env` / `deepxiv_token_file`：DeepXiv token 来源。
 
 命名与回写口径：
 
-1. 下载成功后，PDF 文件名统一为 `att-<cite_key>-<uid_attachment>.pdf`。
+1. 下载成功后，PDF 文件名统一为 `att-<cite_key>-<uid_附件>.pdf`。
 2. 下载后的内容主库更新应复用 A020 同源的 `bibliodb_sqlite.replace_reference_tables_only(...)` 链路。
 3. 附件事实层以 `attachments` + `literature_attachment_links` 为准；`literature_attachments` 仅保留兼容投影。
-4. A040 事务智能体应直接调用 A040 affair 程序，由事务程序根据参数走常规流程或特殊流程。
+4. A040 事务智能体应直接调用 A040 affair 程序；A045 事务智能体应直接调用 A045 affair 程序；两者都不应绕过官方 affair 入口手写下载脚本。
 5. `executors/content_portal_cnki.py`、`executors/content_portal_spis.py`、`executors/open_platform.py`、`executors/navigation_portal.py`：执行层内部实现。
+6. `deepxiv` 首版不提供 HTML structured extract；若需要结构化正文，仍应走后续解析链路或其他开放源实现。
 
 开发说明或排障记录中，建议优先引用 `docs/在线检索文献模块专题.md`，再补具体文件名，避免只说“在线检索模块”而不说清楚层级边界。
+
+### 1.12 A040/A045 运行机制（用户常见问题）
+
+本节直接回答 A040/A045 在当前实现中的运行机制问题。
+
+1. 一次执行是否只能检索一个来源：不是。
+2. 一次执行是否可同时尝试中文和英文：可以。
+3. 一次执行是否可同时尝试多个中文/英文渠道：在 A040/A045 事务内，按 `online_sources` 列表顺序逐个执行。
+4. 多来源执行是并发还是串行：当前是串行执行，结果按来源分别写入 `results[source]`。
+5. 失败会不会中断后续来源：单来源失败通常不会阻断其他来源，失败以来源级 `status` 留痕。
+
+#### 1.12.1 A040 的固定流程
+
+1. 读取 `query`、`keyword_list`、`seed_items`，构建 `query_terms`。
+2. 可选本地检索：`enable_local_retrieval=true` 时先跑本地内容库检索。
+3. 构建在线 seed：融合本地命中与手工 seed，按语言拆分为中文与外文子集。
+4. 在线 metadata 阶段：`enable_online_retrieval=true` 且触发策略满足时，按 `online_sources` 串行执行。
+5. 在线获取阶段：由 `online_acquisition_mode` 决定是否补跑下载/结构化提取。
+6. 结果收敛：合并 metadata 与下载产物，生成审计摘要、门控判断与输出文件。
+
+#### 1.12.2 A045 的固定流程
+
+1. A045 复用 A040 同一事务实现，但默认职责是“下载与主附件入库”。
+2. 实际上通过配置收窄行为：
+  1. `enable_local_retrieval=false`
+  2. `online_trigger_policy=manual_seed_only`
+  3. `online_acquisition_mode=download_pdf`
+3. 若 `seed_items` 为空且基线配置打开 `auto_seed_from_latest_a040=true`，A045 会优先承接最近一次 A040 的真实候选结果作为下载种子。
+4. 当前 A045 已显式抑制 `query_terms -> title` 这类关键词猜测 fallback，因此不建议再把 query term 当作伪题录直接送进下载链。
+5. 因此 A045 的典型输入是明确 `seed_items`，或由最近一次 A040 真实结果自动补种子，而不是重新做大范围检索。
+
+#### 1.12.3 `online_sources` 当前在 A040/A045 事务内支持的来源
+
+在 `autodokit.affairs.检索治理.affair` 的在线分支中，当前内建来源是：
+
+1. `zh_cnki`
+2. `en_open_access`
+3. `deepxiv`
+
+这意味着：
+
+1. 同一次 A040/A045 可以把 `online_sources` 配成 `['zh_cnki', 'deepxiv']` 或 `['zh_cnki', 'en_open_access', 'deepxiv']`。
+2. 中文和英文来源可同轮尝试，事务会按语言拆分 seed 后分别路由。
+3. `deepxiv` 当前支持 metadata + PDF 下载，不支持 HTML structured extract。
+
+#### 1.12.4 学校图书馆外文期刊目录与 A040 的关系
+
+学校图书馆目录抓取能力对应 router 组合：
+
+1. `source='school_foreign_database_portal'`
+2. `mode='catalog'`
+3. `action='fetch'`
+
+该能力属于来源发现/目录探测编排能力，不是 A040 事务内建 metadata 分支。推荐实践是：
+
+1. 先跑 A040（如 `deepxiv`）完成外文 metadata 主检索。
+2. 再单独调用 `run_online_retrieval_router(...)` 执行学校目录抓取作为补充来源发现。
+3. 如需将目录结果转为下一轮 A040 的 seed，由上层事务或人工筛选后回填 `seed_items`。
+
+#### 1.12.5 可直接执行的模板建议
+
+工作区可直接使用以下模板（按需复制为运行文件）：
+
+1. `workspace/config/affairs_config/A040.template.zh_cnki.from_a030.json`
+2. `workspace/config/affairs_config/A040.template.foreign.deepxiv.from_a030.json`
+3. `workspace/config/affairs_config/A045.template.deepxiv.download.from_a040.json`
+4. `workspace/config/affairs_config/A040.template.foreign.school_portal_catalog.json`（router 目录抓取 payload）
+
+### 1.13 事务请求总线（A020 / A040 / A045 / A050 / A055）
+
+核心模块：`autodokit.tools.affair_request_bus`
+
+用途：把 A020、A040、A045、A050、A055 这类可独立触发的节点登记为正式事务请求，并基于官方模板配置完成装载与 dispatch。
+
+当前正式支持的目标节点：
+
+1. `A020`
+2. `A040`
+3. `A045`
+4. `A050`
+5. `A055`
+
+当前请求层契约：
+
+1. 请求主记录写入 `tasks.db.事务请求`。
+2. 请求详细内容写入 `workspace/tasks/requests/<请求UID>/payload.json`。
+3. dispatch 前先按节点从 `affair_entry_registry.json` 解析 `config_path`，再把 `business_payload` 覆盖到官方模板上。
+4. 真正执行仍通过 `autodokit.run_affair(...)` 进入官方事务入口。
+5. dispatch 结果写回 `workspace/tasks/requests/<请求UID>/dispatch_result.json`，并同步更新请求状态。
+
+高频接口：
+
+| 接口 | 作用 |
+| --- | --- |
+| `register_affair_request(...)` | 通用请求登记 |
+| `register_a020_import_request(...)` | A020 导入请求登记 |
+| `register_a040_retrieval_request(...)` | A040 检索请求登记 |
+| `register_a040_requests_from_feedback(...)` | 批量把阅读反馈登记为 A040 请求 |
+| `register_a045_download_request(...)` | A045 下载请求登记 |
+| `register_a050_preprocess_request(...)` | A050 预处理请求登记 |
+| `register_a055_preprocess_request(...)` | A055 统一预处理执行请求登记 |
+| `load_affair_request_payload(...)` | 装载请求 payload |
+| `build_affair_request_runtime_config(...)` | 生成 runtime config |
+| `dispatch_affair_request(...)` | 分发单条请求 |
+| `dispatch_pending_affair_requests(...)` | 分发待处理请求清单 |
+
+当前边界：
+
+1. 请求总线已经在 AOK / ARK 侧可用，但 AOE 主循环目前不会自动轮询 `tasks.db.事务请求`。
+2. A020、A050 虽然已经纳入请求总线支持范围，但这轮真实闭环验收集中在 A030 -> A040 -> A045。
+3. 浏览器会话相关能力当前依赖共享 profile 与既有 CDP 会话；`vscode_embedded_only` 只是附着约束，不是启动器。
+
+### 1.14 autodokit.tools.manage_online_retrieval_daily_usage(...)
+
+用途：记录、读取、列出或重置在线检索 provider 的每日请求次数。当前最直接的使用场景是管理 DeepXiv 的每日免费请求额度。
+
+当前实现口径：
+
+1. 默认 provider 是 `deepxiv`。
+2. 默认每日上限是 `10000`。
+3. 默认统计文件落在用户目录：`${HOME}/.autodokit/online_retrieval/daily_usage/usage_counter.json`。
+4. DeepXiv 客户端在 metadata API 成功返回 JSON 后会自动调用本工具记一次 `api_request`。
+5. 直接 PDF 文件下载当前不自动计入本地计数，因为很多文件实际来自上游开放源文件地址；因此本统计更适合作为“本地日常配额管理”，不是服务端账单真相源。
+
+常用参数：
+
+- `action`：`record` / `get` / `list` / `reset`。
+- `provider`：provider 名称，默认 `deepxiv`。
+- `count`：本次增加次数，默认 `1`。
+- `date`：统计日期，格式建议 `YYYY-MM-DD`；默认按 `timezone_name` 取当天。
+- `daily_limit`：每日上限，默认 `10000`。
+- `event_kind`：事件类别，如 `api_request`。
+- `endpoint_family`：来源族，如 `arxiv`。
+- `counter_path`：自定义统计文件路径。
+- `timezone_name`：统计时区，默认 `Asia/Shanghai`。
+
+返回字段：
+
+- `count`：当日累计次数。
+- `daily_limit`：当日上限。
+- `remaining`：剩余额度。
+- `usage_ratio`：使用比例。
+- `by_event`：按事件类别累计。
+- `by_endpoint`：按来源族累计。
+- `counter_path`：统计文件路径。
+
+示例：
+
+```python
+from autodokit.tools import manage_online_retrieval_daily_usage
+
+snapshot = manage_online_retrieval_daily_usage(
+  {
+    "action": "get",
+    "provider": "deepxiv",
+  }
+)
+
+print(snapshot["count"], snapshot["remaining"])
+```
+
+如果你希望把 DeepXiv 自动计数文件改到工作区内，可在 A040/A045 配置中额外提供：
+
+- `deepxiv_usage_counter_file`
+- `deepxiv_daily_limit`
 
 ## 2. autodokit.tools 导出
 
@@ -556,20 +757,20 @@ python scripts/manage_tex_dag.py --help
 1. `graph`：导出引用关系图。
 2. `rewire`：重连父文件中的子文档引用。
 3. `set-root`：更新子文件的 `subfiles` 根引用。
-- `task_status_append(status_log, aok_task_uid, ...)`
-- `task_gate_decision_record(gate_decisions, aok_task_uid, ...)`
-- `task_handoff_record(handoffs, from_task_uid, to_task_uid, ...)`
-- `task_relation_upsert(relations, source_task_uid, target_task_uid, ...)`
-- `task_round_snapshot_register(round_views, aok_task_uid, ...)`
-- `task_release_register(releases, aok_task_uid, ...)`
-- `task_release_promote(releases, aok_task_uid, release_uid, ...)`
-- `task_literature_binding_register(bindings, aok_task_uid, uid_literature, ...)`
-- `task_knowledge_binding_register(bindings, aok_task_uid, uid_knowledge, ...)`
-- `task_bind_literatures(tasks, aok_task_uid, literature_uids, ...)`
-- `task_bind_knowledges(tasks, aok_task_uid, knowledge_uids, ...)`
-- `task_artifact_register(tasks, artifacts, aok_task_uid, ...)`
-- `task_bundle_export(artifacts, aok_task_uid, output_dir)`
-- `task_get(tasks, artifacts, aok_task_uid)`
+- `task_status_append(status_log, uid_任务, ...)`
+- `task_gate_decision_record(gate_decisions, uid_任务, ...)`
+- `task_handoff_record(handoffs, uid_来源任务, uid_目标任务, ...)`
+- `task_relation_upsert(relations, uid_来源任务, uid_目标任务, ...)`
+- `task_round_snapshot_register(round_views, uid_任务, ...)`
+- `task_release_register(releases, uid_任务, ...)`
+- `task_release_promote(releases, uid_任务, uid_发布, ...)`
+- `task_literature_binding_register(bindings, uid_任务, uid_文献, ...)`
+- `task_knowledge_binding_register(bindings, uid_任务, uid_知识, ...)`
+- `task_bind_literatures(tasks, uid_任务, 文献UID列表, ...)`
+- `task_bind_knowledges(tasks, uid_任务, 知识UID列表, ...)`
+- `task_artifact_register(tasks, artifacts, uid_任务, ...)`
+- `task_bundle_export(artifacts, uid_任务, output_dir)`
+- `task_get(tasks, artifacts, uid_任务)`
 - `get_current_time_iso(timezone_name='Asia/Shanghai')`
 - `convert_timestamp_to_timezone(timestamp, target_timezone='Asia/Shanghai', ...)`
 - `rewrite_obsidian_note_timestamps(note_path, target_timezone='Asia/Shanghai', ...)`
@@ -655,7 +856,7 @@ python scripts/manage_tex_dag.py --help
 1. 请求画像层：`profiles/request_profile.py`，负责区分中文、英文、中英文不限等约束。
 2. 路由层：`online_retrieval_router.py` + `router/route_entry.py`，负责统一入口、规则注入和调度选择。
 3. 编排层：`orchestrators/*.py` + `policies/*.py` + `catalogs/*.py`，负责把 `entries` / `records` / `seed_items` / `cite_keys` / `pdf_paths` 统一转换为可执行载荷，并完成来源发现、来源选择和 retry。
-4. 执行层：`executors/*.py` + `zh_cnki_*` / `en_open_access_*` / `content_portal_spis.py`，负责实际检索、下载、抽取。
+4. 执行层：`executors/*.py` + `zh_cnki_*` / `en_open_access_*` / `deepxiv_platform.py` / `content_portal_spis.py`，负责实际检索、下载、抽取。
 
 用户不应直接调用的内部实现文件包括但不限于：
 
@@ -680,6 +881,8 @@ python scripts/manage_tex_dag.py --help
 - `zh_cnki batch download/html_extract`：若未传 `entries`，会自动尝试由编排层把 `seed_items` / `cite_keys` / `pdf_paths` 解析生成。
 - `zh_cnki single download/html_extract`：若未传 `zh_query`（或 `query`）且未传 `detail_url`，会自动从编排结果补齐首条候选。
 - `en_open_access single/batch download`：若未传 `record`（或 `records`），会自动由种子输入构造最小 `record` 载荷。
+- `deepxiv search metadata`：若未显式提供 `query`，会回退到首条 `seed_items.title` 或 `seed_items.cite_key`。
+- `deepxiv single/batch download`：若记录中缺少 `pdf_url`，会尝试按 `source_id` 与端点族推断直链；若仍无法推断，则返回阻断结果供 A045 继续审计。
 
 典型场景：
 
@@ -687,6 +890,7 @@ python scripts/manage_tex_dag.py --help
 - 中文 CNKI 单篇/批量 PDF 下载
 - 中文 CNKI 单篇/批量 HTML 抽取
 - 英文开放源题录检索与全文下载
+- DeepXiv 英文开放源 metadata 补检与 PDF 物化
 - 学校数据库导航与超星门户相关流程
 - 本地 `cite_key`/PDF 清单驱动的在线补检索（先由编排层归一，再由执行层执行）
 
@@ -817,7 +1021,7 @@ if repair_result["status"] == "PASS":
     "snapshot_mode": "log_only"
   },
   "paths": {
-    "log_db_path": "workspace/database/logs/aok_log.db",
+    "log_db_path": "workspace/database/logs/log.db",
     "runtime_dir": "workspace/runtime",
     "logs_dir": "workspace/logs"
   }
@@ -831,11 +1035,11 @@ if repair_result["status"] == "PASS":
 
 注意：`runtime_dir` 仅在 `snapshot_mode` 为 `log_and_snapshot` 且 `logging.enabled=true` 时被创建与写入。
 
-## 2.3 AOB 工具统一执行 API（autodokit.tools.aob_tools）
+## 2.3 AOB 工具统一执行 API（autodokit.tools.aob_tools / aob_atomic_tools）
 
-用途：将 AOB 历史执行能力统一收敛到 `autodokit.tools`，脚本层仅做参数组织与调用。
+用途：将 AOB 历史执行能力统一收敛到 `autodokit.tools`，并区分为“CLI 兼容入口”和“事务直调用原子入口”两层。
 
-核心接口：
+CLI 兼容入口：
 
 - `run_aob_aoc(argv=None)`
 - `run_aob_deploy(argv=None)`
@@ -843,14 +1047,90 @@ if repair_result["status"] == "PASS":
 - `run_aob_regression_opencode_deploy_check(argv=None)`
 - `run_aob_workflow_deploy(...)`
 - `run_aob_items_sync(...)`
+- `run_aob_aggregate_user_content(...)`
+- `run_aob_publish_user_content(...)`
+- `run_aob_backup_user_content(...)`
+- `run_aob_update_user_content(...)`
 - `run_aob_external_templates_import(...)`
 - `run_aob_workspace_convert(...)`
+
+原子事务入口：
+
+AOB 用户内容四项接口现在显式区分范围维度：`scopes` 支持 `global`、`system`、`user`、`project`。未传 `scopes` 时默认只自动发现 `user`；若提供 `project_dirs` 但未传 `scopes`，运行时默认按 `project` 处理。对 `project` 范围，AOB 会先用 `workspace_target_profiles.json` 把项目根展开为 profile 对应的 carrier 根，再交给 AOC 执行反编译与发布；沙盒和备份仍复制整个项目根，避免丢失 `CLAUDE.md`、`AGENTS.md`、`GEMINI.md`、`opencode.json` 这类项目根文件。
+
+- `aob_validate_content(input_path='libs', repo_root='')`
+  - 用途：执行 `aoc validate`。
+  - 典型场景：修改 `libs/`、`engine_shell_templates/` 或 AOL 内容后先做合法性校验。
+- `aob_sync_items(strategy='mtime_size_then_hash', dry_run=True, repo_root='')`
+  - 用途：执行 `items sync`。
+  - 典型场景：更新内容清单、修正 `database/items.csv`。
+  - `repo_root` 通过受控 `AOB_REPO_ROOT` 环境上下文传入 library runtime；library CLI 本身不消费 `--repo-root`。
+  - `items sync` 会调用 AOC 包内归一化函数，对 `libs/` 中 agents、skills、rules、prompts、hooks、settings、templates、instructions 等目录执行 dry-run 或实际 AOL 归一化。
+- `aob_aggregate_user_content(source_paths=None, scopes=None, project_dirs=None, home_dir='', dry_run=True, skip_items_sync=False, repo_root='')`
+  - 用途：聚合当前设备用户级 AI 内容并统一转换为 canonical AOL。
+  - 典型场景：把 `~/.copilot`、常见引擎目录以及 VS Code/Cursor/Lingma 的用户 prompts 统一纳入 `libs/aol/canonical.aol.json`。
+  - 自动发现范围：`~/.copilot`、`~/.claude`、`~/.codex`、`~/.gemini`、`~/.opencode`、`~/.cursor`、`~/.lingma`、`~/.qoder`、`~/.qwen`，以及 `AppData/Roaming/{Code|Cursor|Lingma}/User/prompts`。
+  - 范围参数：`scopes=['project']` 并传 `project_dirs` 时，会按 profile 把项目根展开为 `.github`、`.claude`、`.cursor` 等 carrier 根参与聚合；结果摘要中的 `scope` 字段会显式保留范围。
+  - 官方契约级别：本轮已核验 `~/.claude` 与 `~/.qwen` 的核心文件、层级与部分系统路径；`~/.copilot`、`~/.cursor` 及 `AppData/Roaming/*/User/prompts` 当前仍按兼容发现口径处理，运行时会给出 warning。
+  - 冲突策略：同名 AOL 实体内容一致则去重；若语义冲突则追加来源后缀重命名并记录 `warnings`。
+  - `dry_run=true` 时仅返回 canonical 预览与统计，不写入 `libs/aol/canonical.aol.json`，也不执行 `items sync`。
+- `aob_publish_user_content(target_paths=None, scopes=None, project_dirs=None, home_dir='', engine_vendors=None, ide_vendors=None, include_missing=False, dry_run=True, repo_root='')`
+  - 用途：把集中维护在 `libs/aol/canonical.aol.json` 的 AOL 真源发布回当前设备用户级办公区。
+  - 典型场景：读取 canonical AOL，经 AOC emitter 编译后回写到 `~/.copilot`、`~/.claude`、`~/.cursor`、`~/.qwen` 及 `AppData/Roaming/Code/User/prompts`。
+  - 自动发现范围：默认只发现当前真实存在的用户级目录；如需把候选但尚不存在的目录纳入预演，可传 `include_missing=true`。
+  - 范围参数：`scopes=['project']` 并传 `project_dirs` 时，发布目标会落到项目 carrier 根；其中 `.claude/.cursor/.codex/.gemini/.opencode` 的项目根文件会写回 carrier 的父目录。
+  - 路由规则：结构化根目录发布完整编译产物；prompts 根目录只接收 `.prompt.md` 与 `.instructions.md`。
+  - 官方契约级别：发布结果中的 `contract_level` 为 `official_partial` 时表示本轮已核验该供应商的核心路径/语法；为 `heuristic` 时表示仅做兼容投影，不声明官方无损映射。
+  - 前置条件：`libs/aol/canonical.aol.json` 必须存在且可解析，否则发布失败并提示先执行聚合。
+  - 过滤规则：`engine_vendors` 与 `ide_vendors` 仅作用于自动发现目标；传 `target_paths` 时按显式目标路径执行。
+- `aob_backup_user_content(target_paths=None, scopes=None, project_dirs=None, home_dir='', engine_vendors=None, ide_vendors=None, include_missing=False, backup_dir='', dry_run=True, repo_root='')`
+  - 用途：单独执行用户级内容备份，覆盖 `libs` 与用户级目标目录。
+  - 范围参数：对 `project` 范围，备份源目录是整个项目根，而不是单独的 carrier 根，这样可以保留 `CLAUDE.md` 等项目根文件。
+  - 默认路径：未指定 `backup_dir` 时，使用 `autodo-lib/datastore`。
+  - 输出摘要：包含 `snapshot_dir`、来源清单、文件计数与 `manifest_path`。
+- `aob_update_user_content(target_paths=None, scopes=None, project_dirs=None, home_dir='', engine_vendors=None, ide_vendors=None, include_missing=False, backup_dir='', dry_run=True, skip_backup=False, skip_items_sync=False, simulate_only=False, sandbox_dir='', repo_root='')`
+  - 用途：执行用户级内容一键更新，在 `libs` canonical 与本轮选中的用户级参与方之间按 logical key 做双向同步。
+  - 默认行为：先执行一次备份，再把 `libs` 与所有参与方反编译到 AOL，按 SQLite sidecar + 路径元数据判定每个语义条目的 winner，再写回 canonical 并发布到全部参与方；可通过 `skip_backup=True` 关闭正式备份。
+  - 参与方语义：`target_paths`、`engine_vendors`、`ide_vendors` 用于决定同步参与方集合，不再只作为最终发布过滤。
+  - 范围参数：`scopes` 控制自动发现范围；`project_dirs` 提供项目根列表。运行时会把 profile 中的 `install_scope='workspace'` 统一映射为 `project`。
+  - 备份目录：可用 `backup_dir` 指定备份根目录，默认 `autodo-lib/datastore`。
+  - 判定策略：优先读取同步数据库（`items_registry.sqlite3`）中的同名逻辑条目变更时间；缺失时回退到路径观测时间；删除且无可靠观测时间时退回当前决策时间。
+  - 删除策略：基于“托管文件清单”做差量删除，仅删除上一轮托管而本轮缺失的文件。
+  - 安全门禁：任一参与方反编译失败时，正式 canonical 写入与正式发布会被阻断，避免把翻译失败误判为删除。
+  - 契约透明化：同步侧 `sources/targets` 会返回 `contract_level` 与 `contract_note`；`heuristic` 表示该载体只有经验性发现口径，适合先做沙盒演练，不应视为官方稳定契约。
+  - 沙盒演练：`simulate_only=true` 时会把 canonical、sidecar 与参与方目录复制到 `sandbox_dir`（或默认 `Downloads/aob-sync-sandbox-YYYYMMDDHHMMSS`），并仅在沙盒副本中执行真实同步，不修改原目录；对 `project` 范围会复制整个项目根，但沙盒内参与方仍指向 carrier 根。
+  - 输出摘要：包含 `decision_summary`（canonical 新增/更新/删除）、`registry_summary`（数据库命中与回退）、`sync_registry`（落库统计）与 `sandbox`（沙盒信息，仅沙盒模式返回）。
+- `aob_import_external_templates(...)`
+  - 用途：导入外部模板并自动联动同步与入库。
+  - 典型场景：把外部模板目录纳入 `libs/templates/`。
+- `aob_convert_workspace(...)`
+  - 用途：执行带 canonical dump 与 capability 校验报告的 `workspace-convert`。
+  - 返回：字典结果，核心字段包括 `status`、`code`、`canonical_dump_path`、`validation_report_path`、`capability_report`。
+  - 典型场景：在模板项目内把 `.opencode/.claude/.github/.gemini/.codex` 办公区互转，并在写入前显式暴露 downgrade/阻断原因。
+  - `capability_report` 采用分层结构：`L1` 基础通用层、`L2` 扩展能力层、`L3` 引擎逃生口。
+  - 当前 `L2` 已显式校验：`hooks`、`mcp`、`settings`、`policies`。
+  - 当前 `L3` 已显式校验：`modes`、`plugins`、`tools`、`themes`、`plans`、`engine_overrides`。
+  - canonical AOL dump 的根字段包含 `hooks`、`mcp_servers`、`settings`、`policies`、`engine_native`，用于把 hooks、MCP、设置、审批/沙箱策略与引擎原生逃生口显式纳入跨引擎转换报告。
+- `aob_deploy_workflow(...)`
+  - 用途：执行工作流安装部署。
+  - 典型场景：按 workflow + engine 把 `autodo-lib` 内容投影到目标项目。
+  - 当前已支持：`opencode`、`claude`、`copilot`、`gemini`、`codex`。
+- `aob_check_opencode_deploy_regression(...)`
+  - 用途：执行 OpenCode 最小部署回归。
+  - 典型场景：部署完成后验证 `opencode.json` 与 agents 颜色格式。
+
+推荐规则：
+
+- 脚本层与 CLI 薄入口优先使用 `run_aob_*`。
+- 事务层与 Python 业务编排优先使用 `aob_*` 原子入口。
+- 不建议让事务层直接拼接 argv 调用 CLI 兼容函数。
 
 路径解析约定：
 
 - 默认优先使用同级 `autodo-lib` 作为 AOB 仓库根目录；
 - 可通过环境变量 `AOB_REPO_ROOT` 覆盖；
-- 支持通过参数 `repo_root/--repo-root` 显式传入。
+- Python 原子入口统一支持 `repo_root` 参数；
+- CLI 是否支持 `--repo-root` 由对应子命令决定，library runtime 通过 `AOB_REPO_ROOT` 接收仓库根目录，不消费 `--repo-root`。
 
 ## 2.4 文献数据库管理工具（autodokit.tools.bibliodb）
 
@@ -861,34 +1141,41 @@ if repair_result["status"] == "PASS":
 - `init_empty_literatures_table()`：初始化空文献主表 DataFrame（兼容层；SQLite 为主库）。
 - `init_empty_attachments_table()`：初始化空文献附件表 DataFrame（兼容层；SQLite 为主库）。
 - `init_empty_table(columns=None, table_kind='literatures')`：按表类型初始化空表。
-- `generate_uid(first_author, year_int, title_norm, prefix=None)`：生成文献唯一标识 `uid_literature`。
+- `generate_uid(first_author, year_int, title_norm, prefix=None)`：生成文献唯一标识 `uid_文献`。
 - `clean_title_text(title)`：生成 `clean_title`。
 - `literature_match(table, first_author, year, title, top_n=5)`：返回候选匹配列表。
 - `literature_upsert(table, literature, overwrite=True)`：按 003 主表契约插入或更新记录。
 - `literature_insert_placeholder(table, first_author, year, title, clean_title, source='placeholder', extra=None)`：创建占位引文。
 - `parse_reference_text(reference_text)`：从单条参考文献文本启发式提取 `first_author/year/title/clean_title`。
 - `insert_placeholder_from_reference(table, reference_text, source='placeholder_from_reading', top_n=5, extra=None)`：执行“匹配已存在记录，否则插入占位引文”的一体化流程。
-- `literature_attach_file(literatures, attachments, uid_literature, attachment_name, attachment_type='fulltext', is_primary=1, note='')`：写入文献附件关系，并联动主表原文状态。
-- `literature_bind_standard_note(literatures, uid_literature, standard_note_uid)`：绑定文献标准笔记 UID。
-- `literature_get(literatures, attachments, uid_literature)`：读取单条文献及其附件集合。
+- `literature_attach_file(literatures, attachments, uid_文献, attachment_name, attachment_type='fulltext', is_primary=1, note='')`：写入文献附件关系，并联动主表原文状态。
+- `literature_bind_standard_note(literatures, uid_文献, uid_标准笔记)`：绑定文献标准笔记 UID。
+- `literature_get(literatures, attachments, uid_文献)`：读取单条文献及其附件集合。
 - `update_pdf_status(table, uid, has_pdf, pdf_path='')`：保留的过渡接口，会落到 `has_fulltext` 与 `primary_attachment_name` 语义上执行。
 
 字段约定（文献主表）：
 
-- 标识：`uid_literature`、`cite_key`、`id`
+- 标识：`uid_文献`、`cite_key`、`id`
 - 文本：`title`、`clean_title`、`title_norm`、`abstract`、`keywords`
 - 作者年份：`first_author`、`authors`、`year`、`entry_type`
-- 管理：`is_placeholder`、`source_type`、`origin_path`、`standard_note_uid`
+- 管理：`is_placeholder`、`source_type`、`origin_path`、`uid_标准笔记`
 - 原文：`has_fulltext`、`primary_attachment_name`
 
 字段约定（文献附件表）：
 
-- 标识：`uid_attachment`、`uid_literature`、`id`
+- 标识：`uid_附件`、`uid_文献`、`id`
 - 文件：`attachment_name`、`attachment_type`、`file_ext`
 - 路径：`storage_path`、`source_path`
 - 管理：`checksum`、`is_primary`、`status`
 
-说明：自 SQLite 主库并库改造完成后，文献管理系统与知识管理系统默认共享同一个内容主库 `database/content/content.db`。`database/references/references.db`、`database/knowledge/knowledge.db` 仍可作为显式输入路径被兼容读取，但不再是默认主契约。上述 DataFrame 接口保留为兼容层与中间处理层；如仍存在 `uid`、`has_pdf`、`pdf_path` 等旧列，当前工具层会做最小过渡映射。
+说明：文献管理系统与知识管理系统共享同一个内容主库 `database/content/content.db`。SQLite 物理表与物理字段使用中文契约；上述 DataFrame 接口保留英文逻辑字段作为 Python 调用层输入输出，工具层负责映射到 `文献主表`、`附件表`、`文献附件关联`、`知识笔记`、`知识文献关联`、`知识证据关联` 等中文物理表。
+
+关系对象补充口径：
+
+1. `文献附件关联`、`文献作者关联`、`文献标签关联`、`知识文献关联`、`知识证据关联` 是事实关系表。
+2. `文献主附件视图`、`文献作者关联总视图`、`文献标签关联总视图`、`作者总表`、`标签总表` 是只读读模型，不是写入目标。
+3. `init_content_db(db_path)` 的职责是建表、补列、补索引与刷新视图，不把整表关系重建当作默认主路径。
+4. `backfill_content_relationships(db_path)` 现在定位为历史资产 repair/upsert 工具；A020/A045/A105 等事务应直接写事实关系表。
 
 新增 SQLite-first 接口：
 
@@ -903,15 +1190,19 @@ if repair_result["status"] == "PASS":
 - `load_knowledge_index_table(input_path)`：按路径读取知识索引主表，支持 `.db` 与旧 `.csv`。
 - `init_content_db(db_path)`：初始化统一内容主库。
 - `resolve_content_db_path(db_path)`：把旧的平铺 `database/*.db` 路径解析到统一内容主库路径。
+- `load_author_entities_df(db_path)`：读取 `作者表`。
+- `load_literature_author_links_df(db_path)`：读取 `文献作者关联`。
+- `sync_author_entities_from_literature_rows(db_path, literature_df, replace_link_scope=None)`：根据文献作者串直接维护作者事实表与作者关系表。
 - `load_knowledge_literature_links_df(db_path)`：读取知识-文献关系表。
 - `load_knowledge_evidence_links_df(db_path)`：读取知识证据关系表。
+- `backfill_content_relationships(db_path)`：对历史知识关系执行非破坏式 repair/upsert。
 
 本轮新增的结构化/分块状态接口：
 
 - `load_chunk_sets_df(db_path)`：读取 `literature_chunk_sets` 批次索引表。
 - `load_chunks_df(db_path)`：读取 `literature_chunks` 明细索引表。
-- `save_structured_state(db_path, ..., uid_literature=...)`：按文献 UID 回写 `structured_*` 状态字段。
-- `get_structured_state(db_path, uid_literature)`：读取单篇文献的结构化状态。
+- `save_structured_state(db_path, ..., uid_文献=...)`：按文献 UID 回写 `structured_*` 状态字段。
+- `get_structured_state(db_path, uid_文献)`：读取单篇文献的结构化状态。
 - `replace_chunk_set_records(db_path, chunk_set_row=..., chunk_rows=...)`：按 `chunks_uid` 整批替换 chunk 批次与 chunk 明细。
 
 新增字段约定（`literatures` 主表）：
@@ -929,7 +1220,7 @@ if repair_result["status"] == "PASS":
 新增表约定：
 
 - `literature_chunk_sets`：记录一批 chunk 的 manifest 级元数据，核心字段包括 `chunks_uid`、`chunks_abs_path`、`source_scope`、`source_backend`、`chunk_count`、`source_doc_count`。
-- `literature_chunks`：记录单个 chunk 的索引信息，核心字段包括 `chunk_id`、`chunks_uid`、`uid_literature`、`cite_key`、`shard_abs_path`、`chunk_index`、`chunk_type`、`char_start`、`char_end`、`text_length`。
+- `literature_chunks`：记录单个 chunk 的索引信息，核心字段包括 `chunk_id`、`chunks_uid`、`uid_文献`、`cite_key`、`shard_abs_path`、`chunk_index`、`chunk_type`、`char_start`、`char_end`、`text_length`。
 
 新增 structured/chunk 工具：
 
@@ -956,13 +1247,13 @@ if repair_result["status"] == "PASS":
 - `knowledge_sync_note(index_table, note_path, workspace_root=None)`：从 Markdown frontmatter 解析并同步知识索引。
 - `knowledge_note_register(note_path, title, ...)`：创建带标准 frontmatter 的知识笔记并返回索引记录。
 - `knowledge_note_validate_obsidian(note_path)`：校验 Obsidian 笔记 frontmatter 是否符合 004 契约。
-- `knowledge_bind_literature_standard_note(note_path, uid_literature, ...)`：将知识笔记绑定为文献标准笔记。
+- `knowledge_bind_literature_standard_note(note_path, uid_文献, ...)`：将知识笔记绑定为文献标准笔记。
 - `knowledge_base_generate(views_dir)`：生成知识库视图模板（`knowledge_index.base`、`literature_notes.base`）。
 - `knowledge_index_sync_from_note(index_table, note_path, workspace_root=None)`：`knowledge_sync_note` 的兼容包装接口。
-- `knowledge_attachment_register(index_table, attachments_table, uid_knowledge, attachment_name, ...)`：`knowledge_attach_file` 的兼容包装接口。
-- `knowledge_attach_file(index_table, attachments_table, uid_knowledge, attachment_name, ...)`：维护知识附件关系。
-- `knowledge_get(index_table, attachments_table, uid_knowledge)`：读取单条知识记录及其附件集合。
-- `knowledge_find_by_literature(index_table, uid_literature='', cite_key='', note_type='')`：按文献绑定信息查找知识笔记。
+- `knowledge_attachment_register(index_table, attachments_table, uid_知识, attachment_name, ...)`：`knowledge_attach_file` 的兼容包装接口。
+- `knowledge_attach_file(index_table, attachments_table, uid_知识, attachment_name, ...)`：维护知识附件关系。
+- `knowledge_get(index_table, attachments_table, uid_知识)`：读取单条知识记录及其附件集合。
+- `knowledge_find_by_literature(index_table, uid_文献='', cite_key='', note_type='')`：按文献绑定信息查找知识笔记。
 
 时间元数据约定：
 
@@ -979,27 +1270,27 @@ if repair_result["status"] == "PASS":
 
 字段约定（知识索引表）：
 
-- 标识：`uid_knowledge`、`id`
+- 标识：`uid_知识`、`id`
 - 笔记：`note_name`、`note_path`、`note_type`、`title`、`status`
 - 元数据：`tags`、`aliases`、`source_type`、`evidence_uids`
-- 文献绑定：`uid_literature`、`cite_key`
+- 文献绑定：`uid_文献`、`cite_key`
 - 关系：`attachment_uids`
 
 跨域关系表约定：
 
-- `knowledge_literature_links`：知识笔记与文献对象之间的显式关系表；当前至少包含 `uid_knowledge`、`uid_literature`、`relation_type`、`is_primary`、`cite_key`、`source_field`。
-- `knowledge_evidence_links`：知识笔记的证据链接表；当前至少包含 `uid_knowledge`、`evidence_type`、`target_uid`、`evidence_role`、`source_field`。
-- `knowledge_index.uid_literature`、`knowledge_index.evidence_uids` 仍保留为兼容缓存字段，但跨域事实源已收敛到上述关系表。
+- `knowledge_literature_links`：知识笔记与文献对象之间的显式关系表；当前至少包含 `uid_知识`、`uid_文献`、`relation_type`、`is_primary`、`cite_key`、`source_field`。
+- `knowledge_evidence_links`：知识笔记的证据链接表；当前至少包含 `uid_知识`、`evidence_type`、`target_uid`、`evidence_role`、`source_field`。
+- `knowledge_index.uid_文献`、`knowledge_index.evidence_uids` 仍保留为兼容缓存字段，但跨域事实源已收敛到上述关系表。
 
 校验规则（`knowledge_note_validate_obsidian`）：
 
-- 必填键：`uid_knowledge`、`title`、`note_type`、`status`
-- `uid_knowledge` 必须是字符串；`evidence_uids` 必须是列表
-- 当 `note_type=literature_standard_note` 时，必须提供 `uid_literature`
+- 必填键：`uid_知识`、`title`、`note_type`、`status`
+- `uid_知识` 必须是字符串；`evidence_uids` 必须是列表
+- 当 `note_type=literature_standard_note` 时，必须提供 `uid_文献`
 
 字段约定（知识附件表）：
 
-- 标识：`uid_attachment`、`uid_knowledge`、`id`
+- 标识：`uid_附件`、`uid_知识`、`id`
 - 文件：`attachment_name`、`attachment_type`、`file_ext`
 - 路径：`storage_path`、`source_path`
 - 管理：`checksum`、`status`
@@ -1021,26 +1312,26 @@ if repair_result["status"] == "PASS":
 - `init_empty_task_literature_bindings_table()`：初始化任务-文献绑定明细表。
 - `init_empty_task_knowledge_bindings_table()`：初始化任务-知识绑定明细表。
 - `task_create_or_update(tasks, task, workspace_root=None, overwrite=True, ensure_workspace_dir=True)`：创建或更新任务主表记录。
-- `task_status_append(status_log, aok_task_uid, status, ...)`：追加任务状态流转日志。
-- `task_gate_decision_record(gate_decisions, aok_task_uid, gate_uid, decision, ...)`：登记闸门决策。
-- `task_handoff_record(handoffs, from_task_uid, to_task_uid, ...)`：登记任务交接。
-- `task_relation_upsert(relations, source_task_uid, target_task_uid, relation_type, ...)`：维护任务之间的关系。
-- `task_round_snapshot_register(round_views, aok_task_uid, round_uid, ...)`：登记轮次快照与对应视图。
-- `task_release_register(releases, aok_task_uid, release_name, ...)`：登记阶段发布物。
-- `task_release_promote(releases, aok_task_uid, release_uid, ...)`：把发布记录提升为目标状态。
-- `task_literature_binding_register(bindings, aok_task_uid, uid_literature, ...)`：登记任务与文献的单条绑定事实。
-- `task_knowledge_binding_register(bindings, aok_task_uid, uid_knowledge, ...)`：登记任务与知识的单条绑定事实。
-- `task_bind_literatures(tasks, aok_task_uid, literature_uids, validate_exists=None)`：绑定文献 UID 列表。
-- `task_bind_knowledges(tasks, aok_task_uid, knowledge_uids, validate_exists=None)`：绑定知识 UID 列表。
-- `task_artifact_register(tasks, artifacts, aok_task_uid, artifact_name, artifact_type, artifact_path, ...)`：登记任务产物。
-- `task_bundle_export(artifacts, aok_task_uid, output_dir)`：导出任务产物集合。
-- `task_get(tasks, artifacts, aok_task_uid)`：读取任务详情与产物列表。
+- `task_status_append(status_log, uid_任务, status, ...)`：追加任务状态流转日志。
+- `task_gate_decision_record(gate_decisions, uid_任务, uid_闸门, decision, ...)`：登记闸门决策。
+- `task_handoff_record(handoffs, uid_来源任务, uid_目标任务, ...)`：登记任务交接。
+- `task_relation_upsert(relations, uid_来源任务, uid_目标任务, relation_type, ...)`：维护任务之间的关系。
+- `task_round_snapshot_register(round_views, uid_任务, uid_轮次快照, ...)`：登记轮次快照与对应视图。
+- `task_release_register(releases, uid_任务, release_name, ...)`：登记阶段发布物。
+- `task_release_promote(releases, uid_任务, uid_发布, ...)`：把发布记录提升为目标状态。
+- `task_literature_binding_register(bindings, uid_任务, uid_文献, ...)`：登记任务与文献的单条绑定事实。
+- `task_knowledge_binding_register(bindings, uid_任务, uid_知识, ...)`：登记任务与知识的单条绑定事实。
+- `task_bind_literatures(tasks, uid_任务, 文献UID列表, validate_exists=None)`：绑定文献 UID 列表。
+- `task_bind_knowledges(tasks, uid_任务, 知识UID列表, validate_exists=None)`：绑定知识 UID 列表。
+- `task_artifact_register(tasks, artifacts, uid_任务, artifact_name, artifact_type, artifact_path, ...)`：登记任务产物。
+- `task_bundle_export(artifacts, uid_任务, output_dir)`：导出任务产物集合。
+- `task_get(tasks, artifacts, uid_任务)`：读取任务详情与产物列表。
 - `bootstrap_aok_taskdb(project_root='.', tasks_db_root=None, tasks_workspace_root=None)`：初始化 AOK 任务数据库骨架，支持显式指定元数据目录与任务工作区目录。
 - `validate_aok_taskdb(project_root='.', tasks_db_root=None, tasks_workspace_root=None, references_db=None, knowledge_db=None)`：校验 AOK 任务数据库一致性。默认使用统一内容主库 `database/content/content.db`；若显式传参，`references_db` 与 `knowledge_db` 可继续作为兼容入口，并解析到同一内容主库路径。
 
 字段约定（任务主表）：
 
-- 标识：`aok_task_uid`
+- 标识：`uid_任务`
 - 基本信息：`task_name`、`task_goal`、`task_status`
 - 目录：`workspace_dir`
 - 引用关系：`literature_uids`、`knowledge_uids`
@@ -1048,7 +1339,7 @@ if repair_result["status"] == "PASS":
 
 字段约定（任务产物表）：
 
-- 关联：`aok_task_uid`
+- 关联：`uid_任务`
 - 描述：`artifact_name`、`artifact_type`
 - 路径：`artifact_path`
 - 说明：`note`
@@ -1056,14 +1347,14 @@ if repair_result["status"] == "PASS":
 
 字段约定（新增扩展表）：
 
-- 状态日志表：`aok_task_uid`、`status`、`reason`、`operator`、`created_at`
-- 闸门决策表：`aok_task_uid`、`gate_uid`、`decision`、`score`、`note`、`created_at`
-- 任务交接表：`from_task_uid`、`to_task_uid`、`handoff_type`、`note`、`created_at`
-- 任务关系表：`source_task_uid`、`target_task_uid`、`relation_type`、`note`、`updated_at`
-- 轮次快照表：`aok_task_uid`、`round_uid`、`round_name`、`view_path`、`created_at`
-- 发布表：`aok_task_uid`、`release_uid`、`release_name`、`release_type`、`release_path`、`status`、`created_at`、`updated_at`
-- 任务-文献绑定表：`aok_task_uid`、`uid_literature`、`binding_type`、`created_at`
-- 任务-知识绑定表：`aok_task_uid`、`uid_knowledge`、`binding_type`、`created_at`
+- 状态日志表：`uid_任务`、`status`、`reason`、`operator`、`created_at`
+- 闸门决策表：`uid_任务`、`uid_闸门`、`decision`、`score`、`note`、`created_at`
+- 任务交接表：`uid_来源任务`、`uid_目标任务`、`handoff_type`、`note`、`created_at`
+- 任务关系表：`uid_来源任务`、`uid_目标任务`、`relation_type`、`note`、`updated_at`
+- 轮次快照表：`uid_任务`、`uid_轮次快照`、`round_name`、`view_path`、`created_at`
+- 发布表：`uid_任务`、`uid_发布`、`release_name`、`release_type`、`release_path`、`status`、`created_at`、`updated_at`
+- 任务-文献绑定表：`uid_任务`、`uid_文献`、`binding_type`、`created_at`
+- 任务-知识绑定表：`uid_任务`、`uid_知识`、`binding_type`、`created_at`
 
 说明：
 
@@ -1086,20 +1377,20 @@ if repair_result["status"] == "PASS":
 - `ledger_get_snapshot_by_task_uid(workspace_root, *, task_uid, ledger_db_path=None) -> dict | None`：按 `task_uid` 查询最近一次快照与运行记录。
 - `git_workspace_init(workspace_root, *, branch='main') -> dict`：在 workspace 下初始化本地 Git 仓库（不 push）。
 - `git_create_snapshot_for_task(workspace_root, *, task_uid, workflow_uid, node_code, gate_code, commit_message=None, tag_name=None, includes_attachments=False, ledger_db_path=None) -> dict`：执行 `git add -A`、`git commit`、`git tag`，并把快照写入账本与日志摘要。返回结构包含 `status`, `git_snapshot`, `summary_path`, `commit_hash`。
-- `git_rollback_by_task_uid(workspace_root, *, source_task_uid, target_task_uid, mode='preview', ledger_db_path=None) -> dict`：按目标 `task_uid` 查到 commit hash 并登记回滚计划（`mode='preview'` 时仅登记，不执行实际回滚）。
+- `git_rollback_by_task_uid(workspace_root, *, source_task_uid, target_task_uid, mode='preview', ledger_db_path=None) -> dict`：按目标 `target_task_uid` 查到 commit hash 并登记回滚计划（`mode='preview'` 时仅登记，不执行实际回滚）。
 
 快照与账本产物位置：
 
 - 账本（SQLite）：`workspace_root/database/tasks/tasks.db`（可通过 `ledger_db_path` 覆盖）。
-- 快照 summary（JSON）：`workspace_root/logs/git_snapshots/{task_uid}.json`。
-- Tag 命名约定：`aok/task/{task_uid}`（默认由 `git_create_snapshot_for_task` 生成）。
+- 快照 summary（JSON）：`workspace_root/logs/git_snapshots/{uid_任务}.json`。
+- Tag 命名约定：`aok/task/{uid_任务}`（默认由 `git_create_snapshot_for_task` 生成）。
 
 使用约束与注意事项：
 
 - 本模块仅作本地记录与协助决策之用，不会自动 push 到远端仓库；tag 也只存在于本地仓库。
 - `git_rollback_by_task_uid` 当前只登记回滚计划或完成记录，不执行 `git reset`/checkout 等破坏性操作；实际恢复需人工审计并在安全流程下运行回滚命令。
 - 为避免在无全局 git config 的环境中提交失败，模块会为 subprocess 设置默认的 `GIT_AUTHOR_*`/`GIT_COMMITTER_*` 环境变量；CI 可显式设置全局 config 或允许默认值。
-- `.gitignore` 默认只忽略运行态日志数据库 `database/logs/aok_log.db`；其余 workspace 内容默认纳入 Git 管理，包括附件与产物。
+- `.gitignore` 默认只忽略运行态日志数据库 `database/logs/log.db`；其余 workspace 内容默认纳入 Git 管理，包括附件与产物。
 
 最小使用示例：
 
@@ -1207,12 +1498,15 @@ print(preview)
 
 ### 3.3 AOB 常用事务（新增）
 
-- `AOB一键安装部署`
-  - 入口：`autodokit/affairs/AOB一键安装部署/affair.py`
-  - 固定输出：`aob_one_click_deploy_result.json`
-- `AOB一键办公区转换`
-  - 入口：`autodokit/affairs/AOB一键办公区转换/affair.py`
-  - 固定输出：`aob_workspace_convert_result.json`
+- `AOB统一业务事务`
+  - 入口：`autodokit/affairs/AOB统一业务事务/affair.py`
+  - 固定输出：`aob_business_result.json`
+  - 分派方式：通过 `mode` 字段统一调度 10 个 AOB 原子 tool
+  - 支持模式：`validate_content`、`sync_items`、`aggregate_user_content`、`publish_user_content`、`backup_user_content`、`update_user_content`、`import_external_templates`、`convert_workspace`、`deploy_workflow`、`check_opencode_deploy_regression`
+  - 用户内容四种模式共享 `scopes` 与 `project_dirs` 参数；`project_dirs` 为空时默认只自动发现 `user` 范围。
+  - `convert_workspace` 额外支持：`canonical_dump_path`、`validation_report_path`、`allow_downgrade`、`target_capability_mode`
+  - `convert_workspace` 结果会额外包含：`source_workspace_dir`、`target_workspace_dir`、`stats`、`warnings`、`blocking_errors`、`gating_errors`、`capability_report`
+  - `deploy_workflow` 可直接接收 `engine_ids=["opencode", "claude", "copilot", "gemini", "codex"]`，并在 workflow dry-run/install 中生成对应壳子、配置模板与项目级规则文件。
 
 | 字段 | 类型 | 必填 | 说明 |
 | --- | --- | --- | --- |
@@ -1317,7 +1611,7 @@ print(outputs)
 | 字段 | 类型 | 必填 | 说明 |
 | --- | --- | --- | --- |
 | `output_dir` | `str` | 是 | 输出目录绝对路径。 |
-| `uid` / `uid_literature` | `str` | 否 | 目标文献 UID。 |
+| `uid` / `uid_文献` | `str` | 否 | 目标文献 UID。 |
 | `doc_id` | `str` | 否 | 目标文献 doc_id，提供时优先。 |
 | `input_structured_json` | `str` | 否 | 单篇 `structured.json` 绝对路径。 |
 | `input_structured_dir` | `str` | 否 | 结构化目录绝对路径。 |
@@ -1482,7 +1776,7 @@ print(outputs)
 
 以下两个事务本轮未新增复杂配置字段，但公开行为已同步调整：
 
-- `候选文献视图构建`：若 `literatures.structured_abs_path` 指向的文件存在，优先从 structured JSON 提取 `reference_lines` 与 `reference_line_details`，不再重复读取 PDF。
+- `候选文献视图构建`：若 `文献主表.结构化正文路径` 指向的文件存在，优先从 structured JSON 提取 `reference_lines` 与 `reference_line_details`，不再重复读取 PDF。
 - `综述研读与研究地图生成`：优先调用 `extract_review_state_from_structured_file(...)` 生成 review state；默认文献主库路径按 `database/content/content.db` 契约解析。
 
 ## 4. 不再由本仓提供的接口
@@ -1531,7 +1825,7 @@ print(outputs)
 
 主要子命令：
 
-- `write-log`：把一段文本写入 AOK 日志数据库（`workspace/database/logs/aok_log.db`），可通过 `--message` 传入字符串，或 `--message-file` 指定文件，或从标准输入读取。
+- `write-log`：把一段文本写入 AOK 日志数据库（`workspace/database/logs/log.db`），可通过 `--message` 传入字符串，或 `--message-file` 指定文件，或从标准输入读取。
   - 典型示例：
     - `python tools/aok_tool/aok.py write-log --workspace workspace --message "已完成 A080，准备启动 A090"`
     - `python tools/aok_tool/aok.py write-log --workspace workspace --message-file ./notes/summary.txt`
@@ -1557,5 +1851,6 @@ print(outputs)
 若需把该工具注册为可执行模块（`python -m tools.aok_tool.aok` 或打包后 `pip install -e .`），可在仓库级 packaging/CI 中加入对应条目。
 
 --
+
 
 

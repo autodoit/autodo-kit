@@ -7,6 +7,7 @@ from typing import Any
 from autodokit.tools.online_retrieval_literatures.catalogs import source_family
 from autodokit.tools.online_retrieval_literatures.executors.content_portal_cnki import execute_cnki_single_download
 from autodokit.tools.online_retrieval_literatures.executors.content_portal_spis import execute_spis_single_download
+from autodokit.tools.online_retrieval_literatures.executors.deepxiv_platform import execute_deepxiv_single_download
 from autodokit.tools.online_retrieval_literatures.executors.open_platform import execute_open_single_download
 from autodokit.tools.online_retrieval_literatures.orchestrators.input_normalizer import resolve_content_portal_entries, resolve_en_batch_records
 
@@ -42,6 +43,8 @@ def run_download(payload: dict[str, Any], *, source: str, mode: str, request_pro
             if source == "spis":
                 return execute_spis_single_download(payload, request_profile=request_profile)
         if family == "open_platform":
+            if source == "deepxiv":
+                return execute_deepxiv_single_download(payload)
             return execute_open_single_download(payload)
         raise ValueError(f"single download 不支持的来源: source={source}")
 
@@ -88,7 +91,10 @@ def run_download(payload: dict[str, Any], *, source: str, mode: str, request_pro
             for record_payload in seed_records:
                 single_payload = dict(payload)
                 single_payload["record"] = record_payload
-                result = execute_open_single_download(single_payload)
+                if source == "deepxiv":
+                    result = execute_deepxiv_single_download(single_payload)
+                else:
+                    result = execute_open_single_download(single_payload)
                 records.append(
                     {
                         "title": str(record_payload.get("title") or ""),

@@ -395,7 +395,7 @@ def test_init_content_db_should_auto_migrate_legacy_schema(tmp_path: Path) -> No
     with sqlite3.connect(content_db) as conn:
         conn.execute(
             """
-            CREATE TABLE literatures (
+            CREATE TABLE "文献主表" (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 uid_literature TEXT UNIQUE,
                 cite_key TEXT,
@@ -415,7 +415,7 @@ def test_init_content_db_should_auto_migrate_legacy_schema(tmp_path: Path) -> No
             """
         )
         conn.execute(
-            "INSERT INTO literatures (uid_literature, cite_key, title, created_at, updated_at) VALUES (?, ?, ?, ?, ?)",
+            'INSERT INTO "文献主表" (uid_literature, cite_key, title, created_at, updated_at) VALUES (?, ?, ?, ?, ?)',
             ("lit-legacy-001", "legacy_001", "Legacy Paper", "2026-04-02T00:00:00+00:00", "2026-04-02T00:00:00+00:00"),
         )
         conn.commit()
@@ -425,7 +425,7 @@ def test_init_content_db_should_auto_migrate_legacy_schema(tmp_path: Path) -> No
     with sqlite3.connect(content_db) as conn:
         literature_columns = {
             row[1]
-            for row in conn.execute("PRAGMA table_info(literatures)")
+            for row in conn.execute('PRAGMA table_info("文献主表")')
         }
         table_names = {
             row[0]
@@ -440,7 +440,7 @@ def test_init_content_db_should_auto_migrate_legacy_schema(tmp_path: Path) -> No
             for row in conn.execute("SELECT name FROM sqlite_master WHERE type='index'")
         }
         migrated_row = conn.execute(
-            "SELECT uid_literature, cite_key, title FROM literatures WHERE uid_literature = ?",
+            'SELECT uid_literature, cite_key, title FROM "文献主表" WHERE uid_literature = ?',
             ("lit-legacy-001",),
         ).fetchone()
 
@@ -450,12 +450,12 @@ def test_init_content_db_should_auto_migrate_legacy_schema(tmp_path: Path) -> No
     assert "structured_status" in literature_columns
     assert "structured_backend" in literature_columns
     assert "structured_abs_path" in literature_columns
-    assert "literature_reading_queue" in table_names
-    assert "literature_reading_state" in table_names
-    assert "literature_parse_assets" in table_names
-    assert "阅读状态总视图" in view_names
-    assert "待预处理文献清单" in view_names
-    assert "待批判性研读文献清单" in view_names
+    assert "文献流程状态" in table_names
+    assert "文献解析资产" in table_names
+    assert "工作区节点状态" in table_names
+    assert "文献流程状态总视图" in view_names
+    assert "工作流总览视图" in view_names
+    assert "待处理文献流程清单" in view_names
     assert "idx_lit_a05_rank" in index_names
-    assert "idx_reading_state_preprocess" in index_names
+    assert "idx_flow_state_stage" in index_names
     assert "idx_parse_asset_lit_level" in index_names

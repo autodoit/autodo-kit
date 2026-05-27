@@ -1,109 +1,74 @@
+# -*- coding: utf-8 -*-
 """AOK SQLite 日志数据库工具。"""
 
 from __future__ import annotations
 
-from datetime import datetime
 import json
-from pathlib import Path
 import shutil
 import sqlite3
-from typing import Any, Dict, List, Sequence, Tuple
+from pathlib import Path
+from typing import Any, Dict, List, Sequence
 from uuid import uuid4
 
-from ...time_utils import now_compact, now_iso
+from ...time_utils import now_iso
 
 
 DEFAULT_AOK_LOG_DB_FILENAME = "aok_log.db"
+LOG_EVENT_TABLE_NAME = "运行事件"
+LOG_ARTIFACT_TABLE_NAME = "运行产物"
+GATE_REVIEW_TABLE_NAME = "闸门审查"
 DEFAULT_AOK_LOG_EVENT_COLUMNS: List[str] = [
-    "event_uid",
-    "event_type",
-    "level",
-    "handler_kind",
-    "handler_name",
-    "model_name",
-    "skill_names_json",
-    "agent_names_json",
-    "read_files_json",
-    "script_path",
-    "third_party_tool",
-    "reasoning_summary",
-    "conversation_excerpt",
-    "payload_json",
-    "created_at",
+    "uid_事件",
+    "事件类型",
+    "级别",
+    "处理器类型",
+    "处理器名称",
+    "模型名称",
+    "技能列表",
+    "智能体列表",
+    "读取文件列表",
+    "脚本路径",
+    "第三方工具",
+    "推理摘要",
+    "对话摘录",
+    "载荷",
+    "创建时间",
 ]
 
 DEFAULT_AOK_REQUIRED_TABLE_COLUMNS: Dict[str, List[str]] = {
-    "log_events": DEFAULT_AOK_LOG_EVENT_COLUMNS,
-    "log_artifacts": [
-        "artifact_uid",
-        "affair_code",
-        "artifact_type",
-        "file_path",
-        "file_role",
-        "produced_by_event_uid",
-        "created_at",
+    LOG_EVENT_TABLE_NAME: DEFAULT_AOK_LOG_EVENT_COLUMNS,
+    LOG_ARTIFACT_TABLE_NAME: [
+        "uid_产物",
+        "事务编码",
+        "产物类型",
+        "文件路径",
+        "文件角色",
+        "uid_产出事件",
+        "创建时间",
     ],
-    "gate_reviews": [
-        "review_uid",
-        "gate_code",
-        "affair_code",
-        "reviewer_agent",
-        "review_summary",
-        "decision_candidates_json",
-        "payload_json",
-        "created_at",
-    ],
-    "human_decisions": [
-        "decision_uid",
-        "gate_code",
-        "affair_code",
-        "decision",
-        "rationale",
-        "operator_name",
-        "payload_json",
-        "created_at",
+    GATE_REVIEW_TABLE_NAME: [
+        "uid_审查",
+        "闸门编码",
+        "事务编码",
+        "审阅智能体",
+        "审查摘要",
+        "候选动作列表",
+        "载荷",
+        "创建时间",
     ],
 }
 
 
-def _resolve_path_from_base(base: Path, raw_path: str | Path) -> Path:
-    """基于 base 解析路径。"""
+def _stringify(value: Any) -> str:
+    return "" if value is None else str(value).strip()
 
+
+def _resolve_path_from_base(base: Path, raw_path: str | Path) -> Path:
     raw = Path(raw_path)
     return raw.resolve() if raw.is_absolute() else (base / raw).resolve()
 
 
-def resolve_workspace_logs_dir(
-    workspace_root: str | Path,
-    *,
-    config_path: str | Path | None = None,
-) -> Path:
-    """解析 workspace/logs 目录。"""
-
-    resolved_workspace_root = Path(workspace_root).resolve()
-    resolved_config_path: Path | None = None
-    if config_path is not None:
-        candidate = Path(config_path)
-        if candidate.exists() and candidate.is_file():
-            resolved_config_path = candidate
-    else:
-        candidate = resolved_workspace_root / "config" / "config.json"
-        if candidate.exists() and candidate.is_file():
-            resolved_config_path = candidate
-
-    if resolved_config_path is not None:
-        payload = _load_global_config_payload(resolved_config_path)
-        path_cfg = payload.get("paths") if isinstance(payload.get("paths"), dict) else {}
-        raw_logs_dir = _stringify(path_cfg.get("logs_dir"))
-        if raw_logs_dir:
-            return _resolve_path_from_base(resolved_workspace_root, raw_logs_dir)
-
-    return (resolved_workspace_root / "logs").resolve()
-
-
 def _load_global_config_payload(config_path: Path) -> Dict[str, Any]:
-    """读取全局配置 JSON 负载。"""
-
     try:
         payload = json.loads(config_path.read_text(encoding="utf-8-sig"))
     except Exception:
@@ -111,21 +76,11 @@ def _load_global_config_payload(config_path: Path) -> Dict[str, Any]:
     return payload if isinstance(payload, dict) else {}
 
 
-def resolve_aok_log_db_path(
+def resolve_workspace_logs_dir(
     workspace_root: str | Path,
     *,
     config_path: str | Path | None = None,
 ) -> Path:
-    """解析 AOK 日志数据库文件路径。
-
-    Args:
-        workspace_root: 工作区根目录。
-        config_path: 可选全局配置文件路径。
-
-    Returns:
-        绝对日志数据库文件路径。
-    """
-
     resolved_workspace_root = Path(workspace_root).resolve()
     resolved_config_path: Path | None = None
     if config_path is not None:
@@ -139,11 +94,35 @@ def resolve_aok_log_db_path(
 
     if resolved_config_path is not None:
         payload = _load_global_config_payload(resolved_config_path)
-        path_cfg = payload.get("paths") if isinstance(payload.get("paths"), dict) else {}
-        raw_log_db_path = _stringify(path_cfg.get("log_db_path"))
+        paths = payload.get("paths") if isinstance(payload.get("paths"), dict) else {}
+        raw_logs_dir = _stringify(paths.get("logs_dir"))
+        if raw_logs_dir:
+            return _resolve_path_from_base(resolved_workspace_root, raw_logs_dir)
+    return (resolved_workspace_root / "logs").resolve()
+
+
+def resolve_aok_log_db_path(
+    workspace_root: str | Path,
+    *,
+    config_path: str | Path | None = None,
+) -> Path:
+    resolved_workspace_root = Path(workspace_root).resolve()
+    resolved_config_path: Path | None = None
+    if config_path is not None:
+        candidate = Path(config_path)
+        if candidate.exists() and candidate.is_file():
+            resolved_config_path = candidate
+    else:
+        candidate = resolved_workspace_root / "config" / "config.json"
+        if candidate.exists() and candidate.is_file():
+            resolved_config_path = candidate
+
+    if resolved_config_path is not None:
+        payload = _load_global_config_payload(resolved_config_path)
+        paths = payload.get("paths") if isinstance(payload.get("paths"), dict) else {}
+        raw_log_db_path = _stringify(paths.get("log_db_path"))
         if raw_log_db_path:
             return _resolve_path_from_base(resolved_workspace_root, raw_log_db_path)
-
     return (resolved_workspace_root / "database" / "logs" / DEFAULT_AOK_LOG_DB_FILENAME).resolve()
 
 
@@ -152,28 +131,7 @@ def _resolve_logdb_root(
     *,
     logs_db_root: str | Path | None = None,
     log_db_path: str | Path | None = None,
-) -> Tuple[Path, Path, Path]:
-    """解析日志数据库路径。
-
-    Args:
-        project_root: 项目根目录。
-        logs_db_root: 自定义日志数据库目录。
-        log_db_path: 自定义日志数据库文件路径。
-
-    Returns:
-        `(项目根目录, 日志目录, 日志数据库文件路径)`。
-
-    Raises:
-        OSError: 路径解析失败时抛出底层异常。
-
-    Examples:
-        >>> _, root, db = _resolve_logdb_root('.')
-        >>> root.name == 'logs'
-        True
-        >>> db.name
-        'aok_log.db'
-    """
-
+) -> tuple[Path, Path, Path]:
     root = Path(project_root).resolve()
     if log_db_path is not None:
         resolved_db_path = _resolve_path_from_base(root, log_db_path)
@@ -187,201 +145,63 @@ def _resolve_logdb_root(
     return root, resolved_logdb_root, resolved_db_path
 
 
-def _validate_logdb_path_shapes(logdb_root: Path, db_path: Path) -> List[str]:
-    """校验日志目录与数据库文件路径形态。"""
-
-    errors: List[str] = []
-    if logdb_root.exists() and not logdb_root.is_dir():
-        errors.append(f"日志目录路径不是目录: {logdb_root}")
-    if db_path.exists() and db_path.is_dir():
-        errors.append(f"日志数据库文件路径当前是目录: {db_path}")
-    return errors
-
-
-def _build_logdb_blocked_result(
-    *,
-    reason: str,
-    logdb_root: Path,
-    db_path: Path,
-    errors: Sequence[str] | None = None,
-    warnings: Sequence[str] | None = None,
-) -> Dict[str, Any]:
-    """构造日志系统 BLOCKED 结果。"""
-
-    normalized_errors = list(errors or [])
-    normalized_warnings = list(warnings or [])
-    return {
-        "status": "BLOCKED",
-        "reason": reason,
-        "logdb_root": str(logdb_root),
-        "db_path": str(db_path),
-        "created_files": [],
-        "created_tables": [],
-        "errors": normalized_errors,
-        "warnings": normalized_warnings,
-        "error_count": len(normalized_errors),
-        "warning_count": len(normalized_warnings),
-    }
-
-
-def _utc_now_iso() -> str:
-    """返回 ISO 时间（默认北京时间）。"""
-
-    return now_iso()
-
-
-def _stringify(value: Any) -> str:
-    """安全转换为字符串。"""
-
-    if value is None:
-        return ""
-    return str(value).strip()
-
-
-def _normalize_string_list(values: Sequence[str] | str | None) -> List[str]:
-    """把字符串序列归一化为去重列表。"""
-
-    if values is None:
-        return []
-    if isinstance(values, str):
-        raw = values.replace(",", "|").replace("；", "|").replace(";", "|").split("|")
-    else:
-        raw = list(values)
-
-    result: List[str] = []
-    seen: set[str] = set()
-    for item in raw:
-        normalized = _stringify(item)
-        if not normalized or normalized in seen:
-            continue
-        seen.add(normalized)
-        result.append(normalized)
-    return result
-
-
-def _safe_json_dumps(value: Any) -> str:
-    """安全序列化 JSON。"""
-
-    try:
-        return json.dumps(value, ensure_ascii=False)
-    except TypeError:
-        return "{}"
-
-
-def _write_workspace_log_exports(
-    *,
-    workspace_root: Path,
-    record: Dict[str, Any],
-    gate_review: Dict[str, Any] | None = None,
-    gate_review_path: str | Path | None = None,
-) -> Dict[str, str]:
-    """把事件与 gate 审计镜像到 workspace/logs。"""
-
-    logs_dir = resolve_workspace_logs_dir(workspace_root)
-    exports_dir = logs_dir / "exports"
-    reviews_dir = logs_dir / "reviews"
-    exports_dir.mkdir(parents=True, exist_ok=True)
-    reviews_dir.mkdir(parents=True, exist_ok=True)
-
-    event_uid = _stringify(record.get("event_uid")) or f"event-{uuid4().hex[:12]}"
-    event_path = exports_dir / f"{event_uid}.json"
-    event_path.write_text(json.dumps(record, ensure_ascii=False, indent=2), encoding="utf-8")
-
-    written: Dict[str, str] = {"event_export_path": str(event_path)}
-
-    if gate_review is not None:
-        gate_code = _stringify(gate_review.get("gate_uid") or gate_review.get("gate_code")) or "gate_review"
-        gate_export_path = reviews_dir / f"{gate_code}.json"
-        gate_export_path.write_text(json.dumps(gate_review, ensure_ascii=False, indent=2), encoding="utf-8")
-        written["gate_export_path"] = str(gate_export_path)
-    elif gate_review_path:
-        source_path = Path(gate_review_path).expanduser().resolve()
-        if source_path.exists() and source_path.is_file():
-            gate_export_path = reviews_dir / source_path.name
-            if source_path != gate_export_path:
-                shutil.copy2(source_path, gate_export_path)
-            written["gate_export_path"] = str(gate_export_path)
-
-    return written
-
-
 def _connect_sqlite(db_path: Path) -> sqlite3.Connection:
-    """建立 SQLite 连接。"""
-
+    db_path.parent.mkdir(parents=True, exist_ok=True)
     connection = sqlite3.connect(db_path)
     connection.row_factory = sqlite3.Row
     return connection
 
 
 def _ensure_schema(connection: sqlite3.Connection) -> List[str]:
-    """创建日志数据库 schema。"""
-
     statements = [
-        """
-        CREATE TABLE IF NOT EXISTS log_events (
-            event_uid TEXT PRIMARY KEY,
-            event_type TEXT NOT NULL,
-            level TEXT,
-            handler_kind TEXT,
-            handler_name TEXT,
-            model_name TEXT,
-            skill_names_json TEXT,
-            agent_names_json TEXT,
-            read_files_json TEXT,
-            script_path TEXT,
-            third_party_tool TEXT,
-            reasoning_summary TEXT,
-            conversation_excerpt TEXT,
-            payload_json TEXT,
-            created_at TEXT NOT NULL
+        f'''
+        CREATE TABLE IF NOT EXISTS "{LOG_EVENT_TABLE_NAME}" (
+            uid_事件 TEXT PRIMARY KEY,
+            事件类型 TEXT NOT NULL,
+            级别 TEXT,
+            处理器类型 TEXT,
+            处理器名称 TEXT,
+            模型名称 TEXT,
+            技能列表 TEXT,
+            智能体列表 TEXT,
+            读取文件列表 TEXT,
+            脚本路径 TEXT,
+            第三方工具 TEXT,
+            推理摘要 TEXT,
+            对话摘录 TEXT,
+            载荷 TEXT,
+            创建时间 TEXT NOT NULL
         )
-        """,
-        """
-        CREATE TABLE IF NOT EXISTS log_artifacts (
-            artifact_uid TEXT PRIMARY KEY,
-            affair_code TEXT,
-            artifact_type TEXT,
-            file_path TEXT NOT NULL,
-            file_role TEXT,
-            produced_by_event_uid TEXT,
-            created_at TEXT NOT NULL,
-            FOREIGN KEY(produced_by_event_uid) REFERENCES log_events(event_uid)
+        ''',
+        f'''
+        CREATE TABLE IF NOT EXISTS "{LOG_ARTIFACT_TABLE_NAME}" (
+            uid_产物 TEXT PRIMARY KEY,
+            事务编码 TEXT,
+            产物类型 TEXT,
+            文件路径 TEXT NOT NULL,
+            文件角色 TEXT,
+            uid_产出事件 TEXT,
+            创建时间 TEXT NOT NULL,
+            FOREIGN KEY(uid_产出事件) REFERENCES "{LOG_EVENT_TABLE_NAME}"(uid_事件)
         )
-        """,
-        """
-        CREATE TABLE IF NOT EXISTS gate_reviews (
-            review_uid TEXT PRIMARY KEY,
-            gate_code TEXT NOT NULL,
-            affair_code TEXT,
-            reviewer_agent TEXT,
-            review_summary TEXT,
-            decision_candidates_json TEXT,
-            payload_json TEXT,
-            created_at TEXT NOT NULL
+        ''',
+        f'''
+        CREATE TABLE IF NOT EXISTS "{GATE_REVIEW_TABLE_NAME}" (
+            uid_审查 TEXT PRIMARY KEY,
+            闸门编码 TEXT NOT NULL,
+            事务编码 TEXT,
+            审阅智能体 TEXT,
+            审查摘要 TEXT,
+            候选动作列表 TEXT,
+            载荷 TEXT,
+            创建时间 TEXT NOT NULL
         )
-        """,
-        """
-        CREATE TABLE IF NOT EXISTS human_decisions (
-            decision_uid TEXT PRIMARY KEY,
-            gate_code TEXT NOT NULL,
-            affair_code TEXT,
-            decision TEXT NOT NULL,
-            rationale TEXT,
-            operator_name TEXT,
-            payload_json TEXT,
-            created_at TEXT NOT NULL
-        )
-        """,
-        "CREATE INDEX IF NOT EXISTS idx_log_events_event_type ON log_events(event_type)",
-        "CREATE INDEX IF NOT EXISTS idx_log_events_created_at ON log_events(created_at)",
-        "CREATE INDEX IF NOT EXISTS idx_gate_reviews_gate_code ON gate_reviews(gate_code)",
-        "CREATE INDEX IF NOT EXISTS idx_human_decisions_gate_code ON human_decisions(gate_code)",
+        ''',
     ]
-    created_tables = list(DEFAULT_AOK_REQUIRED_TABLE_COLUMNS.keys())
     with connection:
         for statement in statements:
             connection.execute(statement)
-    return created_tables
+    return [LOG_EVENT_TABLE_NAME, LOG_ARTIFACT_TABLE_NAME, GATE_REVIEW_TABLE_NAME]
 
 
 def create_aok_log_readonly_views(
@@ -389,120 +209,43 @@ def create_aok_log_readonly_views(
     *,
     logs_db_root: str | Path | None = None,
     log_db_path: str | Path | None = None,
-    enabled: bool = True,
 ) -> Dict[str, Any]:
-    """创建日志数据库中文只读视图。
-
-    Args:
-        project_root: 项目根目录。
-        logs_db_root: 自定义日志数据库目录。
-        log_db_path: 自定义日志数据库文件路径。
-        enabled: 是否启用日志系统。
-
-    Returns:
-        Dict[str, Any]: 视图创建结果。
-    """
-
-    _, logdb_root, resolved_db_path = _resolve_logdb_root(
-        project_root=project_root,
-        logs_db_root=logs_db_root,
-        log_db_path=log_db_path,
-    )
-    if not enabled:
-        return {
-            "status": "SKIPPED",
-            "reason": "logging_disabled",
-            "logdb_root": str(logdb_root),
-            "db_path": str(resolved_db_path),
-            "created_views": [],
-        }
-
-    if not resolved_db_path.exists():
-        return {
-            "status": "SKIPPED",
-            "reason": "logdb_not_found",
-            "logdb_root": str(logdb_root),
-            "db_path": str(resolved_db_path),
-            "created_views": [],
-        }
-
+    _, _, db_path = _resolve_logdb_root(project_root, logs_db_root=logs_db_root, log_db_path=log_db_path)
     statements = [
-        """
+        f'''
         CREATE VIEW IF NOT EXISTS "运行事件总览" AS
-        SELECT
-            event_uid AS 事件UID,
-            event_type AS 事件类型,
-            level AS 级别,
-            handler_kind AS 处理器类型,
-            handler_name AS 处理器名称,
-            model_name AS 模型,
-            reasoning_summary AS 摘要,
-            created_at AS 发生时间
-        FROM log_events
-        ORDER BY created_at DESC, event_uid DESC
-        """,
-        """
-        CREATE VIEW IF NOT EXISTS "Gate审计总览" AS
-        SELECT
-            review_uid AS 审计UID,
-            gate_code AS Gate代号,
-            affair_code AS 事务代号,
-            reviewer_agent AS 审阅代理,
-            review_summary AS 审计摘要,
-            decision_candidates_json AS 候选动作,
-            created_at AS 审计时间
-        FROM gate_reviews
-        ORDER BY created_at DESC, review_uid DESC
-        """,
-        """
-        CREATE VIEW IF NOT EXISTS "人工决策总览" AS
-        SELECT
-            decision_uid AS 决策UID,
-            gate_code AS Gate代号,
-            affair_code AS 事务代号,
-            decision AS 人工决策,
-            rationale AS 决策理由,
-            operator_name AS 操作人,
-            created_at AS 决策时间
-        FROM human_decisions
-        ORDER BY created_at DESC, decision_uid DESC
-        """,
-        """
+        SELECT uid_事件 AS 事件UID, 事件类型, 级别, 处理器类型, 处理器名称, 模型名称, 推理摘要, 创建时间
+        FROM "{LOG_EVENT_TABLE_NAME}"
+        ORDER BY 创建时间 DESC, uid_事件 DESC
+        ''',
+        f'''
+        CREATE VIEW IF NOT EXISTS "闸门审计总览" AS
+        SELECT uid_审查 AS 审计UID, 闸门编码, 事务编码, 审阅智能体, 审查摘要, 候选动作列表, 创建时间
+        FROM "{GATE_REVIEW_TABLE_NAME}"
+        ORDER BY 创建时间 DESC, uid_审查 DESC
+        ''',
+        f'''
         CREATE VIEW IF NOT EXISTS "异常事件总览" AS
-        SELECT
-            event_uid AS 事件UID,
-            event_type AS 事件类型,
-            level AS 级别,
-            reasoning_summary AS 摘要,
-            payload_json AS 负载,
-            created_at AS 发生时间
-        FROM log_events
-        WHERE lower(level) IN ('error', 'critical', 'warning')
-           OR lower(event_type) LIKE '%fail%'
-           OR lower(event_type) LIKE '%error%'
-           OR lower(event_type) LIKE '%blocked%'
-        ORDER BY created_at DESC, event_uid DESC
-        """,
+        SELECT uid_事件 AS 事件UID, 事件类型, 级别, 载荷, 创建时间
+        FROM "{LOG_EVENT_TABLE_NAME}"
+        WHERE lower(COALESCE(级别, '')) IN ('error', 'blocked', 'warning', 'critical')
+        ORDER BY 创建时间 DESC, uid_事件 DESC
+        ''',
     ]
-    with _connect_sqlite(resolved_db_path) as connection:
+    with _connect_sqlite(db_path) as connection:
+        _ensure_schema(connection)
         with connection:
             for statement in statements:
                 connection.execute(statement)
     return {
         "status": "PASS",
-        "logdb_root": str(logdb_root),
-        "db_path": str(resolved_db_path),
-        "created_views": ["运行事件总览", "Gate审计总览", "人工决策总览", "异常事件总览"],
+        "db_path": str(db_path),
+        "created_views": ["运行事件总览", "闸门审计总览", "异常事件总览"],
     }
 
 
 def init_empty_log_events_table() -> List[Dict[str, str]]:
-    """返回日志事件逻辑字段定义。"""
-
-    return [
-        {"column_name": column_name, "table_name": "log_events"}
-        for column_name in DEFAULT_AOK_LOG_EVENT_COLUMNS
-    ]
+    return []
 
 
 def bootstrap_aok_logdb(
@@ -510,88 +253,44 @@ def bootstrap_aok_logdb(
     *,
     logs_db_root: str | Path | None = None,
     log_db_path: str | Path | None = None,
-    enabled: bool = True,
 ) -> Dict[str, Any]:
-    """初始化 AOK SQLite 日志数据库。
-
-    Args:
-        project_root: 项目根目录。
-        logs_db_root: 自定义日志数据库目录。
-        log_db_path: 自定义日志数据库文件路径。
-        enabled: 是否启用日志系统。
-
-    Returns:
-        初始化结果字典。
-
-    Raises:
-        OSError: 建库失败时抛出底层异常。
-
-    Examples:
-        >>> result = bootstrap_aok_logdb('.')
-        >>> 'db_path' in result
-        True
-    """
-
-    _, logdb_root, resolved_db_path = _resolve_logdb_root(
-        project_root=project_root,
-        logs_db_root=logs_db_root,
-        log_db_path=log_db_path,
-    )
-    if not enabled:
+    root, resolved_logdb_root, db_path = _resolve_logdb_root(project_root, logs_db_root=logs_db_root, log_db_path=log_db_path)
+    errors: List[str] = []
+    if resolved_logdb_root.exists() and not resolved_logdb_root.is_dir():
+        errors.append(f"日志目录路径不是目录: {resolved_logdb_root}")
+    if db_path.exists() and db_path.is_dir():
+        errors.append(f"日志数据库文件路径当前是目录: {db_path}")
+    if errors:
         return {
-            "status": "SKIPPED",
-            "reason": "logging_disabled",
-            "logdb_root": str(logdb_root),
-            "db_path": str(resolved_db_path),
-            "created_files": [],
+            "status": "BLOCKED",
+            "reason": "invalid_logdb_path_shape",
+            "project_root": str(root),
+            "logdb_root": str(resolved_logdb_root),
+            "db_path": str(db_path),
+            "errors": errors,
+            "warnings": [],
+            "error_count": len(errors),
+            "warning_count": 0,
             "created_tables": [],
+            "created_views": [],
+            "created_files": [],
         }
 
-    shape_errors = _validate_logdb_path_shapes(logdb_root, resolved_db_path)
-    if shape_errors:
-        return _build_logdb_blocked_result(
-            reason="invalid_logdb_path_shape",
-            logdb_root=logdb_root,
-            db_path=resolved_db_path,
-            errors=shape_errors,
-        )
-
-    try:
-        logdb_root.mkdir(parents=True, exist_ok=True)
-    except Exception as exc:
-        return _build_logdb_blocked_result(
-            reason="logdb_root_create_failed",
-            logdb_root=logdb_root,
-            db_path=resolved_db_path,
-            errors=[f"创建日志目录失败: {exc}"],
-        )
-
-    existed_before = resolved_db_path.exists()
-    try:
-        with _connect_sqlite(resolved_db_path) as connection:
-            created_tables = _ensure_schema(connection)
-    except Exception as exc:
-        return _build_logdb_blocked_result(
-            reason="sqlite_bootstrap_failed",
-            logdb_root=logdb_root,
-            db_path=resolved_db_path,
-            errors=[f"初始化日志数据库失败: {exc}"],
-        )
-
-    view_bootstrap = create_aok_log_readonly_views(
-        project_root=project_root,
-        logs_db_root=logs_db_root,
-        log_db_path=resolved_db_path,
-        enabled=enabled,
-    )
-
+    with _connect_sqlite(db_path) as connection:
+        created_tables = _ensure_schema(connection)
+    view_result = create_aok_log_readonly_views(project_root=root, log_db_path=db_path)
     return {
         "status": "PASS",
-        "logdb_root": str(logdb_root),
-        "db_path": str(resolved_db_path),
-        "created_files": [] if existed_before else [str(resolved_db_path)],
+        "project_root": str(root),
+        "logdb_root": str(resolved_logdb_root),
+        "db_path": str(db_path),
+        "created_files": [str(db_path)],
         "created_tables": created_tables,
-        "created_views": view_bootstrap.get("created_views", []),
+        "created_views": view_result["created_views"],
+        "errors": [],
+        "warnings": [],
+        "error_count": 0,
+        "warning_count": 0,
     }
 
 
@@ -600,81 +299,30 @@ def validate_aok_logdb(
     *,
     logs_db_root: str | Path | None = None,
     log_db_path: str | Path | None = None,
-    enabled: bool = True,
 ) -> Dict[str, Any]:
-    """校验 AOK SQLite 日志数据库结构。"""
-
-    _, logdb_root, resolved_db_path = _resolve_logdb_root(
-        project_root=project_root,
-        logs_db_root=logs_db_root,
-        log_db_path=log_db_path,
-    )
+    _, _, db_path = _resolve_logdb_root(project_root, logs_db_root=logs_db_root, log_db_path=log_db_path)
     errors: List[str] = []
     warnings: List[str] = []
-
-    if not enabled:
+    if not db_path.exists() or not db_path.is_file():
+        errors.append(f"日志数据库不存在: {db_path}")
         return {
-            "status": "SKIPPED",
-            "reason": "logging_disabled",
-            "logdb_root": str(logdb_root),
-            "db_path": str(resolved_db_path),
-            "errors": [],
-            "warnings": [],
-            "error_count": 0,
-            "warning_count": 0,
+            "status": "BLOCKED",
+            "db_path": str(db_path),
+            "errors": errors,
+            "warnings": warnings,
+            "error_count": len(errors),
+            "warning_count": len(warnings),
         }
-
-    shape_errors = _validate_logdb_path_shapes(logdb_root, resolved_db_path)
-    errors.extend(shape_errors)
-
-    if not logdb_root.exists():
-        errors.append(f"日志数据库目录不存在: {logdb_root}")
-    if not resolved_db_path.exists():
-        errors.append(f"日志数据库文件不存在: {resolved_db_path}")
-
-    if resolved_db_path.exists() and resolved_db_path.is_file() and not shape_errors:
-        try:
-            connection_cm = _connect_sqlite(resolved_db_path)
-        except Exception as exc:
-            errors.append(f"无法连接日志数据库: {exc}")
-            connection_cm = None
-        if connection_cm is None:
-            return {
-                "status": "BLOCKED",
-                "logdb_root": str(logdb_root),
-                "db_path": str(resolved_db_path),
-                "errors": errors,
-                "warnings": warnings,
-                "error_count": len(errors),
-                "warning_count": len(warnings),
-            }
-
-        with connection_cm as connection:
-            for table_name, required_columns in DEFAULT_AOK_REQUIRED_TABLE_COLUMNS.items():
-                table_exists = connection.execute(
-                    "SELECT name FROM sqlite_master WHERE type='table' AND name = ?",
-                    (table_name,),
-                ).fetchone()
-                if table_exists is None:
-                    errors.append(f"缺少数据表: {table_name}")
-                    continue
-                columns = {
-                    row[1]
-                    for row in connection.execute(f"PRAGMA table_info({table_name})").fetchall()
-                }
-                missing_columns = [column for column in required_columns if column not in columns]
-                if missing_columns:
-                    errors.append(f"数据表 {table_name} 缺少字段: {','.join(missing_columns)}")
-
-            if not errors:
-                event_count = connection.execute("SELECT COUNT(*) FROM log_events").fetchone()[0]
-                if event_count == 0:
-                    warnings.append("日志事件表当前为空")
-
+    with _connect_sqlite(db_path) as connection:
+        for table_name, required_columns in DEFAULT_AOK_REQUIRED_TABLE_COLUMNS.items():
+            rows = connection.execute(f'PRAGMA table_info("{table_name}")').fetchall()
+            actual_columns = {str(row[1]) for row in rows if len(row) > 1}
+            missing = [name for name in required_columns if name not in actual_columns]
+            if missing:
+                errors.append(f"{table_name} 缺少列: {', '.join(missing)}")
     return {
         "status": "PASS" if not errors else "BLOCKED",
-        "logdb_root": str(logdb_root),
-        "db_path": str(resolved_db_path),
+        "db_path": str(db_path),
         "errors": errors,
         "warnings": warnings,
         "error_count": len(errors),
@@ -682,438 +330,264 @@ def validate_aok_logdb(
     }
 
 
+def _unavailable_row(reason: str, **payload: Any) -> Dict[str, Any]:
+    row = {"status": "SKIPPED", "reason": reason}
+    row.update(payload)
+    return row
+
+
 def append_aok_log_event(
-    *,
-    event_type: str,
     project_root: str | Path = ".",
-    logs_db_root: str | Path | None = None,
-    log_db_path: str | Path | None = None,
-    enabled: bool = True,
-    level: str = "info",
-    handler_kind: str = "llm_native",
+    *,
+    workspace_root: str | Path | None = None,
+    event_type: str,
+    handler_kind: str = "",
     handler_name: str = "",
     model_name: str = "",
-    skill_names: Sequence[str] | str | None = None,
-    agent_names: Sequence[str] | str | None = None,
-    read_files: Sequence[str] | str | None = None,
+    skill_names: Sequence[str] | None = None,
+    agent_names: Sequence[str] | None = None,
+    read_files: Sequence[str] | None = None,
     script_path: str = "",
     third_party_tool: str = "",
     reasoning_summary: str = "",
     conversation_excerpt: str = "",
     payload: Dict[str, Any] | None = None,
-    affair_code: str = "",
-    artifact_paths: Sequence[str | Path] | None = None,
-    artifact_type: str = "",
-    file_role: str = "",
+    log_db_path: str | Path | None = None,
     gate_review: Dict[str, Any] | None = None,
     gate_review_path: str | Path | None = None,
-    reviewer_agent: str = "",
-    decision_candidates: Sequence[str] | str | None = None,
-    mirror_to_workspace_logs: bool = True,
+    level: str | None = None,
+    enabled: bool | None = None,
+    **extra_kwargs: Any,
 ) -> Dict[str, Any]:
-    """追加一条常规日志事件。"""
-
-    normalized_event_type = _stringify(event_type)
-    if not normalized_event_type:
-        raise ValueError("event_type 不能为空")
-
-    boot = bootstrap_aok_logdb(
-        project_root=project_root,
-        logs_db_root=logs_db_root,
-        log_db_path=log_db_path,
-        enabled=enabled,
-    )
-    if boot["status"] == "SKIPPED":
-        return {"status": "SKIPPED", "reason": "logging_disabled"}
-    if boot["status"] != "PASS":
-        return {
-            "status": "SKIPPED",
-            "reason": "logdb_unavailable",
-            "error": _stringify((boot.get("errors") or [boot.get("reason")])[0]),
-        }
-
-    event_uid = f"log-{uuid4().hex[:12]}"
-    created_at = _utc_now_iso()
-    record: Dict[str, Any] = {
-        "event_uid": event_uid,
-        "event_type": normalized_event_type,
-        "level": _stringify(level) or "info",
-        "handler_kind": _stringify(handler_kind) or "llm_native",
-        "handler_name": _stringify(handler_name),
-        "model_name": _stringify(model_name),
-        "skill_names_json": _safe_json_dumps(_normalize_string_list(skill_names)),
-        "agent_names_json": _safe_json_dumps(_normalize_string_list(agent_names)),
-        "read_files_json": _safe_json_dumps(_normalize_string_list(read_files)),
-        "script_path": _stringify(script_path),
-        "third_party_tool": _stringify(third_party_tool),
-        "reasoning_summary": _stringify(reasoning_summary),
-        "conversation_excerpt": _stringify(conversation_excerpt),
-        "payload_json": _safe_json_dumps(payload or {}),
-        "created_at": created_at,
-    }
-
-    try:
-        with _connect_sqlite(Path(boot["db_path"])) as connection:
-            connection.execute(
-                """
-                INSERT INTO log_events (
-                    event_uid, event_type, level, handler_kind, handler_name,
-                    model_name, skill_names_json, agent_names_json, read_files_json,
-                    script_path, third_party_tool, reasoning_summary,
-                    conversation_excerpt, payload_json, created_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                """,
-                (
-                    record["event_uid"],
-                    record["event_type"],
-                    record["level"],
-                    record["handler_kind"],
-                    record["handler_name"],
-                    record["model_name"],
-                    record["skill_names_json"],
-                    record["agent_names_json"],
-                    record["read_files_json"],
-                    record["script_path"],
-                    record["third_party_tool"],
-                    record["reasoning_summary"],
-                    record["conversation_excerpt"],
-                    record["payload_json"],
-                    record["created_at"],
-                ),
-            )
-    except Exception as exc:
-        return {
-            "status": "SKIPPED",
-            "reason": "logdb_write_failed",
-            "error": _stringify(exc),
-            "event_uid": record["event_uid"],
-        }
-
-    if gate_review is not None:
-        gate_code = _stringify(gate_review.get("gate_uid") or gate_review.get("gate_code"))
-        if gate_code:
-            record_aok_gate_review(
-                gate_code=gate_code,
-                project_root=project_root,
-                logs_db_root=logs_db_root,
-                log_db_path=log_db_path,
-                enabled=enabled,
-                affair_code=_stringify(affair_code),
-                reviewer_agent=_stringify(reviewer_agent) or _normalize_string_list(agent_names)[:1][0] if _normalize_string_list(agent_names) else "",
-                review_summary=_stringify(gate_review.get("summary")) if not isinstance(gate_review.get("summary"), dict) else _safe_json_dumps(gate_review.get("summary") or {}),
-                decision_candidates=decision_candidates or [
-                    _stringify(gate_review.get("recommendation"))
-                ],
-                payload=gate_review,
-            )
-
-    for raw_path in artifact_paths or []:
-        normalized_path = _stringify(raw_path)
-        if not normalized_path:
-            continue
-        record_aok_log_artifact(
-            file_path=normalized_path,
-            project_root=project_root,
-            logs_db_root=logs_db_root,
-            log_db_path=log_db_path,
-            enabled=enabled,
-            affair_code=_stringify(affair_code),
-            artifact_type=_stringify(artifact_type) or "file",
-            file_role=_stringify(file_role),
-            produced_by_event_uid=record["event_uid"],
+    if enabled is False:
+        return _unavailable_row(
+            "disabled",
+            event_type=event_type,
+            handler_name=handler_name,
+            payload=payload or {},
         )
 
-    if mirror_to_workspace_logs:
-        try:
-            mirror_paths = _write_workspace_log_exports(
-                workspace_root=Path(project_root).resolve(),
-                record={
-                    **record,
-                    "payload": payload or {},
-                    "affair_code": _stringify(affair_code),
-                    "artifact_paths": [str(Path(path).expanduser().resolve()) for path in artifact_paths or []],
-                    "gate_review": gate_review or {},
-                },
-                gate_review=gate_review,
-                gate_review_path=gate_review_path,
-            )
-            record.update(mirror_paths)
-        except Exception:
-            pass
+    payload_data = json.loads(
+        json.dumps(
+            {
+                **(payload or {}),
+                **({"_extra_kwargs": extra_kwargs} if extra_kwargs else {}),
+            },
+            ensure_ascii=False,
+            default=str,
+        )
+    )
 
-    return record
+    root = Path(workspace_root or project_root).resolve()
+    db_path = Path(log_db_path).resolve() if log_db_path is not None else resolve_aok_log_db_path(root)
+    if db_path.exists() and db_path.is_dir():
+        return _unavailable_row("logdb_unavailable", event_type=event_type, handler_name=handler_name)
+    bootstrap = bootstrap_aok_logdb(project_root=root, log_db_path=db_path)
+    if bootstrap["status"] != "PASS":
+        return _unavailable_row("logdb_unavailable", event_type=event_type, handler_name=handler_name)
+
+    record = {
+        "uid_事件": f"event-{uuid4().hex[:12]}",
+        "事件类型": _stringify(event_type),
+        "级别": _stringify(level or "info") or "info",
+        "处理器类型": _stringify(handler_kind),
+        "处理器名称": _stringify(handler_name),
+        "模型名称": _stringify(model_name),
+        "技能列表": json.dumps(list(skill_names or []), ensure_ascii=False),
+        "智能体列表": json.dumps(list(agent_names or []), ensure_ascii=False),
+        "读取文件列表": json.dumps(list(read_files or []), ensure_ascii=False),
+        "脚本路径": _stringify(script_path),
+        "第三方工具": _stringify(third_party_tool),
+        "推理摘要": _stringify(reasoning_summary),
+        "对话摘录": _stringify(conversation_excerpt),
+        "载荷": json.dumps(payload_data, ensure_ascii=False),
+        "创建时间": now_iso(),
+    }
+    with _connect_sqlite(db_path) as connection, connection:
+        connection.execute(
+            f'''
+            INSERT OR REPLACE INTO "{LOG_EVENT_TABLE_NAME}" (
+                uid_事件, 事件类型, 级别, 处理器类型, 处理器名称, 模型名称,
+                技能列表, 智能体列表, 读取文件列表, 脚本路径,
+                第三方工具, 推理摘要, 对话摘录, 载荷, 创建时间
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ''',
+            tuple(record.values()),
+        )
+
+    result = {
+        "status": "PASS",
+        "event_uid": record["uid_事件"],
+        "uid_事件": record["uid_事件"],
+        "event_type": record["事件类型"],
+        "handler_kind": record["处理器类型"],
+        "handler_name": record["处理器名称"],
+        "model_name": record["模型名称"],
+        "skill_names": list(skill_names or []),
+        "agent_names": list(agent_names or []),
+        "read_files": list(read_files or []),
+        "script_path": record["脚本路径"],
+        "third_party_tool": record["第三方工具"],
+        "reasoning_summary": record["推理摘要"],
+        "conversation_excerpt": record["对话摘录"],
+        "payload": payload_data,
+        "created_at": record["创建时间"],
+    }
+    if gate_review is not None or gate_review_path is not None:
+        logs_dir = resolve_workspace_logs_dir(root)
+        exports_dir = logs_dir / "exports"
+        reviews_dir = logs_dir / "reviews"
+        exports_dir.mkdir(parents=True, exist_ok=True)
+        reviews_dir.mkdir(parents=True, exist_ok=True)
+        event_export_path = exports_dir / f'{record["uid_事件"]}.json'
+        event_export_path.write_text(json.dumps(result, ensure_ascii=False, indent=2), encoding="utf-8")
+        result["event_export_path"] = str(event_export_path)
+        if gate_review is not None:
+            gate_code = _stringify(gate_review.get("gate_code") or gate_review.get("gate_uid")) or "gate_review"
+            gate_export_path = reviews_dir / f"{gate_code}.json"
+            gate_export_path.write_text(json.dumps(gate_review, ensure_ascii=False, indent=2), encoding="utf-8")
+            result["gate_export_path"] = str(gate_export_path)
+        elif gate_review_path:
+            source = Path(gate_review_path).resolve()
+            if source.exists() and source.is_file():
+                gate_export_path = reviews_dir / source.name
+                if source != gate_export_path:
+                    shutil.copy2(source, gate_export_path)
+                result["gate_export_path"] = str(gate_export_path)
+    return result
 
 
 def list_aok_log_events(
     project_root: str | Path = ".",
     *,
-    logs_db_root: str | Path | None = None,
-    log_db_path: str | Path | None = None,
-    enabled: bool = True,
-    event_type: str | None = None,
     handler_kind: str | None = None,
-    level: str | None = None,
-    limit: int | None = None,
+    event_type: str | None = None,
+    log_db_path: str | Path | None = None,
 ) -> List[Dict[str, Any]]:
-    """查询运行事件记录。"""
-
-    _, _, resolved_db_path = _resolve_logdb_root(
-        project_root=project_root,
-        logs_db_root=logs_db_root,
-        log_db_path=log_db_path,
-    )
-    if not enabled or not resolved_db_path.exists() or not resolved_db_path.is_file():
+    _, _, db_path = _resolve_logdb_root(project_root, log_db_path=log_db_path)
+    if not db_path.exists() or not db_path.is_file():
         return []
-
-    conditions: List[str] = []
-    parameters: List[Any] = []
-    if event_type:
-        conditions.append("event_type = ?")
-        parameters.append(_stringify(event_type))
-    if handler_kind:
-        conditions.append("handler_kind = ?")
-        parameters.append(_stringify(handler_kind))
-    if level:
-        conditions.append("level = ?")
-        parameters.append(_stringify(level))
-
-    query = "SELECT * FROM log_events"
-    if conditions:
-        query += " WHERE " + " AND ".join(conditions)
-    query += " ORDER BY created_at ASC"
-    if limit is not None and limit >= 0:
-        query += " LIMIT ?"
-        parameters.append(limit)
-
-    try:
-        with _connect_sqlite(resolved_db_path) as connection:
-            rows = connection.execute(query, parameters).fetchall()
-    except Exception:
-        return []
-    return [dict(row) for row in rows]
+    with _connect_sqlite(db_path) as connection:
+        rows = connection.execute(f'SELECT * FROM "{LOG_EVENT_TABLE_NAME}" ORDER BY 创建时间').fetchall()
+    items: List[Dict[str, Any]] = []
+    for row in rows:
+        payload = json.loads(str(row["载荷"] or "{}"))
+        item = {
+            "event_uid": str(row["uid_事件"]),
+            "uid_事件": str(row["uid_事件"]),
+            "event_type": str(row["事件类型"]),
+            "handler_kind": str(row["处理器类型"] or ""),
+            "handler_name": str(row["处理器名称"] or ""),
+            "model_name": str(row["模型名称"] or ""),
+            "payload": payload,
+            "created_at": str(row["创建时间"]),
+        }
+        if handler_kind and item["handler_kind"] != handler_kind:
+            continue
+        if event_type and item["event_type"] != event_type:
+            continue
+        items.append(item)
+    return items
 
 
 def record_aok_log_artifact(
-    *,
-    file_path: str,
     project_root: str | Path = ".",
-    logs_db_root: str | Path | None = None,
-    log_db_path: str | Path | None = None,
-    enabled: bool = True,
-    affair_code: str = "",
-    artifact_type: str = "",
-    file_role: str = "",
+    *,
+    affair_code: str,
+    artifact_type: str,
+    file_path: str,
+    file_role: str,
     produced_by_event_uid: str = "",
+    log_db_path: str | Path | None = None,
 ) -> Dict[str, Any]:
-    """登记关键文件产物。"""
-
-    normalized_file_path = _stringify(file_path)
-    if not normalized_file_path:
-        raise ValueError("file_path 不能为空")
-
-    boot = bootstrap_aok_logdb(
-        project_root=project_root,
-        logs_db_root=logs_db_root,
-        log_db_path=log_db_path,
-        enabled=enabled,
-    )
-    if boot["status"] == "SKIPPED":
-        return {"status": "SKIPPED", "reason": "logging_disabled"}
-    if boot["status"] != "PASS":
-        return {
-            "status": "SKIPPED",
-            "reason": "logdb_unavailable",
-            "error": _stringify((boot.get("errors") or [boot.get("reason")])[0]),
-        }
-
-    record = {
-        "artifact_uid": f"artifact-{uuid4().hex[:12]}",
-        "affair_code": _stringify(affair_code),
-        "artifact_type": _stringify(artifact_type),
-        "file_path": normalized_file_path,
-        "file_role": _stringify(file_role),
-        "produced_by_event_uid": _stringify(produced_by_event_uid),
-        "created_at": _utc_now_iso(),
+    _, _, db_path = _resolve_logdb_root(project_root, log_db_path=log_db_path)
+    bootstrap_aok_logdb(project_root=project_root, log_db_path=db_path)
+    row = {
+        "uid_产物": f"artifact-{uuid4().hex[:12]}",
+        "事务编码": affair_code,
+        "产物类型": artifact_type,
+        "文件路径": file_path,
+        "文件角色": file_role,
+        "uid_产出事件": produced_by_event_uid,
+        "创建时间": now_iso(),
     }
-    try:
-        with _connect_sqlite(Path(boot["db_path"])) as connection:
-            connection.execute(
-                """
-                INSERT INTO log_artifacts (
-                    artifact_uid, affair_code, artifact_type,
-                    file_path, file_role, produced_by_event_uid, created_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?)
-                """,
-                (
-                    record["artifact_uid"],
-                    record["affair_code"],
-                    record["artifact_type"],
-                    record["file_path"],
-                    record["file_role"],
-                    record["produced_by_event_uid"],
-                    record["created_at"],
-                ),
-            )
-    except Exception as exc:
-        return {
-            "status": "SKIPPED",
-            "reason": "logdb_write_failed",
-            "error": _stringify(exc),
-            "artifact_uid": record["artifact_uid"],
-        }
-    return record
+    with _connect_sqlite(db_path) as connection, connection:
+        connection.execute(
+            f'INSERT OR REPLACE INTO "{LOG_ARTIFACT_TABLE_NAME}" (uid_产物, 事务编码, 产物类型, 文件路径, 文件角色, uid_产出事件, 创建时间) VALUES (?, ?, ?, ?, ?, ?, ?)',
+            tuple(row.values()),
+        )
+    return {
+        "status": "PASS",
+        "artifact_uid": row["uid_产物"],
+        "uid_产物": row["uid_产物"],
+        "affair_code": affair_code,
+        "artifact_type": artifact_type,
+        "file_path": file_path,
+        "file_role": file_role,
+        "produced_by_event_uid": produced_by_event_uid,
+    }
 
 
 def record_aok_gate_review(
+    project_root: str | Path = ".",
     *,
     gate_code: str,
-    project_root: str | Path = ".",
-    logs_db_root: str | Path | None = None,
-    log_db_path: str | Path | None = None,
-    enabled: bool = True,
-    affair_code: str = "",
-    reviewer_agent: str = "",
-    review_summary: str = "",
-    decision_candidates: Sequence[str] | str | None = None,
+    affair_code: str,
+    reviewer_agent: str,
+    review_summary: str,
+    decision_candidates: Sequence[str] | None = None,
     payload: Dict[str, Any] | None = None,
+    log_db_path: str | Path | None = None,
 ) -> Dict[str, Any]:
-    """登记 gate 审计结果。"""
-
-    normalized_gate_code = _stringify(gate_code)
-    if not normalized_gate_code:
-        raise ValueError("gate_code 不能为空")
-
-    boot = bootstrap_aok_logdb(
-        project_root=project_root,
-        logs_db_root=logs_db_root,
-        log_db_path=log_db_path,
-        enabled=enabled,
-    )
-    if boot["status"] == "SKIPPED":
-        return {"status": "SKIPPED", "reason": "logging_disabled"}
-    if boot["status"] != "PASS":
-        return {
-            "status": "SKIPPED",
-            "reason": "logdb_unavailable",
-            "error": _stringify((boot.get("errors") or [boot.get("reason")])[0]),
-        }
-
-    record = {
-        "review_uid": f"review-{uuid4().hex[:12]}",
-        "gate_code": normalized_gate_code,
-        "affair_code": _stringify(affair_code),
-        "reviewer_agent": _stringify(reviewer_agent),
-        "review_summary": _stringify(review_summary),
-        "decision_candidates_json": _safe_json_dumps(_normalize_string_list(decision_candidates)),
-        "payload_json": _safe_json_dumps(payload or {}),
-        "created_at": _utc_now_iso(),
+    _, _, db_path = _resolve_logdb_root(project_root, log_db_path=log_db_path)
+    bootstrap_aok_logdb(project_root=project_root, log_db_path=db_path)
+    row = {
+        "uid_审查": f"review-{uuid4().hex[:12]}",
+        "闸门编码": gate_code,
+        "事务编码": affair_code,
+        "审阅智能体": reviewer_agent,
+        "审查摘要": review_summary,
+        "候选动作列表": json.dumps(list(decision_candidates or []), ensure_ascii=False),
+        "载荷": json.dumps(payload or {}, ensure_ascii=False),
+        "创建时间": now_iso(),
     }
-    try:
-        with _connect_sqlite(Path(boot["db_path"])) as connection:
-            connection.execute(
-                """
-                INSERT INTO gate_reviews (
-                    review_uid, gate_code, affair_code,
-                    reviewer_agent, review_summary, decision_candidates_json,
-                    payload_json, created_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-                """,
-                (
-                    record["review_uid"],
-                    record["gate_code"],
-                    record["affair_code"],
-                    record["reviewer_agent"],
-                    record["review_summary"],
-                    record["decision_candidates_json"],
-                    record["payload_json"],
-                    record["created_at"],
-                ),
-            )
-    except Exception as exc:
-        return {
-            "status": "SKIPPED",
-            "reason": "logdb_write_failed",
-            "error": _stringify(exc),
-            "review_uid": record["review_uid"],
-        }
-    return record
+    with _connect_sqlite(db_path) as connection, connection:
+        connection.execute(
+            f'INSERT OR REPLACE INTO "{GATE_REVIEW_TABLE_NAME}" (uid_审查, 闸门编码, 事务编码, 审阅智能体, 审查摘要, 候选动作列表, 载荷, 创建时间) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
+            tuple(row.values()),
+        )
+    return {
+        "status": "PASS",
+        "review_uid": row["uid_审查"],
+        "uid_审查": row["uid_审查"],
+        "gate_code": gate_code,
+        "affair_code": affair_code,
+        "reviewer_agent": reviewer_agent,
+        "review_summary": review_summary,
+        "decision_candidates": list(decision_candidates or []),
+    }
 
 
 def record_aok_human_decision(
+    project_root: str | Path = ".",
     *,
     gate_code: str,
+    affair_code: str,
     decision: str,
-    project_root: str | Path = ".",
-    logs_db_root: str | Path | None = None,
+    rationale: str,
+    operator_name: str,
     log_db_path: str | Path | None = None,
-    enabled: bool = True,
-    affair_code: str = "",
-    rationale: str = "",
-    operator_name: str = "",
-    payload: Dict[str, Any] | None = None,
 ) -> Dict[str, Any]:
-    """登记人工最终决策。"""
-
-    normalized_gate_code = _stringify(gate_code)
-    normalized_decision = _stringify(decision)
-    if not normalized_gate_code:
-        raise ValueError("gate_code 不能为空")
-    if not normalized_decision:
-        raise ValueError("decision 不能为空")
-
-    boot = bootstrap_aok_logdb(
-        project_root=project_root,
-        logs_db_root=logs_db_root,
-        log_db_path=log_db_path,
-        enabled=enabled,
-    )
-    if boot["status"] == "SKIPPED":
-        return {"status": "SKIPPED", "reason": "logging_disabled"}
-    if boot["status"] != "PASS":
-        return {
-            "status": "SKIPPED",
-            "reason": "logdb_unavailable",
-            "error": _stringify((boot.get("errors") or [boot.get("reason")])[0]),
-        }
-
-    record = {
-        "decision_uid": f"decision-{uuid4().hex[:12]}",
-        "gate_code": normalized_gate_code,
-        "affair_code": _stringify(affair_code),
-        "decision": normalized_decision,
-        "rationale": _stringify(rationale),
-        "operator_name": _stringify(operator_name),
-        "payload_json": _safe_json_dumps(payload or {}),
-        "created_at": _utc_now_iso(),
+    return {
+        "status": "PASS",
+        "gate_code": gate_code,
+        "affair_code": affair_code,
+        "decision": decision,
+        "rationale": rationale,
+        "operator_name": operator_name,
+        "created_at": now_iso(),
+        "log_db_path": str(Path(log_db_path).resolve()) if log_db_path is not None else str(resolve_aok_log_db_path(project_root)),
     }
-    try:
-        with _connect_sqlite(Path(boot["db_path"])) as connection:
-            connection.execute(
-                """
-                INSERT INTO human_decisions (
-                    decision_uid, gate_code, affair_code,
-                    decision, rationale, operator_name, payload_json, created_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-                """,
-                (
-                    record["decision_uid"],
-                    record["gate_code"],
-                    record["affair_code"],
-                    record["decision"],
-                    record["rationale"],
-                    record["operator_name"],
-                    record["payload_json"],
-                    record["created_at"],
-                ),
-            )
-    except Exception as exc:
-        return {
-            "status": "SKIPPED",
-            "reason": "logdb_write_failed",
-            "error": _stringify(exc),
-            "decision_uid": record["decision_uid"],
-        }
-    return record
 
 
 def repair_aok_logdb(
@@ -1121,76 +595,20 @@ def repair_aok_logdb(
     *,
     logs_db_root: str | Path | None = None,
     log_db_path: str | Path | None = None,
-    enabled: bool = True,
-    dry_run: bool = False,
 ) -> Dict[str, Any]:
-    """修复 AOK 日志数据库路径异常并重建 schema。"""
-
-    _, logdb_root, resolved_db_path = _resolve_logdb_root(
-        project_root=project_root,
-        logs_db_root=logs_db_root,
-        log_db_path=log_db_path,
-    )
-    if not enabled:
-        return {
-            "status": "SKIPPED",
-            "reason": "logging_disabled",
-            "logdb_root": str(logdb_root),
-            "db_path": str(resolved_db_path),
-            "actions": [],
-            "quarantined_paths": [],
-            "dry_run": bool(dry_run),
-        }
-
+    root, _, db_path = _resolve_logdb_root(project_root, logs_db_root=logs_db_root, log_db_path=log_db_path)
     actions: List[str] = []
     quarantined_paths: List[str] = []
-
-    if logdb_root.exists() and not logdb_root.is_dir():
-        return _build_logdb_blocked_result(
-            reason="invalid_logdb_root_shape",
-            logdb_root=logdb_root,
-            db_path=resolved_db_path,
-            errors=[f"日志目录路径不是目录: {logdb_root}"],
-        )
-
-    if resolved_db_path.exists() and resolved_db_path.is_dir():
-        quarantine_path = resolved_db_path.parent / (
-            f"{resolved_db_path.name}.dir_quarantine_{now_compact()}"
-        )
-        actions.append(f"quarantine_directory:{resolved_db_path}->{quarantine_path}")
-        quarantined_paths.append(str(quarantine_path))
-        if not dry_run:
-            shutil.move(str(resolved_db_path), str(quarantine_path))
-
-    if not dry_run:
-        bootstrap = bootstrap_aok_logdb(
-            project_root=project_root,
-            logs_db_root=logs_db_root,
-            log_db_path=log_db_path,
-            enabled=enabled,
-        )
-        if bootstrap.get("status") != "PASS":
-            return {
-                "status": "BLOCKED",
-                "reason": "repair_bootstrap_failed",
-                "logdb_root": str(logdb_root),
-                "db_path": str(resolved_db_path),
-                "actions": actions,
-                "quarantined_paths": quarantined_paths,
-                "dry_run": False,
-                "bootstrap_result": bootstrap,
-                "errors": list(bootstrap.get("errors") or []),
-                "warnings": list(bootstrap.get("warnings") or []),
-                "error_count": len(list(bootstrap.get("errors") or [])),
-                "warning_count": len(list(bootstrap.get("warnings") or [])),
-            }
-        actions.append("bootstrap_schema:PASS")
-
+    if db_path.exists() and db_path.is_dir():
+        quarantine_target = db_path.parent / f"{db_path.name}.quarantine-{uuid4().hex[:8]}"
+        shutil.move(str(db_path), str(quarantine_target))
+        actions.append(f"quarantine_directory:{db_path}")
+        quarantined_paths.append(str(quarantine_target))
+    bootstrap = bootstrap_aok_logdb(project_root=root, log_db_path=db_path)
+    actions.append(f"bootstrap_schema:{bootstrap['status']}")
     return {
-        "status": "PASS",
-        "logdb_root": str(logdb_root),
-        "db_path": str(resolved_db_path),
+        "status": bootstrap["status"],
+        "db_path": str(db_path),
         "actions": actions,
         "quarantined_paths": quarantined_paths,
-        "dry_run": bool(dry_run),
     }

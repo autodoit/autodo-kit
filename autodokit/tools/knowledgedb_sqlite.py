@@ -11,16 +11,21 @@ from typing import Optional
 import pandas as pd
 
 from .contentdb_sqlite import (
+    AUTO_KNOWLEDGE_EVIDENCE_SOURCE_FIELDS,
+    AUTO_KNOWLEDGE_LINK_SOURCE_FIELDS,
     KNOWLEDGE_EVIDENCE_TABLE_NAME,
+    KNOWLEDGE_ATTACHMENT_TABLE_NAME,
+    KNOWLEDGE_INDEX_TABLE_NAME,
     KNOWLEDGE_LINK_TABLE_NAME,
-    backfill_content_relationships,
+    LITERATURE_TABLE_NAME,
+    _build_knowledge_relation_frames,
+    _load_knowledge_relation_source_frames,
+    _upsert_table_rows,
     connect_sqlite,
     init_content_db,
+    resolve_content_physical_column,
+    sync_knowledge_relationships,
 )
-
-
-KNOWLEDGE_INDEX_TABLE_NAME = "knowledge_index"
-KNOWLEDGE_ATTACHMENT_TABLE_NAME = "knowledge_attachments"
 
 
 def _connect(db_path: Path) -> sqlite3.Connection:
@@ -48,11 +53,39 @@ def _drop_sqlite_object_if_exists(conn: sqlite3.Connection, object_name: str) ->
         conn.execute(f"DROP TABLE IF EXISTS {object_name}")
 
 
+def _collect_existing_ids(conn: sqlite3.Connection, table_name: str, logical_column: str) -> set[str]:
+    if _sqlite_object_type(conn, table_name) != "table":
+        return set()
+    physical_column = resolve_content_physical_column(table_name, logical_column)
+    return {
+        str(row[0]).strip()
+        for row in conn.execute(f'SELECT "{physical_column}" FROM "{table_name}"').fetchall()
+        if row and str(row[0] or "").strip()
+    }
+
+
+def _load_manual_relation_snapshot(
+    conn: sqlite3.Connection,
+    table_name: str,
+    *,
+    auto_source_fields: tuple[str, ...],
+) -> pd.DataFrame:
+    if _sqlite_object_type(conn, table_name) != "table":
+        return pd.DataFrame()
+    source_field_column = resolve_content_physical_column(table_name, "source_field")
+    placeholders = ", ".join(["?"] * len(auto_source_fields))
+    return pd.read_sql_query(
+        f'SELECT * FROM "{table_name}" WHERE COALESCE("{source_field_column}", \'\') NOT IN ({placeholders})',
+        conn,
+        params=tuple(auto_source_fields),
+    )
+
+
 def init_db(db_path: Path) -> None:
     init_content_db(db_path)
     with _connect(db_path) as conn:
-        _create_index_if_table(conn, KNOWLEDGE_INDEX_TABLE_NAME, "CREATE INDEX IF NOT EXISTS idx_know_uid ON knowledge_index(uid_knowledge)")
-        _create_index_if_table(conn, KNOWLEDGE_ATTACHMENT_TABLE_NAME, "CREATE INDEX IF NOT EXISTS idx_katt_uid ON knowledge_attachments(uid_knowledge)")
+        _create_index_if_table(conn, KNOWLEDGE_INDEX_TABLE_NAME, f"CREATE INDEX IF NOT EXISTS idx_know_uid ON \"{KNOWLEDGE_INDEX_TABLE_NAME}\"(uid_knowledge)")
+        _create_index_if_table(conn, KNOWLEDGE_ATTACHMENT_TABLE_NAME, f"CREATE INDEX IF NOT EXISTS idx_katt_uid ON \"{KNOWLEDGE_ATTACHMENT_TABLE_NAME}\"(uid_knowledge)")
         conn.commit()
 
 
@@ -62,7 +95,7 @@ def import_from_csv(index_csv: Path, attachments_csv: Optional[Path], db_path: P
     save_tables(db_path, index_df=index_df, attachments_df=attachments_df, if_exists=if_exists)
 
 
-def query_index(db_path: Path, sql: str = "SELECT * FROM knowledge_index LIMIT 1000") -> pd.DataFrame:
+def query_index(db_path: Path, sql: str = f"SELECT * FROM \"{KNOWLEDGE_INDEX_TABLE_NAME}\" LIMIT 1000") -> pd.DataFrame:
     conn = _connect(db_path)
     try:
         return pd.read_sql_query(sql, conn)
@@ -95,14 +128,29 @@ def save_tables(
 ) -> None:
     """把 DataFrame 形式的知识库表整体写回 SQLite。"""
     init_db(db_path)
+    affected_knowledge_uids: set[str] = set()
+    manual_link_snapshot = pd.DataFrame()
+    manual_evidence_snapshot = pd.DataFrame()
     if if_exists == "replace":
+        with _connect(db_path) as snapshot_conn:
+            affected_knowledge_uids = _collect_existing_ids(snapshot_conn, KNOWLEDGE_INDEX_TABLE_NAME, "uid_knowledge")
+            manual_link_snapshot = _load_manual_relation_snapshot(
+                snapshot_conn,
+                KNOWLEDGE_LINK_TABLE_NAME,
+                auto_source_fields=AUTO_KNOWLEDGE_LINK_SOURCE_FIELDS,
+            )
+            manual_evidence_snapshot = _load_manual_relation_snapshot(
+                snapshot_conn,
+                KNOWLEDGE_EVIDENCE_TABLE_NAME,
+                auto_source_fields=AUTO_KNOWLEDGE_EVIDENCE_SOURCE_FIELDS,
+            )
         with _connect(db_path) as reset_conn:
             _drop_sqlite_object_if_exists(reset_conn, KNOWLEDGE_EVIDENCE_TABLE_NAME)
             _drop_sqlite_object_if_exists(reset_conn, KNOWLEDGE_LINK_TABLE_NAME)
             _drop_sqlite_object_if_exists(reset_conn, KNOWLEDGE_ATTACHMENT_TABLE_NAME)
             _drop_sqlite_object_if_exists(reset_conn, "knowledge_note_evidence_view")
             _drop_sqlite_object_if_exists(reset_conn, "literature_standard_notes_view")
-            _drop_sqlite_object_if_exists(reset_conn, "knowledge_notes")
+            _drop_sqlite_object_if_exists(reset_conn, "知识笔记")
             _drop_sqlite_object_if_exists(reset_conn, KNOWLEDGE_INDEX_TABLE_NAME)
             reset_conn.commit()
         init_db(db_path)
@@ -137,15 +185,90 @@ def save_tables(
     finally:
         conn.close()
     init_db(db_path)
-    backfill_content_relationships(db_path)
+    with _connect(db_path) as conn:
+        affected_knowledge_uids.update(_collect_existing_ids(conn, KNOWLEDGE_INDEX_TABLE_NAME, "uid_knowledge"))
+
+    sync_knowledge_relationships(
+        db_path,
+        replace_knowledge_scope=sorted(affected_knowledge_uids),
+    )
+
+    if affected_knowledge_uids:
+        with sqlite3.connect(str(db_path), timeout=60) as raw_conn:
+            auto_link_df, auto_evidence_df = _build_knowledge_relation_frames(*_load_knowledge_relation_source_frames(raw_conn))
+            if not auto_link_df.empty:
+                auto_link_df = auto_link_df.loc[
+                    auto_link_df["uid_knowledge"].astype(str).isin(affected_knowledge_uids)
+                ].reset_index(drop=True)
+            if not auto_evidence_df.empty:
+                auto_evidence_df = auto_evidence_df.loc[
+                    auto_evidence_df["uid_knowledge"].astype(str).isin(affected_knowledge_uids)
+                ].reset_index(drop=True)
+            _upsert_table_rows(
+                raw_conn,
+                KNOWLEDGE_LINK_TABLE_NAME,
+                auto_link_df,
+                key_columns=["uid_knowledge", "uid_literature", "relation_type"],
+            )
+            _upsert_table_rows(
+                raw_conn,
+                KNOWLEDGE_EVIDENCE_TABLE_NAME,
+                auto_evidence_df,
+                key_columns=["uid_knowledge", "evidence_type", "target_uid", "evidence_role"],
+            )
+            raw_conn.commit()
+
+    if manual_link_snapshot.empty and manual_evidence_snapshot.empty:
+        return
+
+    with _connect(db_path) as conn:
+        conn.execute("PRAGMA foreign_keys=OFF")
+        current_knowledge_uids = _collect_existing_ids(conn, KNOWLEDGE_INDEX_TABLE_NAME, "uid_knowledge")
+        current_literature_uids = _collect_existing_ids(conn, LITERATURE_TABLE_NAME, "uid_literature")
+
+        try:
+            if not manual_link_snapshot.empty:
+                uid_knowledge_column = resolve_content_physical_column(KNOWLEDGE_LINK_TABLE_NAME, "uid_knowledge")
+                uid_literature_column = resolve_content_physical_column(KNOWLEDGE_LINK_TABLE_NAME, "uid_literature")
+                internal_id_column = resolve_content_physical_column(KNOWLEDGE_LINK_TABLE_NAME, "id")
+                filtered_link_snapshot = manual_link_snapshot.loc[
+                    manual_link_snapshot[uid_knowledge_column].astype(str).isin(current_knowledge_uids)
+                    & manual_link_snapshot[uid_literature_column].astype(str).isin(current_literature_uids)
+                ].reset_index(drop=True)
+                if internal_id_column in filtered_link_snapshot.columns:
+                    filtered_link_snapshot = filtered_link_snapshot.drop(columns=[internal_id_column])
+                _upsert_table_rows(
+                    conn,
+                    KNOWLEDGE_LINK_TABLE_NAME,
+                    filtered_link_snapshot,
+                    key_columns=["uid_knowledge", "uid_literature", "relation_type"],
+                )
+
+            if not manual_evidence_snapshot.empty:
+                uid_knowledge_column = resolve_content_physical_column(KNOWLEDGE_EVIDENCE_TABLE_NAME, "uid_knowledge")
+                internal_id_column = resolve_content_physical_column(KNOWLEDGE_EVIDENCE_TABLE_NAME, "id")
+                filtered_evidence_snapshot = manual_evidence_snapshot.loc[
+                    manual_evidence_snapshot[uid_knowledge_column].astype(str).isin(current_knowledge_uids)
+                ].reset_index(drop=True)
+                if internal_id_column in filtered_evidence_snapshot.columns:
+                    filtered_evidence_snapshot = filtered_evidence_snapshot.drop(columns=[internal_id_column])
+                _upsert_table_rows(
+                    conn,
+                    KNOWLEDGE_EVIDENCE_TABLE_NAME,
+                    filtered_evidence_snapshot,
+                    key_columns=["uid_knowledge", "evidence_type", "target_uid", "evidence_role"],
+                )
+            conn.commit()
+        finally:
+            conn.execute("PRAGMA foreign_keys=ON")
 
 
 def export_csv(db_path: Path, out_dir: Path) -> None:
     out_dir.mkdir(parents=True, exist_ok=True)
     conn = _connect(db_path)
     try:
-        df_idx = pd.read_sql_query("SELECT * FROM knowledge_index", conn)
-        df_att = pd.read_sql_query("SELECT * FROM knowledge_attachments", conn)
+        df_idx = pd.read_sql_query(f"SELECT * FROM \"{KNOWLEDGE_INDEX_TABLE_NAME}\"", conn)
+        df_att = pd.read_sql_query(f"SELECT * FROM \"{KNOWLEDGE_ATTACHMENT_TABLE_NAME}\"", conn)
         df_idx.to_csv(out_dir / "knowledge_index.csv", index=False, encoding="utf-8-sig")
         df_att.to_csv(out_dir / "knowledge_attachments.csv", index=False, encoding="utf-8-sig")
     finally:

@@ -6,12 +6,14 @@ SOURCE_ALIASES = {
     "school_database_portal": "school_foreign_database_portal",
     "chaoxing_portal": "school_foreign_database_portal",
     "open_platform": "en_open_access",
+    "deepxiv_api": "deepxiv",
 }
 
 SOURCE_FAMILY = {
     "zh_cnki": "content_portal",
     "spis": "content_portal",
     "en_open_access": "open_platform",
+    "deepxiv": "open_platform",
     "school_foreign_database_portal": "navigation_portal",
     "all": "router_debug",
 }

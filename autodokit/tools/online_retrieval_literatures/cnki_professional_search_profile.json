@@ -1,0 +1,46 @@
+{
+  "profile_name": "cnki_professional_search",
+  "version": "2026-05-19",
+  "source_url": "https://piccache.cnki.net/2022/kdn/index/helper/manual.html#frame2-1-3",
+  "source_type": "cnki_manual",
+  "last_verified_at": "2026-05-19T00:00:00+08:00",
+  "field_tokens": {
+    "subject": "SU",
+    "title": "TI",
+    "keyword": "KY",
+    "abstract": "AB",
+    "year": "YE"
+  },
+  "operators": {
+    "contains": "%=",
+    "equals": "=",
+    "gte": ">=",
+    "lte": "<="
+  },
+  "defaults": {
+    "subject_field": "SU",
+    "review_fields": ["TI", "KY", "AB"],
+    "subject_operator": "%=",
+    "review_operator": "=",
+    "year_field": "YE",
+    "year_operator": ">=",
+    "year_start": "2021",
+    "review_terms": ["综述", "文献综述", "研究综述"],
+    "subject_terms": ["科学研究", "研究方法", "方法创新"]
+  },
+  "learning_notes": [
+    "专业检索知识应以结构化字段与操作符配置保存，而不是写成一次性的自然语言提示。",
+    "当 CNKI 页面入口或字段语法变化时，优先更新本文件，再由工具程序重新编译查询式。",
+    "若当前 profile 与手册不一致，应以手册核验结果为准，重新标注 version 与 last_verified_at。"
+  ],
+  "validation_policy": {
+    "smoke_queries": [
+      "SU %= '科学研究' AND SU %= '研究方法' AND SU %= '方法创新' AND (TI = '综述' OR KY = '综述' OR AB = '综述') AND YE >= '2021'"
+    ],
+    "entry_priority": [
+      "https://ai.cnki.net/aisearch",
+      "https://kns.cnki.net/kns8s/AdvSearch",
+      "https://kns.cnki.net/kns8s/search"
+    ]
+  }
+}

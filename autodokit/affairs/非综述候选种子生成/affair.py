@@ -11,7 +11,7 @@ import pandas as pd
 
 from autodokit.tools import append_aok_log_event, build_gate_review, load_json_or_py
 from autodokit.tools.atomic.task_aok.post_affair_git_commit import affair_auto_git_commit
-from autodokit.tools.bibliodb_sqlite import load_reading_state_df, load_review_state_df, upsert_reading_state_rows
+from autodokit.tools.bibliodb_sqlite import load_reading_state_df, load_review_state_df, upsert_reading_queue_rows, upsert_reading_state_rows
 from autodokit.tools.contentdb_sqlite import CONTENT_DB_DIRECTORY_NAME, DEFAULT_CONTENT_DB_NAME, resolve_content_db_config
 from autodokit.tools.storage_backend import load_reference_tables
 
@@ -368,6 +368,53 @@ def _write_seed_markdown(seed_df: pd.DataFrame, markdown_path: Path) -> None:
     markdown_path.write_text("\n".join(lines).strip() + "\n", encoding="utf-8")
 
 
+def _build_a080_queue_rows(
+    *,
+    state_rows: List[Dict[str, Any]],
+    seed_df: pd.DataFrame,
+    source_affair: str,
+) -> List[Dict[str, Any]]:
+    priority_map: Dict[tuple[str, str], Any] = {}
+    if seed_df is not None and not seed_df.empty:
+        for _, row in seed_df.fillna("").iterrows():
+            priority_map[
+                (
+                    _stringify(row.get("uid_literature")),
+                    _stringify(row.get("cite_key")),
+                )
+            ] = row.get("priority")
+
+    queue_rows: List[Dict[str, Any]] = []
+    seen: set[tuple[str, str]] = set()
+    for row in state_rows:
+        uid_literature = _stringify(row.get("uid_literature"))
+        cite_key = _stringify(row.get("cite_key"))
+        identity = (uid_literature, cite_key)
+        if identity in seen or (not uid_literature and not cite_key):
+            continue
+        if int(row.get("rough_read_done") or 0) == 1:
+            continue
+        seen.add(identity)
+        queue_rows.append(
+            {
+                "uid_literature": uid_literature,
+                "cite_key": cite_key,
+                "stage": "A080",
+                "source_affair": source_affair,
+                "queue_status": "queued",
+                "priority": priority_map.get(identity) or 80,
+                "bucket": "non_review_seed",
+                "preferred_next_stage": "A090",
+                "recommended_reason": _stringify(row.get("recommended_reason")) or f"{source_affair} 非综述候选导种完成，进入 A080",
+                "theme_relation": _stringify(row.get("theme_relation")) or "a075_seed",
+                "source_round": source_affair.lower(),
+                "scope_key": f"{source_affair.lower()}_to_a080",
+                "is_current": 1,
+            }
+        )
+    return queue_rows
+
+
 @affair_auto_git_commit("A075")
 def execute(config_path: Path) -> List[Path]:
     raw_cfg = load_json_or_py(config_path)
@@ -434,6 +481,14 @@ def execute(config_path: Path) -> List[Path]:
         seed_df = pd.concat([seed_df, human_df], ignore_index=True)
         seed_df = seed_df[A075_SEED_COLUMNS].drop_duplicates(subset=["uid_literature", "cite_key"], keep="first").reset_index(drop=True)
 
+    a080_queue_rows = _build_a080_queue_rows(
+        state_rows=[*a070_seed_rows, *human_seed_rows],
+        seed_df=seed_df,
+        source_affair="A075",
+    )
+    if a080_queue_rows:
+        upsert_reading_queue_rows(content_db, a080_queue_rows)
+
     failures: List[str] = list(a070_seed_issues) + list(human_seed_issues)
     seed_csv_path = output_dir / OUTPUT_SEED_CSV
     seed_md_path = output_dir / OUTPUT_SEED_MD
@@ -447,12 +502,14 @@ def execute(config_path: Path) -> List[Path]:
             f"生成非综述候选种子 {len(seed_df)} 条；"
             f"A070 导种 {seeded_from_a070} 条；"
             f"人工导种 {seeded_from_human} 条；"
+            f"写入 A080 队列 {len(a080_queue_rows)} 条；"
             f"问题 {len(failures)} 条。"
         ),
         checks=[
             {"name": "seeded_from_a070_exports", "value": seeded_from_a070},
             {"name": "seeded_from_human_contract", "value": seeded_from_human},
             {"name": "a075_seed_candidates_count", "value": len(seed_df)},
+            {"name": "a080_queue_count", "value": len(a080_queue_rows)},
             {"name": "failure_count", "value": len(failures)},
         ],
         artifacts=[str(seed_csv_path), str(seed_md_path)],
@@ -481,7 +538,7 @@ def execute(config_path: Path) -> List[Path]:
             handler_name="非综述候选种子生成",
             agent_names=["ar_A075_非综述候选种子生成事务智能体_v1"],
             skill_names=["ar_A075_非综述候选种子生成_v1"],
-            reasoning_summary="消费 A070 导出件与人工种子，把普通文献候选写回 pending_preprocess。",
+            reasoning_summary="消费 A070 导出件与人工种子，正式写入 A080 阶段队列，并兼容回写旧 reading_state。",
             gate_review=gate_review,
             gate_review_path=gate_path,
             artifact_paths=[seed_csv_path, seed_md_path, gate_path],
@@ -489,6 +546,7 @@ def execute(config_path: Path) -> List[Path]:
                 "seeded_from_a070_exports": seeded_from_a070,
                 "seeded_from_human_contract": seeded_from_human,
                 "seed_count": len(seed_df),
+                "a080_queue_count": len(a080_queue_rows),
                 "failure_count": len(failures),
             },
         )

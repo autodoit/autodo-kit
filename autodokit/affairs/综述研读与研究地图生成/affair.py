@@ -1469,6 +1469,7 @@ def execute(config_path: Path) -> List[Path]:
     if not global_config_path.exists():
         global_config_path = None
     enable_review_state_llm = bool(raw_cfg.get("enable_review_state_llm", True))
+    api_key_file = _stringify(raw_cfg.get("api_key_file")) or None
     review_state_model = _stringify(raw_cfg.get("review_state_model") or raw_cfg.get("single_document_model"))
     review_state_max_chars = int(raw_cfg.get("review_state_max_chars") or 24000)
     analysis_note_cfg = dict(raw_cfg.get("analysis_note_generation") or {})
@@ -1574,6 +1575,7 @@ def execute(config_path: Path) -> List[Path]:
                 review_state,
                 workspace_root=workspace_root,
                 global_config_path=global_config_path,
+                api_key_file=api_key_file,
                 model=review_state_model or None,
                 max_chars=review_state_max_chars,
                 field_limits=review_state_field_limits,
@@ -1722,6 +1724,7 @@ def execute(config_path: Path) -> List[Path]:
                         line,
                         workspace_root=workspace_root,
                         global_config_path=global_config_path,
+                        api_key_file=api_key_file,
                         source="placeholder_from_a070_review_scan",
                         print_to_stdout=False,
                     )
@@ -1864,6 +1867,7 @@ def execute(config_path: Path) -> List[Path]:
             research_topic=synthesis_research_topic,
             workspace_root=workspace_root,
             global_config_path=global_config_path,
+            api_key_file=api_key_file,
             model=evidence_writer_model,
             line_target=evidence_line_targets.get(note_name, 5),
             max_evidence_per_review=max_evidence_per_review,
@@ -2038,7 +2042,7 @@ def execute(config_path: Path) -> List[Path]:
         metadata={
             "workspace_root": str(workspace_root),
             "content_db": str(content_db_path),
-            "aok_log_db": str((workspace_root / "database" / "logs" / "aok_log.db")),
+            "log_db": str((workspace_root / "database" / "logs" / "log.db")),
             "db_input_key": db_input_key,
             "processed_review_cite_keys": [state["cite_key"] for state in review_states],
             "review_processing_details": [state.get("processing_diagnostics") or {} for state in review_states],

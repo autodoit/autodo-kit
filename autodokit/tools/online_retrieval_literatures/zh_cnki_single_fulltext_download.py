@@ -78,7 +78,7 @@ def download_single(config: dict[str, Any]) -> dict[str, Any]:
     )
     port = int(config.get("cnki_cdp_port") or 9222)
     cdp_url = str(config.get("cnki_cdp_url") or f"http://127.0.0.1:{port}")
-    entry_url = str(config.get("cnki_entry_url") or "https://kns.cnki.net/kns8s/search")
+    entry_url = str(config.get("cnki_entry_url") or "https://ai.cnki.net/aisearch")
     skip_launch = bool(config.get("cnki_skip_launch", False))
     keep_browser = bool(config.get("keep_browser_open", True))
     allow_manual = bool(config.get("allow_manual_intervention", True))
@@ -102,9 +102,23 @@ def download_single(config: dict[str, Any]) -> dict[str, Any]:
             playwright, context = cnki._connect_context(cdp_url)
         except Exception:
             if skip_launch:
-                browser_proc = cnki._launch_edge_with_cdp(profile_dir=profile_dir, port=port, start_url=entry_url)
-                time.sleep(2)
-                playwright, context = cnki._connect_context(cdp_url)
+                browser_config = dict(config.get("cnki_browser_config") or {})
+                attach_error = (
+                    "当前配置为仅接管已有浏览器，但未连接到可用 CDP 会话。"
+                    "请先在目标浏览器开启远程调试并提供 cnki_cdp_url/cnki_cdp_port。"
+                )
+                if browser_config.get("vscode_embedded_only", False):
+                    attach_error = (
+                        "当前配置要求接管预先准备好的 VS Code 内嵌浏览器会话，"
+                        "但仓库目前尚未内建 VS Code 内嵌浏览器启动器。"
+                        "请先手动准备可被 CDP 接管的 Chromium 会话，并提供 cnki_cdp_url/cnki_cdp_port。"
+                    )
+                return {
+                    "status": "BLOCKED",
+                    "error_type": "BrowserAttachRequired",
+                    "error": attach_error,
+                    "manual_events": manual_events,
+                }
             else:
                 raise
 

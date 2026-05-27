@@ -22,7 +22,7 @@ def infer_request_profile(payload: dict[str, Any]) -> str:
     source = str(payload.get("source") or "").strip().lower()
     if source == "zh_cnki":
         return "zh"
-    if source in {"en_open_access", "open_platform"}:
+    if source in {"en_open_access", "open_platform", "deepxiv", "deepxiv_api"}:
         return "en"
     if source == "spis":
         return "mixed"

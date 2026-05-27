@@ -51,9 +51,9 @@ aliases:
 
 ### 1. 进入桥接目录
 
-打开 PowerShell，进入目录：
+打开 Git Bash，进入目录：
 
-```powershell
+```bash
 Set-Location "c:\Users\Ethan\CoreFiles\ProjectsFile\autodo-kit\autodokit\tools\zotero-tools\cookjohn-bridge"
 ```
 
@@ -77,7 +77,7 @@ Set-Location "c:\Users\Ethan\CoreFiles\ProjectsFile\autodo-kit\autodokit\tools\z
 
 ### 4. 运行拉取脚本
 
-```powershell
+```bash
 python pull_from_zotero.py
 ```
 
@@ -89,7 +89,7 @@ python pull_from_zotero.py
 
 ### 5. 需要时运行写入脚本
 
-```powershell
+```bash
 python push_to_zotero.py
 ```
 
@@ -102,7 +102,7 @@ python push_to_zotero.py
 
 ### 1. 进入桥接目录
 
-```powershell
+```bash
 Set-Location "c:\Users\Ethan\CoreFiles\ProjectsFile\autodo-kit\autodokit\tools\zotero-tools\54yyyu-bridge"
 ```
 
@@ -120,7 +120,7 @@ Set-Location "c:\Users\Ethan\CoreFiles\ProjectsFile\autodo-kit\autodokit\tools\z
 
 ### 3. 回到桥接目录执行探活
 
-```powershell
+```bash
 Set-Location "c:\Users\Ethan\CoreFiles\ProjectsFile\autodo-kit\autodokit\tools\zotero-tools\54yyyu-bridge"
 python service_probe.py
 ```
@@ -133,7 +133,7 @@ python service_probe.py
 
 ### 4. 需要时运行拉取与写入示例
 
-```powershell
+```bash
 python pull_from_zotero.py
 python push_to_zotero.py
 ```

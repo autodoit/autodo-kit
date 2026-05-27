@@ -10,7 +10,7 @@ import json
 import os
 import re
 from pathlib import Path
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Mapping
 
 from autodokit.path_compat import resolve_portable_path
 from autodokit.tools.bibliodb_sqlite import (
@@ -21,6 +21,7 @@ from autodokit.tools.bibliodb_sqlite import (
     upsert_parse_asset_rows,
 )
 from autodokit.tools.contentdb_sqlite import infer_workspace_root_from_content_db
+from autodokit.tools.contentdb_sqlite import resolve_content_path_candidates
 from autodokit.tools.ocr.classic.pdf_elements_extractors import extract_text_with_rapidocr
 from autodokit.tools.ocr.classic.pdf_structured_data_tools import build_structured_data_payload
 from autodokit.tools.ocr.monkeyocr.monkeyocr_windows_tools import parse_pdf_with_monkeyocr_windows
@@ -138,9 +139,13 @@ def _resolve_monkeyocr_root(*, workspace_root: Path, raw_cfg: Dict[str, Any]) ->
         candidates = [
             workspace_root / "pypackage",
             workspace_root / "pypackage" / "MonkeyOCR-main",
+            workspace_root / "third_party" / "MonkeyOCR-runtime",
+            workspace_root / "third_party" / "MonkeyOCR-main",
             workspace_root / "sandbox" / "MonkeyOCR-main",
             repo_root / "pypackage",
             repo_root / "pypackage" / "MonkeyOCR-main",
+            repo_root / "third_party" / "MonkeyOCR-runtime",
+            repo_root / "third_party" / "MonkeyOCR-main",
             repo_root / "sandbox" / "MonkeyOCR-main",
             repo_root / "sandbox" / "test monkey ocr cuda" / "MonkeyOCR-main",
             repo_root / "MonkeyOCR-main",
@@ -213,25 +218,122 @@ def _resolve_literature_row(content_db: Path, *, uid_literature: str = "", cite_
     return dict(target.iloc[0].to_dict())
 
 
-def _resolve_pdf_path(content_db: Path, literature_row: Dict[str, Any]) -> Path:
+def _build_literature_lookup(table: Any) -> tuple[Dict[str, Dict[str, Any]], Dict[str, Dict[str, Any]]]:
+    if table is None:
+        return {}, {}
+    normalized = table.fillna("") if hasattr(table, "fillna") else table
+    rows = normalized.to_dict(orient="records") if hasattr(normalized, "to_dict") else list(normalized)
+    by_uid: Dict[str, Dict[str, Any]] = {}
+    by_cite: Dict[str, Dict[str, Any]] = {}
+    for row in rows:
+        if not isinstance(row, dict):
+            continue
+        row_dict = dict(row)
+        resolved_uid = _stringify(row_dict.get("uid_literature"))
+        resolved_cite_key = _stringify(row_dict.get("cite_key"))
+        if resolved_uid and resolved_uid not in by_uid:
+            by_uid[resolved_uid] = row_dict
+        if resolved_cite_key and resolved_cite_key not in by_cite:
+            by_cite[resolved_cite_key] = row_dict
+    return by_uid, by_cite
+
+
+def _resolve_literature_row(
+    content_db: Path,
+    *,
+    uid_literature: str = "",
+    cite_key: str = "",
+    doc_id: str = "",
+    literatures_by_uid: Mapping[str, Mapping[str, Any]] | None = None,
+    literatures_by_cite: Mapping[str, Mapping[str, Any]] | None = None,
+) -> Dict[str, Any]:
+    resolved_uid = _stringify(uid_literature)
+    resolved_cite_key = _stringify(cite_key) or _stringify(doc_id)
+    if resolved_uid and literatures_by_uid:
+        cached = literatures_by_uid.get(resolved_uid)
+        if cached is not None:
+            return dict(cached)
+    if resolved_cite_key and literatures_by_cite:
+        cached = literatures_by_cite.get(resolved_cite_key)
+        if cached is not None:
+            return dict(cached)
+
+    table = load_literatures_df(content_db).fillna("")
+    target = table
+    if resolved_uid and "uid_literature" in table.columns:
+        target = table[table["uid_literature"].astype(str) == resolved_uid]
+    elif resolved_cite_key and "cite_key" in table.columns:
+        target = table[table["cite_key"].astype(str) == resolved_cite_key]
+    if target.empty:
+        raise KeyError(f"未在 content.db 中找到目标文献：uid={resolved_uid!r}, cite_key={resolved_cite_key!r}")
+    return dict(target.iloc[0].to_dict())
+
+
+def _build_attachment_lookup(table: Any) -> Dict[str, List[Dict[str, Any]]]:
+    if table is None:
+        return {}
+    normalized = table.fillna("") if hasattr(table, "fillna") else table
+    if hasattr(normalized, "sort_values"):
+        rows = normalized.sort_values(by=["is_primary", "attachment_name"], ascending=[False, True]).to_dict(orient="records")
+    else:
+        rows = list(normalized)
+    by_uid: Dict[str, List[Dict[str, Any]]] = {}
+    for row in rows:
+        if not isinstance(row, dict):
+            continue
+        row_dict = dict(row)
+        resolved_uid = _stringify(row_dict.get("uid_literature"))
+        if not resolved_uid:
+            continue
+        by_uid.setdefault(resolved_uid, []).append(row_dict)
+    return by_uid
+
+
+def _resolve_pdf_path(
+    content_db: Path,
+    literature_row: Dict[str, Any],
+    *,
+    attachments_by_uid: Mapping[str, List[Mapping[str, Any]]] | None = None,
+    workspace_root: Path | None = None,
+) -> Path:
     uid_literature = _stringify(literature_row.get("uid_literature"))
+    resolved_workspace_root = workspace_root or infer_workspace_root_from_content_db(content_db)
+
+    candidates = resolve_content_path_candidates(
+        workspace_root=resolved_workspace_root,
+        relative_path=_stringify(literature_row.get("pdf_rel_path")),
+        absolute_or_legacy_path=_stringify(literature_row.get("pdf_path")),
+    )
+    for path in candidates:
+        if path.exists() and path.is_file():
+            return path.resolve()
+
+    if uid_literature and attachments_by_uid:
+        rows = attachments_by_uid.get(uid_literature, [])
+        for row in rows:
+            candidates = resolve_content_path_candidates(
+                workspace_root=resolved_workspace_root,
+                relative_path=_stringify(row.get("path_rel")),
+                absolute_or_legacy_path=_stringify(row.get("storage_path") or row.get("source_path")),
+            )
+            for path in candidates:
+                if path.exists() and path.is_file():
+                    return path.resolve()
+
     attachments = load_attachments_df(content_db).fillna("")
     if uid_literature and not attachments.empty and "uid_literature" in attachments.columns:
         rows = attachments[attachments["uid_literature"].astype(str) == uid_literature].copy()
         if not rows.empty:
             rows = rows.sort_values(by=["is_primary", "attachment_name"], ascending=[False, True])
             for _, row in rows.iterrows():
-                candidate = _stringify(row.get("storage_path") or row.get("source_path"))
-                if candidate:
-                    path = Path(candidate)
-                    if path.is_absolute() and path.exists() and path.is_file():
+                candidates = resolve_content_path_candidates(
+                    workspace_root=resolved_workspace_root,
+                    relative_path=_stringify(row.get("path_rel")),
+                    absolute_or_legacy_path=_stringify(row.get("storage_path") or row.get("source_path")),
+                )
+                for path in candidates:
+                    if path.exists() and path.is_file():
                         return path.resolve()
-
-    pdf_path = _stringify(literature_row.get("pdf_path"))
-    if pdf_path:
-        path = Path(pdf_path)
-        if path.is_absolute() and path.exists() and path.is_file():
-            return path.resolve()
     raise ValueError(f"未找到可用 PDF 附件：uid_literature={uid_literature or _stringify(literature_row.get('cite_key'))}")
 
 
@@ -261,8 +363,15 @@ def _discover_existing_asset_dir(output_root: Path, literature_row: Dict[str, An
     pdf_path = _stringify(literature_row.get("pdf_path"))
     pdf_stem = Path(pdf_path).stem if pdf_path else ""
 
-    exact_keys = {item for item in (uid, cite_key, title, pdf_stem) if item}
-    normalized_keys = {_normalize_lookup_key(item) for item in exact_keys if _normalize_lookup_key(item)}
+    ordered_exact_keys = [item for item in (uid, cite_key, title, pdf_stem) if item]
+    exact_keys = set(ordered_exact_keys)
+    normalized_keys = {_normalize_lookup_key(item) for item in ordered_exact_keys if _normalize_lookup_key(item)}
+
+    # 优先按 uid_literature 命中目录，避免标题/cite_key 产生歧义匹配。
+    if uid:
+        uid_dir = (output_root / uid).resolve()
+        if uid_dir.exists() and uid_dir.is_dir():
+            return uid_dir
 
     for child in output_root.iterdir():
         if not child.is_dir():
@@ -512,30 +621,61 @@ def _extract_pdf_text_fallback(pdf_path: Path) -> tuple[str, Dict[str, Any]]:
     }
 
 
+def _build_parse_asset_lookup(table: Any) -> tuple[Dict[str, List[Dict[str, Any]]], Dict[str, List[Dict[str, Any]]]]:
+    if table is None:
+        return {}, {}
+    normalized = table.fillna("") if hasattr(table, "fillna") else table
+    rows = normalized.to_dict(orient="records") if hasattr(normalized, "to_dict") else list(normalized)
+    by_uid: Dict[str, List[Dict[str, Any]]] = {}
+    by_cite: Dict[str, List[Dict[str, Any]]] = {}
+    for row in rows:
+        if not isinstance(row, dict):
+            continue
+        row_dict = dict(row)
+        resolved_uid = _stringify(row_dict.get("uid_literature"))
+        resolved_cite_key = _stringify(row_dict.get("cite_key"))
+        if resolved_uid:
+            by_uid.setdefault(resolved_uid, []).append(row_dict)
+        if resolved_cite_key:
+            by_cite.setdefault(resolved_cite_key, []).append(row_dict)
+    return by_uid, by_cite
+
+
 def _select_existing_asset(
     content_db: Path,
     *,
     parse_level: str,
     uid_literature: str = "",
     cite_key: str = "",
+    parse_assets_by_uid: Mapping[str, List[Mapping[str, Any]]] | None = None,
+    parse_assets_by_cite: Mapping[str, List[Mapping[str, Any]]] | None = None,
 ) -> Dict[str, Any] | None:
-    table = load_parse_assets_df(content_db, only_current=True, parse_statuses=["ready"]).fillna("")
-    if table.empty:
-        return None
+    resolved_uid = _stringify(uid_literature)
+    resolved_cite_key = _stringify(cite_key)
+    candidate_rows: List[Dict[str, Any]] = []
+    if resolved_uid and parse_assets_by_uid:
+        candidate_rows = [dict(item) for item in parse_assets_by_uid.get(resolved_uid, [])]
+    elif resolved_cite_key and parse_assets_by_cite:
+        candidate_rows = [dict(item) for item in parse_assets_by_cite.get(resolved_cite_key, [])]
+
+    if not candidate_rows:
+        table = load_parse_assets_df(content_db, only_current=True, parse_statuses=["ready"]).fillna("")
+        if table.empty:
+            return None
+        if resolved_uid:
+            table = table[table.get("uid_literature", "").astype(str) == resolved_uid]
+        elif resolved_cite_key:
+            table = table[table.get("cite_key", "").astype(str) == resolved_cite_key]
+        if table.empty:
+            return None
+        candidate_rows = [dict(item) for item in table.to_dict(orient="records")]
+
     requested_level = _stringify(parse_level)
     allowed_levels = {requested_level, UNIFIED_PARSE_LEVEL}
     if requested_level in _LEGACY_PARSE_LEVELS:
         allowed_levels.update(_LEGACY_PARSE_LEVELS)
-    table = table[table.get("parse_level", "").astype(str).isin({item for item in allowed_levels if item})]
-    if table.empty:
-        return None
-    resolved_uid = _stringify(uid_literature)
-    resolved_cite_key = _stringify(cite_key)
-    if resolved_uid:
-        table = table[table.get("uid_literature", "").astype(str) == resolved_uid]
-    elif resolved_cite_key:
-        table = table[table.get("cite_key", "").astype(str) == resolved_cite_key]
-    if table.empty:
+    candidate_rows = [row for row in candidate_rows if _stringify(row.get("parse_level")) in {item for item in allowed_levels if item}]
+    if not candidate_rows:
         return None
 
     def _level_priority(level: str) -> int:
@@ -546,18 +686,13 @@ def _select_existing_asset(
             return 1
         return 2
 
-    sort_columns = []
-    ascending = []
-    if "updated_at" in table.columns:
-        sort_columns.append("updated_at")
-        ascending.append(False)
-    if sort_columns:
-        table = table.sort_values(by=sort_columns, ascending=ascending, kind="stable")
-
     ordered_rows = sorted(
-        table.to_dict(orient="records"),
-        key=lambda row: _level_priority(row.get("parse_level", "")),
+        candidate_rows,
+        key=lambda row: (_level_priority(row.get("parse_level", "")), _stringify(row.get("updated_at"))),
+        reverse=False,
     )
+    ordered_rows.sort(key=lambda row: _stringify(row.get("updated_at")), reverse=True)
+    ordered_rows.sort(key=lambda row: _level_priority(row.get("parse_level", "")))
     for row in ordered_rows:
         candidate = dict(row)
         normalized_structured_path = Path(_stringify(candidate.get("normalized_structured_path")))
@@ -667,7 +802,7 @@ def ensure_pdf_text_fallback_asset(
 
     pdf_path = _resolve_pdf_path(content_db_path, literature_row)
     output_root = _resolve_output_root(content_db_path, parse_level)
-    output_name = _safe_stem(resolved_cite_key or resolved_uid or pdf_path.stem)
+    output_name = _safe_stem(resolved_uid or resolved_cite_key or pdf_path.stem)
     output_dir = (output_root / output_name).resolve()
     output_dir.mkdir(parents=True, exist_ok=True)
 
@@ -806,7 +941,7 @@ def ensure_multimodal_parse_asset(
             return existing
 
     pdf_path = _resolve_pdf_path(content_db_path, literature_row)
-    output_name = _safe_stem(resolved_cite_key or resolved_uid or pdf_path.stem)
+    output_name = _safe_stem(resolved_uid or resolved_cite_key or pdf_path.stem)
     workspace_root = infer_workspace_root_from_content_db(content_db_path)
     raw_cfg = _load_global_config(global_config_path)
     resolved_monkeyocr_root = _resolve_monkeyocr_root(workspace_root=workspace_root, raw_cfg=raw_cfg)

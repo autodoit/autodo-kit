@@ -24,15 +24,19 @@ import sys
 import threading
 import shutil
 import csv
+import re
 from pathlib import Path
 from datetime import datetime, timezone
-from typing import Any
+from typing import Any, Iterable
 
 from autodokit.tools.atomic.path.windows_long_filename_tools import materialize_short_alias
 
 
 DEFAULT_MODEL_NAME = "MonkeyOCR-pro-1.2B"
 HUGGINGFACE_HUB_REQUIREMENT = "huggingface_hub>=0.30.0,<1.0"
+TRITON_WINDOWS_REQUIREMENT = "triton-windows>=3.5"
+WINDOWS_LAYOUT_MODEL_NAME = "doclayout_yolo"
+WINDOWS_LAYOUT_MODEL_WEIGHT = "Structure/doclayout_yolo_docstructbench_imgsz1280_2501.pt"
 
 
 def _resolve_path(path: str | Path) -> Path:
@@ -48,6 +52,36 @@ def _resolve_monkeyocr_root_dir(monkeyocr_root: str | Path) -> Path:
     if (nested / "parse.py").exists():
         return nested
     raise FileNotFoundError(f"MonkeyOCR 根目录不存在或缺少 parse.py：{root}")
+
+
+def _normalize_local_package_dirs(local_package_dirs: Iterable[str | Path] | str | Path | None) -> list[Path]:
+    normalized: list[Path] = []
+    seen: set[str] = set()
+
+    raw_items: list[str | Path] = []
+    if local_package_dirs is None:
+        raw_items = []
+    elif isinstance(local_package_dirs, (str, Path)):
+        text = str(local_package_dirs)
+        parts = [part.strip() for part in re.split(r"[;,\n\r]", text) if part.strip()]
+        raw_items = parts
+    else:
+        raw_items = list(local_package_dirs)
+
+    for item in raw_items:
+        text = str(item or "").strip()
+        if not text:
+            continue
+        try:
+            path = _resolve_path(text)
+        except Exception:
+            continue
+        key = path.as_posix().lower()
+        if key in seen:
+            continue
+        seen.add(key)
+        normalized.append(path)
+    return normalized
 
 
 def _run_command(
@@ -103,14 +137,120 @@ def _detect_gpu_name() -> str | None:
     return None
 
 
+def _parse_version_tuple(version: str) -> tuple[int, ...]:
+    nums = re.findall(r"\d+", str(version or ""))
+    if not nums:
+        return ()
+    return tuple(int(item) for item in nums[:4])
+
+
+def _version_gte(installed: str, lower_bound: str) -> bool:
+    left = _parse_version_tuple(installed)
+    right = _parse_version_tuple(lower_bound)
+    if not left or not right:
+        return False
+    length = max(len(left), len(right))
+    left = left + (0,) * (length - len(left))
+    right = right + (0,) * (length - len(right))
+    return left >= right
+
+
+def _probe_triton_windows(*, python_executable: str) -> dict[str, Any]:
+    cmd = [python_executable, "-m", "pip", "show", "triton-windows"]
+    proc = subprocess.run(
+        cmd,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        check=False,
+    )
+    if proc.returncode != 0:
+        return {
+            "installed": False,
+            "version": "",
+            "satisfies_requirement": False,
+            "requirement": TRITON_WINDOWS_REQUIREMENT,
+        }
+
+    version = ""
+    for line in str(proc.stdout or "").splitlines():
+        if line.lower().startswith("version:"):
+            version = line.split(":", 1)[1].strip()
+            break
+
+    return {
+        "installed": True,
+        "version": version,
+        "satisfies_requirement": bool(version and _version_gte(version, "3.5")),
+        "requirement": TRITON_WINDOWS_REQUIREMENT,
+    }
+
+
+def _ensure_triton_windows_requirement(
+    *,
+    monkeyocr_root: Path,
+    python_executable: str,
+    pip_index_url: str | None,
+    auto_install_triton_windows: bool,
+    local_package_dirs: Iterable[str | Path] | str | Path | None = None,
+) -> dict[str, Any]:
+    normalized_local_dirs = _normalize_local_package_dirs(local_package_dirs)
+    probe = _probe_triton_windows(python_executable=python_executable)
+    if probe.get("satisfies_requirement"):
+        return {
+            "status": "ready",
+            "installed": True,
+            "version": probe.get("version") or "",
+            "auto_install_triton_windows": bool(auto_install_triton_windows),
+            "requirement": TRITON_WINDOWS_REQUIREMENT,
+            "local_package_dirs": [str(path) for path in normalized_local_dirs],
+        }
+
+    if auto_install_triton_windows:
+        pip_cmd = [python_executable, "-m", "pip", "install", "-U"]
+        if pip_index_url:
+            pip_cmd.extend(["-i", pip_index_url])
+        for directory in normalized_local_dirs:
+            if directory.exists() and directory.is_dir():
+                pip_cmd.extend(["--find-links", str(directory)])
+        _run_command(pip_cmd + [TRITON_WINDOWS_REQUIREMENT], cwd=monkeyocr_root)
+        probe_after = _probe_triton_windows(python_executable=python_executable)
+        if probe_after.get("satisfies_requirement"):
+            return {
+                "status": "installed",
+                "installed": True,
+                "version": probe_after.get("version") or "",
+                "auto_install_triton_windows": True,
+                "requirement": TRITON_WINDOWS_REQUIREMENT,
+                "local_package_dirs": [str(path) for path in normalized_local_dirs],
+            }
+        raise RuntimeError(
+            "已尝试自动安装 triton-windows>=3.5，但仍未满足版本要求。"
+            f" 当前版本: {probe_after.get('version') or 'unknown'}"
+        )
+
+    local_hint = ""
+    existing_local_dirs = [str(path) for path in normalized_local_dirs if path.exists() and path.is_dir()]
+    if existing_local_dirs:
+        local_hint = f" 已检查本地包目录: {', '.join(existing_local_dirs)}。"
+
+    raise RuntimeError(
+        "当前设备为 Windows，且未检测到兼容版本的 triton-windows>=3.5。"
+        f" 请手动执行: {python_executable} -m pip install -U \"{TRITON_WINDOWS_REQUIREMENT}\"；"
+        " 或在事务配置中显式设置 pdf_parse_runtime.auto_install_triton_windows=true 后重试。"
+        f"{local_hint}"
+    )
+
+
 def _build_local_config_text(models_dir: Path, device: str) -> str:
     return f"""device: {device}
 weights:
-  PP-DocLayoutV2: Structure/PP-DocLayoutV2
+    {WINDOWS_LAYOUT_MODEL_NAME}: {WINDOWS_LAYOUT_MODEL_WEIGHT}
   layoutreader: Relation
 models_dir: {models_dir.as_posix()}
 layout_config:
-  model: PP-DocLayoutV2
+    model: {WINDOWS_LAYOUT_MODEL_NAME}
   reader:
     name: layoutreader
 chat_config:
@@ -130,7 +270,7 @@ def _has_required_weights(models_dir: Path) -> bool:
     required = [
         models_dir / "Recognition",
         models_dir / "Relation",
-        models_dir / "Structure" / "PP-DocLayoutV2",
+        models_dir / WINDOWS_LAYOUT_MODEL_WEIGHT.replace("/", os.sep),
     ]
     return all(path.exists() for path in required)
 
@@ -144,6 +284,7 @@ def prepare_monkeyocr_windows_runtime(
     pip_index_url: str | None = None,
     install_triton_windows: bool = True,
     models_dir: str | Path | None = None,
+    local_package_dirs: Iterable[str | Path] | str | Path | None = None,
 ) -> dict[str, Any]:
     """准备 MonkeyOCR Windows 运行时。
 
@@ -153,7 +294,7 @@ def prepare_monkeyocr_windows_runtime(
         download_source: `huggingface` 或 `modelscope`。
         python_executable: 指定 Python 可执行文件；默认使用当前解释器。
         pip_index_url: 可选 pip 镜像地址，例如清华源。
-        install_triton_windows: 是否安装 `triton-windows<3.4`。
+        install_triton_windows: 是否安装 `triton-windows>=3.5`。
 
     Returns:
         dict[str, Any]: 包含安装命令与模型下载状态的摘要。
@@ -172,6 +313,7 @@ def prepare_monkeyocr_windows_runtime(
     }
     target_models_dir = _resolve_path(models_dir) if models_dir is not None else (root / "model_weight").resolve()
     official_models_dir = (root / "model_weight").resolve()
+    normalized_local_dirs = _normalize_local_package_dirs(local_package_dirs)
 
     pip_cmd = [python, "-m", "pip", "install", "-U"]
     if pip_index_url:
@@ -185,8 +327,12 @@ def prepare_monkeyocr_windows_runtime(
         results["steps"].append({"action": "pip_install", "package": "modelscope"})
 
     if install_triton_windows:
-        _run_command(pip_cmd + ["triton-windows<3.4"], cwd=root)
-        results["steps"].append({"action": "pip_install", "package": 'triton-windows<3.4'})
+        triton_cmd = list(pip_cmd)
+        for directory in normalized_local_dirs:
+            if directory.exists() and directory.is_dir():
+                triton_cmd.extend(["--find-links", str(directory)])
+        _run_command(triton_cmd + [TRITON_WINDOWS_REQUIREMENT], cwd=root)
+        results["steps"].append({"action": "pip_install", "package": TRITON_WINDOWS_REQUIREMENT})
 
     download_args = [python, "tools/download_model.py"]
     if download_source.lower() == "modelscope":
@@ -218,6 +364,7 @@ def run_monkeyocr_windows_single_pdf(
     input_pdf: str | Path,
     output_dir: str | Path,
     *,
+    output_name: str | None = None,
     monkeyocr_root: str | Path,
     models_dir: str | Path | None = None,
     config_path: str | Path | None = None,
@@ -225,9 +372,11 @@ def run_monkeyocr_windows_single_pdf(
     device: str = "cuda",
     gpu_visible_devices: str = "0",
     ensure_runtime: bool = True,
+    auto_install_triton_windows: bool = False,
     download_source: str = "huggingface",
     pip_index_url: str | None = None,
     python_executable: str | Path | None = None,
+    local_package_dirs: Iterable[str | Path] | str | Path | None = None,
     log_path: str | Path | None = None,
     stream_output: bool = True,
 ) -> dict[str, Any]:
@@ -236,6 +385,7 @@ def run_monkeyocr_windows_single_pdf(
     Args:
         input_pdf: 待解析 PDF 的绝对路径。
         output_dir: 解析输出根目录。
+        output_name: 可选输出目录名；默认使用输入 PDF 的 stem。
         monkeyocr_root: MonkeyOCR 仓库根目录。
         models_dir: 模型权重目录；默认使用 `monkeyocr_root/model_weight`。
         config_path: 本地配置文件路径；默认使用 `output_dir.parent/model_configs.local.yaml`。
@@ -243,6 +393,7 @@ def run_monkeyocr_windows_single_pdf(
         device: `cuda` / `cpu` / `mps`。
         gpu_visible_devices: CUDA 可见设备号，默认 `0`。
         ensure_runtime: 是否自动执行运行时准备（pip + model download）。
+        auto_install_triton_windows: Windows 下缺少 `triton-windows>=3.5` 时是否自动安装。
         download_source: `huggingface` 或 `modelscope`。
         pip_index_url: 可选 pip 镜像。
         python_executable: 指定 Python 可执行文件。
@@ -265,6 +416,20 @@ def run_monkeyocr_windows_single_pdf(
     target_config_path = _resolve_path(config_path or (out_dir.parent / "model_configs.local.yaml"))
     target_log_path = _resolve_path(log_path or (out_dir.parent / "parse_direct_run.log"))
 
+    triton_check: dict[str, Any] = {
+        "status": "skipped_non_windows",
+        "auto_install_triton_windows": bool(auto_install_triton_windows),
+        "requirement": TRITON_WINDOWS_REQUIREMENT,
+    }
+    if sys.platform.startswith("win"):
+        triton_check = _ensure_triton_windows_requirement(
+            monkeyocr_root=root,
+            python_executable=python,
+            pip_index_url=pip_index_url,
+            auto_install_triton_windows=bool(auto_install_triton_windows),
+            local_package_dirs=local_package_dirs,
+        )
+
     if ensure_runtime:
         prepare_monkeyocr_windows_runtime(
             root,
@@ -272,8 +437,9 @@ def run_monkeyocr_windows_single_pdf(
             download_source=download_source,
             python_executable=python,
             pip_index_url=pip_index_url,
-            install_triton_windows=True,
+            install_triton_windows=False,
             models_dir=target_models_dir,
+            local_package_dirs=local_package_dirs,
         )
 
     _write_local_config(target_config_path, target_models_dir, device)
@@ -324,13 +490,24 @@ def run_monkeyocr_windows_single_pdf(
         monitor_thread.join(timeout=2.0)
 
     result_output_dir = (out_dir / pdf_path.stem).resolve()
+    requested_output_name = _stringify(output_name)
+    if requested_output_name:
+        requested_output_stem = Path(requested_output_name).stem.strip()
+        if requested_output_stem and requested_output_stem != pdf_path.stem:
+            result_output_dir = _rename_output_tree_to_original_stem(
+                result_output_dir,
+                requested_output_stem,
+                pdf_path.stem,
+            )
+
+    output_stem = result_output_dir.name
     artifacts: dict[str, Any] = {
-        "markdown": str(result_output_dir / f"{pdf_path.stem}.md"),
-        "content_list": str(result_output_dir / f"{pdf_path.stem}_content_list.json"),
-        "middle_json": str(result_output_dir / f"{pdf_path.stem}_middle.json"),
-        "model_pdf": str(result_output_dir / f"{pdf_path.stem}_model.pdf"),
-        "layout_pdf": str(result_output_dir / f"{pdf_path.stem}_layout.pdf"),
-        "spans_pdf": str(result_output_dir / f"{pdf_path.stem}_spans.pdf"),
+        "markdown": str(result_output_dir / f"{output_stem}.md"),
+        "content_list": str(result_output_dir / f"{output_stem}_content_list.json"),
+        "middle_json": str(result_output_dir / f"{output_stem}_middle.json"),
+        "model_pdf": str(result_output_dir / f"{output_stem}_model.pdf"),
+        "layout_pdf": str(result_output_dir / f"{output_stem}_layout.pdf"),
+        "spans_pdf": str(result_output_dir / f"{output_stem}_spans.pdf"),
         "images_dir": str(result_output_dir / "images"),
         "log_path": str(target_log_path),
         "config_path": str(target_config_path),
@@ -344,6 +521,7 @@ def run_monkeyocr_windows_single_pdf(
         "model_name": model_name,
         "input_pdf": str(pdf_path),
         "output_dir": str(result_output_dir),
+        "triton_check": triton_check,
         "artifacts": artifacts,
     }
 
@@ -671,9 +849,11 @@ def run_monkeyocr_windows_batch_folder(
     device: str = "cuda",
     gpu_visible_devices: str = "0",
     ensure_runtime: bool = True,
+    auto_install_triton_windows: bool = False,
     download_source: str = "huggingface",
     pip_index_url: str | None = None,
     python_executable: str | Path | None = None,
+    local_package_dirs: Iterable[str | Path] | str | Path | None = None,
     file_list: str | Path | None = None,
     intermediate_dir: str | Path | None = None,
     runtime_dir: str | Path | None = None,
@@ -876,9 +1056,11 @@ def run_monkeyocr_windows_batch_folder(
                     device=device,
                     gpu_visible_devices=gpu_visible_devices,
                     ensure_runtime=ensure_runtime,
+                    auto_install_triton_windows=auto_install_triton_windows,
                     download_source=download_source,
                     pip_index_url=pip_index_url,
                     python_executable=python_executable,
+                    local_package_dirs=local_package_dirs,
                     log_path=single_log_path,
                     stream_output=stream_output,
                 )
@@ -1073,9 +1255,11 @@ def parse_pdf_with_monkeyocr_windows(
     device: str = "cuda",
     gpu_visible_devices: str = "0",
     ensure_runtime: bool = True,
+    auto_install_triton_windows: bool = False,
     download_source: str = "huggingface",
     pip_index_url: str | None = None,
     python_executable: str | Path | None = None,
+    local_package_dirs: Iterable[str | Path] | str | Path | None = None,
     log_path: str | Path | None = None,
     stream_output: bool = True,
     **_: Any,
@@ -1087,6 +1271,7 @@ def parse_pdf_with_monkeyocr_windows(
     raw_result = run_monkeyocr_windows_single_pdf(
         input_pdf=pdf_path,
         output_dir=resolved_output_root,
+        output_name=output_name,
         monkeyocr_root=monkeyocr_root,
         models_dir=models_dir,
         config_path=config_path,
@@ -1094,18 +1279,21 @@ def parse_pdf_with_monkeyocr_windows(
         device=device,
         gpu_visible_devices=gpu_visible_devices,
         ensure_runtime=ensure_runtime,
+        auto_install_triton_windows=auto_install_triton_windows,
         download_source=download_source,
         pip_index_url=pip_index_url,
         python_executable=python_executable,
+        local_package_dirs=local_package_dirs,
         log_path=log_path,
         stream_output=stream_output,
     )
 
     result_output_dir = Path(str(raw_result.get("output_dir") or resolved_output_root)).resolve()
     artifacts = raw_result.get("artifacts") if isinstance(raw_result.get("artifacts"), dict) else {}
-    markdown_path = Path(str(artifacts.get("markdown") or result_output_dir / f"{Path(pdf_path).stem}.md")).resolve()
-    content_list_path = Path(str(artifacts.get("content_list") or result_output_dir / f"{Path(pdf_path).stem}_content_list.json")).resolve()
-    middle_json_path = Path(str(artifacts.get("middle_json") or result_output_dir / f"{Path(pdf_path).stem}_middle.json")).resolve()
+    output_stem = result_output_dir.name
+    markdown_path = Path(str(artifacts.get("markdown") or result_output_dir / f"{output_stem}.md")).resolve()
+    content_list_path = Path(str(artifacts.get("content_list") or result_output_dir / f"{output_stem}_content_list.json")).resolve()
+    middle_json_path = Path(str(artifacts.get("middle_json") or result_output_dir / f"{output_stem}_middle.json")).resolve()
     images_dir = Path(str(artifacts.get("images_dir") or result_output_dir / "images")).resolve()
 
     content_items: list[Any] = []

@@ -11,6 +11,7 @@ from pathlib import Path
 import sys
 from typing import Any, Iterable
 
+from autodokit.tools.config_contract_utils import normalize_to_legacy_contract
 from autodokit.tools.atomic.log_aok.logdb import (
     append_aok_log_event,
     bootstrap_aok_logdb,
@@ -33,6 +34,87 @@ _TRUE_VALUES = {"1", "true", "yes", "y", "on", "是"}
 _FALSE_VALUES = {"0", "false", "no", "n", "off", "否"}
 _DEFAULT_VALUES = {"", "default", "默认", "none", "null"}
 
+_JSON_KEY_ZH_MAP = {
+    "status": "状态",
+    "result_code": "结果代码",
+    "task_uid": "任务UID",
+    "node_code": "节点编码",
+    "node_name": "节点名称",
+    "gate_code": "闸门编码",
+    "gate_action": "闸门动作",
+    "summary": "摘要",
+    "reason": "原因",
+    "checks": "检查项",
+    "query": "检索语句",
+    "query_terms": "检索词列表",
+    "local_hit_count": "本地命中数",
+    "local_hit_threshold": "本地命中阈值",
+    "gap_count": "缺口数量",
+    "should_online_fallback": "是否触发在线回退",
+    "online_triggered": "是否触发在线检索",
+    "online_record_count": "在线记录数",
+    "online_acquisition_mode": "在线获取模式",
+    "total_record_count": "总记录数",
+    "upsert_status": "入库状态",
+    "upsert_inserted": "入库新增数",
+    "upsert_updated": "入库更新数",
+    "feedback_request_count": "反馈请求数",
+    "feedback_source_stage_count": "反馈来源阶段数",
+    "feedback_seed_item_count": "反馈种子条目数",
+    "content_db": "内容数据库路径",
+    "workspace_root": "工作区根目录",
+    "task_instance_dir": "任务实例目录",
+    "created_at": "创建时间",
+    "started_at": "开始时间",
+    "ended_at": "结束时间",
+    "decision_suggestion": "决策建议",
+    "artifact_paths": "产物路径列表",
+    "gate_review_path": "闸门评审路径",
+    "error_type": "错误类型",
+    "error_message": "错误信息",
+    "payload": "回执载荷",
+    "records": "记录列表",
+    "results": "结果",
+    "mode": "模式",
+    "request_count": "请求数量",
+    "seed_item_count": "种子条目数",
+}
+
+_JSON_VALUE_ZH_MAP = {
+    "status": {
+        "PASS": "通过",
+        "FAIL": "失败",
+        "BLOCKED": "阻塞",
+        "HUMAN_GATE": "人工闸门",
+        "RETRYABLE_ERROR": "可重试错误",
+        "SKIPPED": "已跳过",
+        "pass": "通过",
+        "fail": "失败",
+        "blocked": "阻塞",
+        "human_gate": "人工闸门",
+        "skipped": "已跳过",
+    },
+    "result_code": {
+        "PASS": "通过",
+        "FAIL": "失败",
+        "BLOCKED": "阻塞",
+        "HUMAN_GATE": "人工闸门",
+        "RETRYABLE_ERROR": "可重试错误",
+    },
+    "gate_action": {
+        "pass_next": "通过到下一节点",
+        "fallback_current": "回退当前节点",
+        "pause_current": "暂停当前节点",
+        "retry_current": "重试当前节点",
+        "stop_workflow": "停止流程",
+    },
+    "online_acquisition_mode": {
+        "none": "不执行",
+        "metadata_only": "仅元数据",
+        "fulltext": "全文获取",
+    },
+}
+
 
 def _to_text(value: Any) -> str:
     if value is None:
@@ -47,7 +129,10 @@ def _read_json_file(path: Path) -> dict[str, Any]:
         payload = json.loads(path.read_text(encoding="utf-8-sig"))
     except Exception:
         return {}
-    return payload if isinstance(payload, dict) else {}
+    if not isinstance(payload, dict):
+        return {}
+    normalized = normalize_to_legacy_contract(payload)
+    return normalized if isinstance(normalized, dict) else {}
 
 
 def _parse_tristate(value: Any) -> str:
@@ -240,6 +325,96 @@ def _load_gate_payload(gate_review_path: str) -> dict[str, Any]:
     except Exception:
         return {}
     return payload if isinstance(payload, dict) else {}
+
+
+def _translate_value_for_key(key: str, value: Any) -> Any:
+    if not isinstance(value, str):
+        return value
+    enum_map = _JSON_VALUE_ZH_MAP.get(key)
+    if not enum_map:
+        return value
+    if value in enum_map:
+        return enum_map[value]
+    lowered = value.lower()
+    if lowered in enum_map:
+        return enum_map[lowered]
+    uppered = value.upper()
+    if uppered in enum_map:
+        return enum_map[uppered]
+    return value
+
+
+def _localize_json_payload_with_zh_alias(payload: Any) -> Any:
+    if isinstance(payload, list):
+        return [_localize_json_payload_with_zh_alias(item) for item in payload]
+    if not isinstance(payload, dict):
+        return payload
+
+    localized: dict[str, Any] = {}
+    for raw_key, raw_value in payload.items():
+        key = str(raw_key)
+        value = _localize_json_payload_with_zh_alias(raw_value)
+        localized[key] = value
+
+        zh_key = _JSON_KEY_ZH_MAP.get(key)
+        if zh_key and zh_key not in localized:
+            localized[zh_key] = _translate_value_for_key(key, value)
+
+    return localized
+
+
+def _resolve_task_instance_dir(receipt: dict[str, Any]) -> Path | None:
+    workspace_root = Path(_to_text(receipt.get("workspace_root"))).expanduser().resolve()
+    task_uid = _to_text(receipt.get("task_uid"))
+    if not task_uid:
+        return None
+
+    direct_dir = workspace_root / "tasks" / task_uid
+    if direct_dir.exists() and direct_dir.is_dir():
+        return direct_dir
+
+    for artifact_text in receipt.get("artifact_paths") or []:
+        artifact_path = Path(str(artifact_text)).expanduser().resolve()
+        candidate_dir = artifact_path.parent
+        if candidate_dir.name == task_uid and candidate_dir.parent.name == "tasks":
+            return candidate_dir
+    return None
+
+
+def _localize_task_json_artifacts(receipt: dict[str, Any]) -> dict[str, Any]:
+    task_dir = _resolve_task_instance_dir(receipt)
+    if task_dir is None:
+        return {
+            "status": "SKIPPED",
+            "reason": "task_dir_not_found",
+            "task_dir": "",
+            "scanned_files": 0,
+            "localized_files": 0,
+        }
+
+    scanned_files = 0
+    localized_files = 0
+    for json_path in sorted(task_dir.glob("*.json")):
+        scanned_files += 1
+        try:
+            payload = json.loads(json_path.read_text(encoding="utf-8-sig"))
+        except Exception:
+            continue
+
+        localized_payload = _localize_json_payload_with_zh_alias(payload)
+        if localized_payload == payload:
+            continue
+
+        json_path.write_text(json.dumps(localized_payload, ensure_ascii=False, indent=2), encoding="utf-8")
+        localized_files += 1
+
+    return {
+        "status": "PASS" if localized_files > 0 else "SKIPPED",
+        "reason": "",
+        "task_dir": str(task_dir),
+        "scanned_files": scanned_files,
+        "localized_files": localized_files,
+    }
 
 
 def _build_receipt(
@@ -465,6 +640,7 @@ def run_unified_postprocess(
     )
 
     resolved_config_path = Path(config_path).expanduser().resolve()
+    localization_summary = _localize_task_json_artifacts(receipt)
     gate_payload = _load_gate_payload(_to_text(receipt.get("gate_review_path")))
     post_meta = _run_task_and_log_records(
         receipt=receipt,
@@ -500,6 +676,7 @@ def run_unified_postprocess(
         "postprocess": {
             "mode": "unified",
             "config_path": str(resolved_config_path),
+            "task_json_localization": localization_summary,
             **post_meta,
             "git_snapshot": git_snapshot or {},
         },

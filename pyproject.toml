@@ -15,7 +15,7 @@ dependencies = [
     "playwright>=1.58.0",
     "pymupdf>=1.26.4",
     "pdfminer.six>=20250506",
-    "rapidocr-onnxruntime>=1.4.4",
+    "rapidocr-onnxruntime>=1.2.3",
 ]
 
 [project.scripts]

@@ -87,6 +87,18 @@ def _stringify(value: Any) -> str:
 
     if value is None:
         return ""
+    if isinstance(value, pd.Series):
+        for item in value.tolist():
+            text = _stringify(item)
+            if text:
+                return text
+        return ""
+    if isinstance(value, (list, tuple)):
+        for item in value:
+            text = _stringify(item)
+            if text:
+                return text
+        return ""
     if pd.isna(value):
         return ""
     return str(value).strip()

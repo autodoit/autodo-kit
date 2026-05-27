@@ -10,6 +10,7 @@ import warnings
 from typing import Any
 
 from autodokit.path_compat import resolve_portable_path
+from autodokit.tools.config_contract_utils import normalize_to_legacy_contract
 
 
 _TRUE_VALUES = {"1", "true", "yes", "y", "on", "是"}
@@ -24,7 +25,10 @@ def _read_json(path: Path) -> dict[str, Any]:
         payload = json.loads(path.read_text(encoding="utf-8-sig"))
     except json.JSONDecodeError:
         return {}
-    return payload if isinstance(payload, dict) else {}
+    if not isinstance(payload, dict):
+        return {}
+    normalized = normalize_to_legacy_contract(payload)
+    return normalized if isinstance(normalized, dict) else {}
 
 
 def _to_text(value: Any) -> str:

@@ -30,6 +30,7 @@
     "zh_cnki": "content_portal",
     "spis": "content_portal",
     "en_open_access": "open_platform",
+    "deepxiv": "open_platform",
     "school_foreign_database_portal": "navigation_portal"
   },
   "request_profiles": [
@@ -56,6 +57,10 @@
     {"source": "en_open_access", "mode": "batch", "action": "download", "layer": "orchestrator"},
     {"source": "en_open_access", "mode": "batch", "action": "html_extract", "layer": "orchestrator"},
     {"source": "en_open_access", "mode": "retry", "action": "chaoxing_portal", "layer": "orchestrator"},
+
+    {"source": "deepxiv", "mode": "search", "action": "metadata", "layer": "executor"},
+    {"source": "deepxiv", "mode": "single", "action": "download", "layer": "executor"},
+    {"source": "deepxiv", "mode": "batch", "action": "download", "layer": "orchestrator"},
 
     {"source": "school_foreign_database_portal", "mode": "catalog", "action": "fetch", "layer": "orchestrator"}
   ]

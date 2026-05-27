@@ -31,6 +31,7 @@ from autodokit.tools import bibliodb_sqlite
 from autodokit.tools.contentdb_sqlite import init_content_db
 from autodokit.tools import normalize_primary_fulltext_attachment_names
 from autodokit.tools import resolve_primary_attachment_normalization_settings
+from autodokit.tools import normalize_content_db_author_names_with_aliyun
 from autodokit.tools.atomic.task_aok.post_affair_git_commit import affair_auto_git_commit
 from autodokit.tools.literature_translation_tools import run_literature_translation
 
@@ -62,6 +63,12 @@ DEFAULT_CONFIG: Dict[str, Any] = {
     "has_pdf_enable": True,
     "pdf_dir": "pdfs",
     "pdf_match_mode": "title",
+    "enable_aliyun_author_name_preprocess": False,
+    "author_name_preprocess_batch_size": 50,
+    "author_name_preprocess_sample_limit": 20,
+    "author_name_preprocess_model": "auto",
+    "author_name_preprocess_api_key_file": "",
+    "author_name_preprocess_allow_fallback_cleaning": False,
 }
 UNMATCHED_ATTACHMENTS_DIR_NAME = "unmatched_attachments"
 
@@ -223,6 +230,14 @@ def merge_config(raw_config: Dict[str, Any]) -> Dict[str, Any]:
     """
     merged = dict(DEFAULT_CONFIG)
     merged.update(raw_config)
+    if not merged.get("origin_bib_paths") and raw_config.get("原始题录路径列表") is not None:
+        merged["origin_bib_paths"] = raw_config.get("原始题录路径列表")
+    if not merged.get("origin_attachments_roots") and raw_config.get("原始附件根目录列表") is not None:
+        merged["origin_attachments_roots"] = raw_config.get("原始附件根目录列表")
+    if not merged.get("origin_attachments_root") and raw_config.get("原始附件根目录") is not None:
+        merged["origin_attachments_root"] = raw_config.get("原始附件根目录")
+    if not merged.get("workspace_root") and raw_config.get("工作区根路径") is not None:
+        merged["workspace_root"] = raw_config.get("工作区根路径")
     if "run_mode" not in raw_config:
         merged["run_mode"] = "incremental" if bool(raw_config.get("incremental_only", True)) else "full_reset"
     return merged
@@ -231,11 +246,11 @@ def merge_config(raw_config: Dict[str, Any]) -> Dict[str, Any]:
 def _normalize_run_mode(value: Any) -> str:
     """规范化运行模式字符串。"""
     mode = str(value or "incremental").strip().lower()
-    if mode in {"incremental", "incremental_update", "update", "append"}:
+    if mode in {"incremental", "incremental_update", "update", "append", "增量", "增量更新"}:
         return "incremental"
-    if mode in {"full_reset", "reset", "rebuild", "delete_and_rerun", "clean"}:
+    if mode in {"full_reset", "reset", "rebuild", "delete_and_rerun", "clean", "全量重置", "全量重建", "重置重跑"}:
         return "full_reset"
-    raise ValueError(f"不支持的 A020 run_mode: {value}")
+    raise ValueError(f"不支持的 A020 run_mode: {value}；仅支持 增量/全量重置（兼容 incremental/full_reset）")
 
 
 def _remove_path_if_exists(path: Path) -> None:
@@ -319,21 +334,30 @@ def _reset_a020_generated_state(
         "attachments_to_literatures",
         "gate_review",
     ]:
-        artifact_path = Path(str(released_artifacts.get(artifact_key) or "").strip())
-        if str(artifact_path):
+        artifact_value = str(released_artifacts.get(artifact_key) or "").strip()
+        if not artifact_value:
+            continue
+        artifact_path = Path(artifact_value)
+        if artifact_path.exists():
             _remove_path_if_exists(artifact_path)
 
     if db_path is not None:
-        init_content_db(db_path)
+        db_path.parent.mkdir(parents=True, exist_ok=True)
         with sqlite3.connect(str(db_path), timeout=60) as conn:
             conn.execute("PRAGMA foreign_keys = OFF")
+            view_rows = conn.execute(
+                "SELECT name FROM sqlite_master WHERE type = 'view'"
+            ).fetchall()
+            for (view_name,) in view_rows:
+                conn.execute(f'DROP VIEW IF EXISTS "{view_name}"')
             table_rows = conn.execute(
                 "SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%'"
             ).fetchall()
             for (table_name,) in table_rows:
-                conn.execute(f'DELETE FROM "{table_name}"')
+                conn.execute(f'DROP TABLE IF EXISTS "{table_name}"')
             conn.commit()
             conn.execute("PRAGMA foreign_keys = ON")
+            init_content_db(db_path)
 
 
 def load_config_from_json(config_path: Path) -> Dict[str, Any]:
@@ -1177,6 +1201,12 @@ def _run_and_write_all_outputs(config_path: Path) -> List[Path]:
         "reason": "disabled",
         "audit_path": "",
     }
+    author_name_preprocess_summary: Dict[str, Any] = {
+        "status": "SKIPPED",
+        "reason": "disabled",
+        "audit_path": "",
+        "changed_literature_count": 0,
+    }
     merge_summary: Dict[str, Any] = {
         "incoming_count": int(len(table)),
         "matched_existing_count": 0,
@@ -1287,6 +1317,37 @@ def _run_and_write_all_outputs(config_path: Path) -> List[Path]:
 
     if backend == "sqlite" and db_path is not None:
         translation_policy = merged_cfg.get("translation_policy") or {}
+        if bool(merged_cfg.get("enable_aliyun_author_name_preprocess", False)):
+            _log_stage("执行作者姓名阿里百炼预处理")
+            try:
+                author_name_preprocess_summary = normalize_content_db_author_names_with_aliyun(
+                    {
+                        "content_db": str(db_path),
+                        "api_key_file": merged_cfg.get("author_name_preprocess_api_key_file") or merged_cfg.get("api_key_file"),
+                        "config_path": str(config_path),
+                        "model": merged_cfg.get("author_name_preprocess_model") or "auto",
+                        "batch_size": int(merged_cfg.get("author_name_preprocess_batch_size") or 50),
+                        "sample_limit": int(merged_cfg.get("author_name_preprocess_sample_limit") or 20),
+                        "allow_fallback_cleaning": bool(merged_cfg.get("author_name_preprocess_allow_fallback_cleaning", False)),
+                    }
+                )
+                author_name_preprocess_audit_path = output_dir / "author_name_preprocess_summary.json"
+                author_name_preprocess_audit_path.write_text(
+                    json.dumps(author_name_preprocess_summary, ensure_ascii=False, indent=2),
+                    encoding="utf-8",
+                )
+                author_name_preprocess_summary["audit_path"] = str(author_name_preprocess_audit_path)
+                written_files.append(author_name_preprocess_audit_path)
+            except Exception as exc:
+                author_name_preprocess_summary = {
+                    "status": "FAIL",
+                    "reason": str(exc),
+                    "audit_path": "",
+                    "changed_literature_count": 0,
+                }
+                if not bool(merged_cfg.get("author_name_preprocess_allow_fallback_cleaning", False)):
+                    raise
+
         try:
             _log_stage("执行元数据翻译")
             translation_summary = run_literature_translation(
@@ -1347,6 +1408,8 @@ def _run_and_write_all_outputs(config_path: Path) -> List[Path]:
                 "attachment_normalization_status": str(attachment_normalization_summary.get("status") or "SKIPPED"),
                 "attachment_normalization_renamed_count": int(attachment_normalization_summary.get("renamed_count") or 0),
                 "attachment_normalization_conflict_count": int(attachment_normalization_summary.get("conflict_count") or 0),
+                "author_name_preprocess_status": str(author_name_preprocess_summary.get("status") or "SKIPPED"),
+                "author_name_preprocess_changed_count": int(author_name_preprocess_summary.get("changed_literature_count") or 0),
             },
             "decision_suggestion": "pass_next" if len(table) > 0 else "revise_current_iteration",
         }

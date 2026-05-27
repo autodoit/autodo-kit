@@ -66,7 +66,7 @@ def _build_probe_config(args: argparse.Namespace) -> dict[str, Any]:
             for token in str(getattr(args, "prefer_database_tokens", "") or "学术期刊,中国学术期刊,学位论文").split(",")
             if token.strip()
         ],
-        "entry_url": str(getattr(args, "entry_url", "") or defaults.get("cnki_entry_url") or "https://kns.cnki.net/kns8s/search"),
+        "entry_url": str(getattr(args, "entry_url", "") or defaults.get("cnki_entry_url") or "https://ai.cnki.net/aisearch"),
         "cdp_url": str(
             getattr(args, "cdp_url", "") or defaults.get("cnki_cdp_url") or f"http://127.0.0.1:{int(defaults.get('cnki_cdp_port') or 9222)}"
         ),
