@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from hashlib import sha1
+from importlib import import_module
 import json
 from pathlib import Path
 import re
@@ -100,6 +101,76 @@ DEFAULT_STRUCTURED_VARIANTS: Tuple[Tuple[str, str], ...] = (
     ("babeldoc", "full_fine_grained"),
 )
 
+MERGED_FOLLOWUP_AFFAIRS: Tuple[Tuple[str, str], ...] = (
+    ("A065", "autodokit.affairs.候选文献视图构建.phase_a065"),
+    ("A070", "autodokit.affairs.候选文献视图构建.phase_a070"),
+    ("A075", "autodokit.affairs.候选文献视图构建.phase_a075"),
+)
+
+MERGED_PHASE_OUTPUT_DIRS: Dict[str, str] = {
+    "A065": "A060_phase_a065_review_reference_preprocessing",
+    "A070": "A060_phase_a070_review_synthesis",
+    "A075": "A060_phase_a075_non_review_seed_views",
+}
+
+MERGED_PHASE_DEFAULT_CONFIGS: Dict[str, Dict[str, Any]] = {
+    "A065": {
+        "ensure_parse_on_entry": False,
+        "enable_reference_block_llm": True,
+        "reference_block_model": "qwen3.5-plus",
+        "structured_converter": "monkeyocr",
+        "structured_task_type": "review_deep",
+        "structured_reuse_any_variant": False,
+        "structured_generation_required": False,
+        "strict_structured_only": False,
+        "enable_reference_line_repair": True,
+        "reference_line_repair_model": "qwen-flash",
+        "placeholder_source": "placeholder_from_a065_review_scan",
+        "structured_extractors": {"enable_images": False},
+    },
+    "A070": {
+        "ensure_parse_on_entry": False,
+        "enable_review_state_llm": True,
+        "review_state_model": "qwen3.5-plus",
+        "single_document_model": "qwen3.5-plus",
+        "synthesis_model": "qwen3-max",
+        "review_state_max_chars": 60000,
+        "llm_context_mode": "single_document_request",
+        "citation_output": {
+            "sentence_suffix_format": "见 [[{cite_key}|{display_label}]]。",
+            "mode": "obsidian_wikilink",
+            "forbid_debug_trace_suffix": True,
+        },
+        "downstream_delivery": {
+            "main_channel": "文献流程状态",
+            "a080_stage": "A080",
+            "allow_csv_export": True,
+            "allow_markdown_export": True,
+            "export_preference": ["csv", "markdown"],
+        },
+    },
+    "A075": {
+        "seed_sources": {
+            "priority_csv": "review_priority_candidates.csv",
+            "reference_csv": "review_reference_candidates.csv",
+        },
+        "human_seed_contract": {
+            "enabled": False,
+            "default_target_stage": "rough_read",
+            "on_ambiguous": "manual_review",
+            "on_missing": "route_to_a040",
+            "manual_guidance": "",
+            "reading_objective": "",
+            "seed_items": [],
+        },
+        "export_contract": {
+            "export_csv": True,
+            "export_markdown": True,
+            "target_stages": ["A080"],
+        },
+    },
+}
+
 
 def _stringify(value: Any) -> str:
     """安全转换文本值。"""
@@ -109,6 +180,96 @@ def _stringify(value: Any) -> str:
     if pd.isna(value):
         return ""
     return str(value).strip()
+
+
+def _deep_merge_dicts(base: Dict[str, Any], overrides: Dict[str, Any]) -> Dict[str, Any]:
+    """递归合并配置字典。"""
+
+    merged: Dict[str, Any] = dict(base)
+    for key, value in overrides.items():
+        if isinstance(value, dict) and isinstance(merged.get(key), dict):
+            merged[key] = _deep_merge_dicts(dict(merged[key]), value)
+        else:
+            merged[key] = value
+    return merged
+
+
+def _build_merged_phase_config(
+    *,
+    node_code: str,
+    workspace_root: Path,
+    raw_cfg: Dict[str, Any],
+) -> Dict[str, Any]:
+    """基于 A060 配置派生内部 merged phase 配置。"""
+
+    content_db_path, _ = resolve_content_db_config(
+        raw_cfg,
+        default_path=workspace_root / "database" / "content" / "content.db",
+    )
+    content_db_text = str(content_db_path) if content_db_path is not None else ""
+    research_topic = _stringify(raw_cfg.get("research_topic") or raw_cfg.get("topic"))
+    dry_run = bool(raw_cfg.get("dry_run", raw_cfg.get("是否仅预演", False)))
+    log_level = _stringify(raw_cfg.get("log_level") or raw_cfg.get("日志级别") or "INFO") or "INFO"
+    phase_output_dir = workspace_root / "tasks" / MERGED_PHASE_OUTPUT_DIRS.get(node_code, f"{node_code}_merged_phase")
+
+    common_cfg: Dict[str, Any] = {
+        "workspace_root": str(workspace_root),
+        "工作区根路径": str(workspace_root),
+        "content_db": content_db_text,
+        "内容数据库路径": content_db_text,
+        "output_dir": str(phase_output_dir),
+        "输出目录": str(phase_output_dir),
+        "topic": research_topic,
+        "research_topic": research_topic,
+        "log_level": log_level,
+        "日志级别": log_level,
+        "dry_run": dry_run,
+        "是否仅预演": dry_run,
+        "retry_settings": raw_cfg.get("retry_settings") or raw_cfg.get("重试设置") or {},
+        "重试设置": raw_cfg.get("重试设置") or raw_cfg.get("retry_settings") or {},
+        "postprocess_contract": raw_cfg.get("postprocess_contract") or raw_cfg.get("后处理契约") or {},
+        "后处理契约": raw_cfg.get("后处理契约") or raw_cfg.get("postprocess_contract") or {},
+    }
+    if node_code == "A075":
+        common_cfg["seed_sources"] = {
+            "a070_exports_dir": str(workspace_root / "knowledge" / "audits"),
+            **dict(common_cfg.get("seed_sources") or {}),
+        }
+
+    merged_phase_configs = raw_cfg.get("merged_phase_configs")
+    phase_overrides = merged_phase_configs.get(node_code) if isinstance(merged_phase_configs, dict) else {}
+    if not isinstance(phase_overrides, dict):
+        phase_overrides = {}
+
+    merged_cfg = _deep_merge_dicts(common_cfg, MERGED_PHASE_DEFAULT_CONFIGS.get(node_code, {}))
+    return _deep_merge_dicts(merged_cfg, phase_overrides)
+
+
+def _run_merged_followup_affairs(
+    *,
+    workspace_root: Path,
+    raw_cfg: Dict[str, Any],
+    output_dir: Path,
+) -> List[Path]:
+    """顺序执行已迁入 A060 目录下的本地 phase。"""
+
+    merged_config_dir = output_dir / "merged_phase_configs"
+    merged_config_dir.mkdir(parents=True, exist_ok=True)
+
+    artifact_paths: List[Path] = []
+    for node_code, module_path in MERGED_FOLLOWUP_AFFAIRS:
+        nested_config_path = merged_config_dir / f"{node_code}.json"
+        nested_config = _build_merged_phase_config(
+            node_code=node_code,
+            workspace_root=workspace_root,
+            raw_cfg=raw_cfg,
+        )
+        nested_config_path.write_text(json.dumps(nested_config, ensure_ascii=False, indent=2), encoding="utf-8")
+        nested_execute = import_module(module_path).execute
+        nested_outputs = nested_execute(nested_config_path)
+        artifact_paths.append(nested_config_path)
+        artifact_paths.extend(Path(path) for path in nested_outputs)
+    return artifact_paths
 
 
 def _is_monkeyocr_converter(value: str) -> bool:
@@ -1673,6 +1834,12 @@ def execute(config_path: Path) -> List[Path]:
         legacy_output_dir,
         output_dir,
     )
+    merged_outputs = _run_merged_followup_affairs(
+        workspace_root=workspace_root,
+        raw_cfg=raw_cfg,
+        output_dir=output_dir,
+    )
+
     return [
         index_path,
         readable_path,
@@ -1687,6 +1854,7 @@ def execute(config_path: Path) -> List[Path]:
         canonical_read_pool_path,
         canonical_batch_path,
         gate_path,
+        *merged_outputs,
     ]
 
 

@@ -30,7 +30,7 @@ try:
     from autodokit.core.template_affair import TemplateAffairBase
 except ModuleNotFoundError:  # pragma: no cover - 联调环境兼容回退
     from autodoengine.core.template_affair import TemplateAffairBase
-from autodokit.tools import load_json_or_py
+from autodokit.tools import build_gate_review, build_research_trajectory, load_json_or_py
 from autodokit.tools.contentdb_sqlite import resolve_content_db_config
 from autodokit.tools.llm_clients import AliyunDashScopeClient, load_aliyun_llm_config
 from autodokit.tools.ocr.classic.pdf_structured_data_tools import load_document_records_from_structured_source
@@ -143,6 +143,38 @@ def _write_related_literature_items(output_dir: Path, docs: List[Dict[str, Any]]
             lines.append("")
     md_path.write_text("\n".join(lines).rstrip() + "\n", encoding="utf-8")
     return [csv_path, md_path]
+
+
+def _build_trajectory_items(rows: List[Dict[str, Any]], docs: List[Dict[str, Any]]) -> List[Dict[str, str]]:
+    """从矩阵结果构造研究脉络输入条目。"""
+
+    if rows:
+        return [
+            {
+                "uid": _stringify(row.get("uid")),
+                "title": _stringify(row.get("title")),
+                "year": _stringify(row.get("year")),
+                "research_question": _stringify(row.get("research_question")),
+                "method": _stringify(row.get("method")),
+                "data": _stringify(row.get("data")),
+            }
+            for row in rows
+        ]
+
+    trajectory_items: List[Dict[str, str]] = []
+    for doc in docs:
+        meta = doc.get("meta") if isinstance(doc.get("meta"), dict) else {}
+        trajectory_items.append(
+            {
+                "uid": _stringify(doc.get("uid")),
+                "title": _stringify(doc.get("title") or meta.get("title")),
+                "year": _stringify(doc.get("year") or meta.get("year")),
+                "research_question": "",
+                "method": "",
+                "data": "",
+            }
+        )
+    return trajectory_items
 
 
 def _run_literature_matrix(*, merged: Dict[str, Any]) -> List[Path]:
@@ -267,7 +299,38 @@ def _run_literature_matrix(*, merged: Dict[str, Any]) -> List[Path]:
         for r in rows:
             w.writerow({k: r.get(k, "") for k in fieldnames})
 
-    return [matrix_jsonl, matrix_csv, *related_paths]
+    trajectory_items = _build_trajectory_items(rows, docs)
+    trajectory = build_research_trajectory(trajectory_items, topic=_stringify(merged.get("topic") or merged.get("research_topic") or "未命名主题"))
+    trajectory_path = out_dir / "research_trajectory.json"
+    trajectory_path.write_text(json.dumps(trajectory, ensure_ascii=False, indent=2), encoding="utf-8")
+
+    placeholder_status = {
+        "node_code": "A110",
+        "merged_nodes": ["A120", "A130"],
+        "knowledge_framework_placeholder": True,
+        "message": "A110 已物理合并 A120/A130；研究脉络已生成，领域知识框架暂沿用占位实现并在 A110 内收口。",
+        "next_action": "pass_next",
+    }
+    placeholder_path = out_dir / "knowledge_framework_placeholder_status.json"
+    placeholder_path.write_text(json.dumps(placeholder_status, ensure_ascii=False, indent=2), encoding="utf-8")
+
+    gate_review = build_gate_review(
+        node_uid="A110",
+        node_name="文献矩阵与知识收束链整合事务",
+        summary=f"生成文献矩阵 {len(rows)} 条，研究脉络覆盖 {trajectory.get('item_count', 0)} 条，并在同一节点内收口 A120/A130。",
+        checks=[
+            {"name": "matrix_item_count", "value": len(rows)},
+            {"name": "trajectory_item_count", "value": trajectory.get("item_count", 0)},
+            {"name": "knowledge_framework_placeholder", "value": True},
+        ],
+        artifacts=[str(matrix_jsonl), str(matrix_csv), str(trajectory_path), str(placeholder_path), *[str(path) for path in related_paths]],
+        recommendation="pass_next" if rows or trajectory.get("item_count", 0) > 0 else "revise",
+        score=88.0 if rows or trajectory.get("item_count", 0) > 0 else 35.0,
+    )
+    gate_path = out_dir / "gate_review.json"
+    gate_path.write_text(json.dumps(gate_review, ensure_ascii=False, indent=2), encoding="utf-8")
+
+    return [matrix_jsonl, matrix_csv, trajectory_path, placeholder_path, gate_path, *related_paths]
 
 
 class LiteratureMatrixTemplateAffair(TemplateAffairBase):

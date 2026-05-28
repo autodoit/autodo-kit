@@ -10,14 +10,14 @@
 
 ## 2. 分类索引
 
-- 事务总数：98
+- 事务总数：110
 - 分类数：19
 
 - decision 类事务: 1
 - output 类事务: 1
 - sink 类事务: 2
 - transform 类事务: 42
-- unknown 类事务: 10
+- unknown 类事务: 15
 - 任务文档事务: 4
 - 图节点事务 / calc: 1
 - 图节点事务 / compare: 1
@@ -30,13 +30,17 @@
 - 图节点事务 / output: 1
 - 图节点事务 / start: 1
 - 图节点事务 / switch: 1
-- 文献处理事务: 22
-- 格式转换事务: 5
+- 文献处理事务: 28
+- 格式转换事务: 6
 
 ## 3. 全量索引表
 
 | 事务 | 领域 | 节点类型 | pass_mode | 目录 |
 | --- | --- | --- | --- | --- |
+| AOB用户级内容发布 | business |  | config_path | autodokit/affairs/AOB用户级内容发布 |
+| AOB用户级内容同步 | business |  | config_path | autodokit/affairs/AOB用户级内容同步 |
+| AOB用户级内容备份 | business |  | config_path | autodokit/affairs/AOB用户级内容备份 |
+| AOB用户级内容聚合 | business |  | config_path | autodokit/affairs/AOB用户级内容聚合 |
 | AOB统一业务事务 | business |  | config_path | autodokit/affairs/AOB统一业务事务 |
 | AOK三库联动示例 | business |  | config_path | autodokit/affairs/AOK三库联动示例 |
 | AOK任务数据库初始化 | business |  | config_path | autodokit/affairs/AOK任务数据库初始化 |
@@ -55,6 +59,7 @@
 | CNKI高级检索 | business | transform | config_path | autodokit/affairs/CNKI高级检索 |
 | DiD_RDD分析 | business | transform | config_path | autodokit/affairs/DiD_RDD分析 |
 | LaTeX转Word | business | transform | config_path | autodokit/affairs/LaTeX转Word |
+| MonkeyOCR批量解析PDF | business |  | config_path | autodokit/affairs/MonkeyOCR批量解析PDF |
 | node_runtime_retry_probe | business | transform | config_path | autodokit/affairs/node_runtime_retry_probe |
 | Obsidian关联导出 | business | sink | config_path | autodokit/affairs/Obsidian关联导出 |
 | PDF文件转md文件 | business | source | config_path | autodokit/affairs/PDF文件转md文件 |
@@ -102,13 +107,17 @@
 | 引文核验 | business | transform | config_path | autodokit/affairs/引文核验 |
 | 成果归档发布 | business | output | config_path | autodokit/affairs/成果归档发布 |
 | 数据工程样本构建 | business | transform | config_path | autodokit/affairs/数据工程样本构建 |
+| 文献批判性研读与标准笔记 | business |  | config_path | autodokit/affairs/文献批判性研读与标准笔记 |
+| 文献泛读与粗读 | business |  | config_path | autodokit/affairs/文献泛读与粗读 |
 | 文献矩阵 | business | source | config_path | autodokit/affairs/文献矩阵 |
+| 文献研读与正式知识回写 | business |  | config_path | autodokit/affairs/文献研读与正式知识回写 |
 | 文献阅读规划 | business | transform | config_path | autodokit/affairs/文献阅读规划 |
 | 方法白名单选择 | business | transform | config_path | autodokit/affairs/方法白名单选择 |
 | 期刊投稿 | business | transform | config_path | autodokit/affairs/期刊投稿 |
 | 本地文献导入 | business | transform | config_path | autodokit/affairs/本地文献导入 |
 | 检索治理 | business | transform | config_path | autodokit/affairs/检索治理 |
 | 模型路由派发 | business | transform | config_path | autodokit/affairs/模型路由派发 |
+| 泛读批次分析汇总 | business |  | config_path | autodokit/affairs/泛读批次分析汇总 |
 | 清洗bibtex文件 | business | transform | config_path | autodokit/affairs/清洗bibtex文件 |
 | 生成关键词集合 | business | source | config_path | autodokit/affairs/生成关键词集合 |
 | 生成文献元数据关系图 | business | transform | config_path | autodokit/affairs/生成文献元数据关系图 |
@@ -120,6 +129,7 @@
 | 研究诚信检查 | business | transform | config_path | autodokit/affairs/研究诚信检查 |
 | 管理文档单元数据库 | business | transform | config_path | autodokit/affairs/管理文档单元数据库 |
 | 结果分析解读 | business | transform | config_path | autodokit/affairs/结果分析解读 |
+| 统一文献预处理解析 | business |  | config_path | autodokit/affairs/统一文献预处理解析 |
 | 综述参考文献预处理与笔记骨架 | business |  | config_path | autodokit/affairs/综述参考文献预处理与笔记骨架 |
 | 综述研读与研究地图生成 | business |  | config_path | autodokit/affairs/综述研读与研究地图生成 |
 | 综述草稿生成 | business | sink | config_path | autodokit/affairs/综述草稿生成 |
@@ -133,7 +143,10 @@
 | 论文草稿 | business | transform | config_path | autodokit/affairs/论文草稿 |
 | 证据综合 | business | transform | config_path | autodokit/affairs/证据综合 |
 | 语义预筛选 | business | transform | config_path | autodokit/affairs/语义预筛选 |
+| 非综述候选种子生成 | business |  | config_path | autodokit/affairs/非综述候选种子生成 |
+| 非综述候选视图构建 | business |  | config_path | autodokit/affairs/非综述候选视图构建 |
 | 项目初始化 | business | transform | config_path | autodokit/affairs/项目初始化 |
+| 领域知识框架构建 | business |  | config_path | autodokit/affairs/领域知识框架构建 |
 
 ## 4. decision 类事务
 
@@ -180,54 +193,6 @@
 
 - 无
 
-### AOB用户级内容聚合
-
-| 字段 | 值 |
-| --- | --- |
-| 目录 | autodokit/affairs/AOB用户级内容聚合 |
-| Runner.callable | execute |
-| Runner.pass_mode | config_path |
-
-调用 `autodokit.tools.aob.aob_aggregate_user_content`，用于把用户侧内容聚合为 canonical 资产。
-
-补充口径：该事务支持 `scopes` 与 `project_dirs`。`scopes` 可选 `global`、`system`、`user`、`project`；传 `project_dirs` 且未显式传 `scopes` 时，默认按 `project` 范围展开，并按 profile 把项目根解析到 `.github`、`.claude`、`.cursor` 等 carrier 根。
-
-### AOB用户级内容发布
-
-| 字段 | 值 |
-| --- | --- |
-| 目录 | autodokit/affairs/AOB用户级内容发布 |
-| Runner.callable | execute |
-| Runner.pass_mode | config_path |
-
-调用 `autodokit.tools.aob.aob_publish_user_content`，用于把 canonical 资产发布到目标用户目录。
-
-补充口径：该事务支持 `scopes` 与 `project_dirs`。对 `project` 范围，发布落点是 carrier 根；`CLAUDE.md`、`AGENTS.md`、`GEMINI.md`、`opencode.json` 这类项目根文件会写回 carrier 的父目录。
-
-### AOB用户级内容备份
-
-| 字段 | 值 |
-| --- | --- |
-| 目录 | autodokit/affairs/AOB用户级内容备份 |
-| Runner.callable | execute |
-| Runner.pass_mode | config_path |
-
-调用 `autodokit.tools.aob.aob_backup_user_content`，用于在同步前或单独执行用户资产备份。
-
-补充口径：该事务支持 `scopes` 与 `project_dirs`。对 `project` 范围，备份源是整个项目根，而不是单独的 carrier 根。
-
-### AOB用户级内容同步
-
-| 字段 | 值 |
-| --- | --- |
-| 目录 | autodokit/affairs/AOB用户级内容同步 |
-| Runner.callable | execute |
-| Runner.pass_mode | config_path |
-
-调用 `autodokit.tools.aob.aob_update_user_content`，用于按默认“先备份、再聚合、再发布”的顺序执行同步。
-
-补充口径：该事务支持 `scopes` 与 `project_dirs`。`simulate_only=true` 且未传 `sandbox_dir` 时，默认把沙盒建到 `Downloads/aob-sync-sandbox-YYYYMMDDHHMMSS`；对 `project` 范围会复制整个项目根，但沙盒内同步参与方仍指向 carrier 根。
-
 #### 业务参数表（affair.json）
 
 | 字段 | 必填 | 默认值 | 示例值 |
@@ -270,7 +235,7 @@
 from pathlib import Path
 import autodokit as aok
 
-workspace_root = Path("/path/to/my_workspace").resolve()
+workspace_root = Path("/home/ethan/my_workspace").resolve()
 outputs = aok.run_affair("外审意见接收",
     config={'decision': '', 'review_comments': [], 'editor_notes': ''},
     workspace_root=workspace_root,
@@ -284,7 +249,7 @@ print(outputs)
 from pathlib import Path
 from autodokit.affairs.外审意见接收.affair import execute
 
-config_path = Path("/path/to/my_workspace/configs/affair_config.json").resolve()
+config_path = Path("/home/ethan/my_workspace/configs/affair_config.json").resolve()
 outputs = execute(config_path)
 print(outputs)
 ```
@@ -381,7 +346,7 @@ print(outputs)
 from pathlib import Path
 import autodokit as aok
 
-workspace_root = Path("/path/to/my_workspace").resolve()
+workspace_root = Path("/home/ethan/my_workspace").resolve()
 outputs = aok.run_affair("成果归档发布",
     config={'manuscript_title': '',
      'publication_status': '',
@@ -398,7 +363,7 @@ print(outputs)
 from pathlib import Path
 from autodokit.affairs.成果归档发布.affair import execute
 
-config_path = Path("/path/to/my_workspace/configs/affair_config.json").resolve()
+config_path = Path("/home/ethan/my_workspace/configs/affair_config.json").resolve()
 outputs = execute(config_path)
 print(outputs)
 ```
@@ -489,7 +454,7 @@ print(outputs)
 from pathlib import Path
 import autodokit as aok
 
-workspace_root = Path("/path/to/my_workspace").resolve()
+workspace_root = Path("/home/ethan/my_workspace").resolve()
 outputs = aok.run_affair("Obsidian关联导出",
     config={},
     workspace_root=workspace_root,
@@ -503,7 +468,7 @@ print(outputs)
 from pathlib import Path
 from autodokit.affairs.Obsidian关联导出.affair import execute
 
-config_path = Path("/path/to/my_workspace/configs/affair_config.json").resolve()
+config_path = Path("/home/ethan/my_workspace/configs/affair_config.json").resolve()
 outputs = execute(config_path)
 print(outputs)
 ```
@@ -658,7 +623,7 @@ Returns:
 from pathlib import Path
 import autodokit as aok
 
-workspace_root = Path("/path/to/my_workspace").resolve()
+workspace_root = Path("/home/ethan/my_workspace").resolve()
 outputs = aok.run_affair("单篇精读",
     config={'content_db': '',
      'input_structured_json': '',
@@ -688,7 +653,7 @@ print(outputs)
 from pathlib import Path
 from autodokit.affairs.单篇精读.affair import execute
 
-config_path = Path("/path/to/my_workspace/configs/affair_config.json").resolve()
+config_path = Path("/home/ethan/my_workspace/configs/affair_config.json").resolve()
 outputs = execute(config_path)
 print(outputs)
 ```
@@ -789,7 +754,7 @@ CNKI 全文下载规划事务。
 from pathlib import Path
 import autodokit as aok
 
-workspace_root = Path("/path/to/my_workspace").resolve()
+workspace_root = Path("/home/ethan/my_workspace").resolve()
 outputs = aok.run_affair("CNKI全文下载规划",
     config={'detail_url': '',
      'file_format': 'pdf',
@@ -807,7 +772,7 @@ print(outputs)
 from pathlib import Path
 from autodokit.affairs.CNKI全文下载规划.affair import execute
 
-config_path = Path("/path/to/my_workspace/configs/affair_config.json").resolve()
+config_path = Path("/home/ethan/my_workspace/configs/affair_config.json").resolve()
 outputs = execute(config_path)
 print(outputs)
 ```
@@ -909,7 +874,7 @@ CNKI 单篇详情提取事务。
 from pathlib import Path
 import autodokit as aok
 
-workspace_root = Path("/path/to/my_workspace").resolve()
+workspace_root = Path("/home/ethan/my_workspace").resolve()
 outputs = aok.run_affair("CNKI单篇详情提取",
     config={'detail_url': '',
      'title_hint': '',
@@ -928,7 +893,7 @@ print(outputs)
 from pathlib import Path
 from autodokit.affairs.CNKI单篇详情提取.affair import execute
 
-config_path = Path("/path/to/my_workspace/configs/affair_config.json").resolve()
+config_path = Path("/home/ethan/my_workspace/configs/affair_config.json").resolve()
 outputs = execute(config_path)
 print(outputs)
 ```
@@ -1026,7 +991,7 @@ CNKI 期刊指标提取事务。
 from pathlib import Path
 import autodokit as aok
 
-workspace_root = Path("/path/to/my_workspace").resolve()
+workspace_root = Path("/home/ethan/my_workspace").resolve()
 outputs = aok.run_affair("CNKI期刊指标提取",
     config={'journal_name': '',
      'detail_url': '',
@@ -1044,7 +1009,7 @@ print(outputs)
 from pathlib import Path
 from autodokit.affairs.CNKI期刊指标提取.affair import execute
 
-config_path = Path("/path/to/my_workspace/configs/affair_config.json").resolve()
+config_path = Path("/home/ethan/my_workspace/configs/affair_config.json").resolve()
 outputs = execute(config_path)
 print(outputs)
 ```
@@ -1150,7 +1115,7 @@ CNKI 期刊目录提取事务。
 from pathlib import Path
 import autodokit as aok
 
-workspace_root = Path("/path/to/my_workspace").resolve()
+workspace_root = Path("/home/ethan/my_workspace").resolve()
 outputs = aok.run_affair("CNKI期刊目录提取",
     config={'journal_name': '',
      'year': '',
@@ -1170,7 +1135,7 @@ print(outputs)
 from pathlib import Path
 from autodokit.affairs.CNKI期刊目录提取.affair import execute
 
-config_path = Path("/path/to/my_workspace/configs/affair_config.json").resolve()
+config_path = Path("/home/ethan/my_workspace/configs/affair_config.json").resolve()
 outputs = execute(config_path)
 print(outputs)
 ```
@@ -1265,7 +1230,7 @@ CNKI 桥接事务执行入口。
 from pathlib import Path
 import autodokit as aok
 
-workspace_root = Path("/path/to/my_workspace").resolve()
+workspace_root = Path("/home/ethan/my_workspace").resolve()
 outputs = aok.run_affair("CNKI桥接",
     config={'mode': 'cnki-search', 'output_dir': ''},
     workspace_root=workspace_root,
@@ -1279,7 +1244,7 @@ print(outputs)
 from pathlib import Path
 from autodokit.affairs.CNKI桥接.affair import execute
 
-config_path = Path("/path/to/my_workspace/configs/affair_config.json").resolve()
+config_path = Path("/home/ethan/my_workspace/configs/affair_config.json").resolve()
 outputs = execute(config_path)
 print(outputs)
 ```
@@ -1377,7 +1342,7 @@ CNKI 结果解析事务。
 from pathlib import Path
 import autodokit as aok
 
-workspace_root = Path("/path/to/my_workspace").resolve()
+workspace_root = Path("/home/ethan/my_workspace").resolve()
 outputs = aok.run_affair("CNKI结果解析",
     config={'page_url': '',
      'current_page': 1,
@@ -1395,7 +1360,7 @@ print(outputs)
 from pathlib import Path
 from autodokit.affairs.CNKI结果解析.affair import execute
 
-config_path = Path("/path/to/my_workspace/configs/affair_config.json").resolve()
+config_path = Path("/home/ethan/my_workspace/configs/affair_config.json").resolve()
 outputs = execute(config_path)
 print(outputs)
 ```
@@ -1501,7 +1466,7 @@ CNKI 翻页导航事务。
 from pathlib import Path
 import autodokit as aok
 
-workspace_root = Path("/path/to/my_workspace").resolve()
+workspace_root = Path("/home/ethan/my_workspace").resolve()
 outputs = aok.run_affair("CNKI翻页导航",
     config={'action': 'next',
      'current_page': 1,
@@ -1521,7 +1486,7 @@ print(outputs)
 from pathlib import Path
 from autodokit.affairs.CNKI翻页导航.affair import execute
 
-config_path = Path("/path/to/my_workspace/configs/affair_config.json").resolve()
+config_path = Path("/home/ethan/my_workspace/configs/affair_config.json").resolve()
 outputs = execute(config_path)
 print(outputs)
 ```
@@ -1619,7 +1584,7 @@ CNKI 题录导出事务。
 from pathlib import Path
 import autodokit as aok
 
-workspace_root = Path("/path/to/my_workspace").resolve()
+workspace_root = Path("/home/ethan/my_workspace").resolve()
 outputs = aok.run_affair("CNKI题录导出",
     config={'detail_url': '',
      'export_mode': 'ris',
@@ -1637,7 +1602,7 @@ print(outputs)
 from pathlib import Path
 from autodokit.affairs.CNKI题录导出.affair import execute
 
-config_path = Path("/path/to/my_workspace/configs/affair_config.json").resolve()
+config_path = Path("/home/ethan/my_workspace/configs/affair_config.json").resolve()
 outputs = execute(config_path)
 print(outputs)
 ```
@@ -1723,7 +1688,7 @@ DiD/RDD 分析事务。
 from pathlib import Path
 import autodokit as aok
 
-workspace_root = Path("/path/to/my_workspace").resolve()
+workspace_root = Path("/home/ethan/my_workspace").resolve()
 outputs = aok.run_affair("DiD_RDD分析",
     config={'panel_rows': [], 'output_dir': ''},
     workspace_root=workspace_root,
@@ -1737,7 +1702,7 @@ print(outputs)
 from pathlib import Path
 from autodokit.affairs.DiD_RDD分析.affair import execute
 
-config_path = Path("/path/to/my_workspace/configs/affair_config.json").resolve()
+config_path = Path("/home/ethan/my_workspace/configs/affair_config.json").resolve()
 outputs = execute(config_path)
 print(outputs)
 ```
@@ -1831,7 +1796,7 @@ Node Runtime 重试探针事务。
 from pathlib import Path
 import autodokit as aok
 
-workspace_root = Path("/path/to/my_workspace").resolve()
+workspace_root = Path("/home/ethan/my_workspace").resolve()
 outputs = aok.run_affair("node_runtime_retry_probe",
     config={},
     workspace_root=workspace_root,
@@ -1845,7 +1810,7 @@ print(outputs)
 from pathlib import Path
 from autodokit.affairs.node_runtime_retry_probe.affair import execute
 
-config_path = Path("/path/to/my_workspace/configs/affair_config.json").resolve()
+config_path = Path("/home/ethan/my_workspace/configs/affair_config.json").resolve()
 outputs = execute(config_path)
 print(outputs)
 ```
@@ -1943,7 +1908,7 @@ print(outputs)
 from pathlib import Path
 import autodokit as aok
 
-workspace_root = Path("/path/to/my_workspace").resolve()
+workspace_root = Path("/home/ethan/my_workspace").resolve()
 outputs = aok.run_affair("中文本地资源管理",
     config={'root_dir': '',
      'bib_dir_name': 'bib',
@@ -1961,7 +1926,7 @@ print(outputs)
 from pathlib import Path
 from autodokit.affairs.中文本地资源管理.affair import execute
 
-config_path = Path("/path/to/my_workspace/configs/affair_config.json").resolve()
+config_path = Path("/home/ethan/my_workspace/configs/affair_config.json").resolve()
 outputs = execute(config_path)
 print(outputs)
 ```
@@ -2051,7 +2016,7 @@ print(outputs)
 from pathlib import Path
 import autodokit as aok
 
-workspace_root = Path("/path/to/my_workspace").resolve()
+workspace_root = Path("/home/ethan/my_workspace").resolve()
 outputs = aok.run_affair("中文网页采集",
     config={'query': '', 'seed_urls': [], 'output_dir': ''},
     workspace_root=workspace_root,
@@ -2065,7 +2030,7 @@ print(outputs)
 from pathlib import Path
 from autodokit.affairs.中文网页采集.affair import execute
 
-config_path = Path("/path/to/my_workspace/configs/affair_config.json").resolve()
+config_path = Path("/home/ethan/my_workspace/configs/affair_config.json").resolve()
 outputs = execute(config_path)
 print(outputs)
 ```
@@ -2151,7 +2116,7 @@ print(outputs)
 from pathlib import Path
 import autodokit as aok
 
-workspace_root = Path("/path/to/my_workspace").resolve()
+workspace_root = Path("/home/ethan/my_workspace").resolve()
 outputs = aok.run_affair("任务数据库初始化",
     config={'project_root': '.', 'output_dir': ''},
     workspace_root=workspace_root,
@@ -2165,7 +2130,7 @@ print(outputs)
 from pathlib import Path
 from autodokit.affairs.任务数据库初始化.affair import execute
 
-config_path = Path("/path/to/my_workspace/configs/affair_config.json").resolve()
+config_path = Path("/home/ethan/my_workspace/configs/affair_config.json").resolve()
 outputs = execute(config_path)
 print(outputs)
 ```
@@ -2251,7 +2216,7 @@ print(outputs)
 from pathlib import Path
 import autodokit as aok
 
-workspace_root = Path("/path/to/my_workspace").resolve()
+workspace_root = Path("/home/ethan/my_workspace").resolve()
 outputs = aok.run_affair("任务数据库回放",
     config={'project_root': '.', 'output_dir': ''},
     workspace_root=workspace_root,
@@ -2265,7 +2230,7 @@ print(outputs)
 from pathlib import Path
 from autodokit.affairs.任务数据库回放.affair import execute
 
-config_path = Path("/path/to/my_workspace/configs/affair_config.json").resolve()
+config_path = Path("/home/ethan/my_workspace/configs/affair_config.json").resolve()
 outputs = execute(config_path)
 print(outputs)
 ```
@@ -2351,7 +2316,7 @@ print(outputs)
 from pathlib import Path
 import autodokit as aok
 
-workspace_root = Path("/path/to/my_workspace").resolve()
+workspace_root = Path("/home/ethan/my_workspace").resolve()
 outputs = aok.run_affair("任务数据库校验",
     config={'project_root': '.', 'output_dir': ''},
     workspace_root=workspace_root,
@@ -2365,7 +2330,7 @@ print(outputs)
 from pathlib import Path
 from autodokit.affairs.任务数据库校验.affair import execute
 
-config_path = Path("/path/to/my_workspace/configs/affair_config.json").resolve()
+config_path = Path("/home/ethan/my_workspace/configs/affair_config.json").resolve()
 outputs = execute(config_path)
 print(outputs)
 ```
@@ -2471,7 +2436,7 @@ print(outputs)
 from pathlib import Path
 import autodokit as aok
 
-workspace_root = Path("/path/to/my_workspace").resolve()
+workspace_root = Path("/home/ethan/my_workspace").resolve()
 outputs = aok.run_affair("公开数据获取",
     config={'query': '',
      'object_type': 'dataset',
@@ -2491,7 +2456,7 @@ print(outputs)
 from pathlib import Path
 from autodokit.affairs.公开数据获取.affair import execute
 
-config_path = Path("/path/to/my_workspace/configs/affair_config.json").resolve()
+config_path = Path("/home/ethan/my_workspace/configs/affair_config.json").resolve()
 outputs = execute(config_path)
 print(outputs)
 ```
@@ -2543,33 +2508,33 @@ print(outputs)
 
 | 字段 | 必填 | 默认值 | 示例值 |
 | --- | --- | --- | --- |
-| uid_当前事务 | 否 | "" | "" |
+| current_transaction_uid | 否 | "" | "" |
 | goal | 否 | "" | "" |
 | output_dir | 否 | "" | "" |
 | payload | 否 | {} | {} |
 | project_root | 否 | "." | "." |
-| uid_任务 | 否 | "" | "" |
+| task_uid | 否 | "" | "" |
 
 #### 节点默认配置表（node_template.config）
 
 | 字段 | 必填 | 默认值 | 示例值 |
 | --- | --- | --- | --- |
-| uid_当前事务 | 否 | "" | "" |
+| current_transaction_uid | 否 | "" | "" |
 | goal | 否 | "" | "" |
 | output_dir | 否 | "" | "" |
 | payload | 否 | {} | {} |
 | project_root | 否 | "." | "." |
-| uid_任务 | 否 | "" | "" |
+| task_uid | 否 | "" | "" |
 
 #### node.config JSON 示例
 
 ```json
 {
-  "uid_任务": "",
+  "task_uid": "",
   "goal": "",
   "payload": {},
   "project_root": ".",
-  "uid_当前事务": "",
+  "current_transaction_uid": "",
   "output_dir": ""
 }
 ```
@@ -2578,11 +2543,11 @@ print(outputs)
 
 ```json
 {
-  "uid_任务": "",
+  "task_uid": "",
   "goal": "",
   "payload": {},
   "project_root": ".",
-  "uid_当前事务": "",
+  "current_transaction_uid": "",
   "output_dir": ""
 }
 ```
@@ -2593,13 +2558,13 @@ print(outputs)
 from pathlib import Path
 import autodokit as aok
 
-workspace_root = Path("/path/to/my_workspace").resolve()
+workspace_root = Path("/home/ethan/my_workspace").resolve()
 outputs = aok.run_affair("单轮调度派发",
-  config={'uid_任务': '',
+    config={'task_uid': '',
      'goal': '',
      'payload': {},
      'project_root': '.',
-   'uid_当前事务': '',
+     'current_transaction_uid': '',
      'output_dir': ''},
     workspace_root=workspace_root,
 )
@@ -2612,7 +2577,7 @@ print(outputs)
 from pathlib import Path
 from autodokit.affairs.单轮调度派发.affair import execute
 
-config_path = Path("/path/to/my_workspace/configs/affair_config.json").resolve()
+config_path = Path("/home/ethan/my_workspace/configs/affair_config.json").resolve()
 outputs = execute(config_path)
 print(outputs)
 ```
@@ -2698,7 +2663,7 @@ print(outputs)
 from pathlib import Path
 import autodokit as aok
 
-workspace_root = Path("/path/to/my_workspace").resolve()
+workspace_root = Path("/home/ethan/my_workspace").resolve()
 outputs = aok.run_affair("变量操作化",
     config={'concepts': [], 'output_dir': ''},
     workspace_root=workspace_root,
@@ -2712,7 +2677,7 @@ print(outputs)
 from pathlib import Path
 from autodokit.affairs.变量操作化.affair import execute
 
-config_path = Path("/path/to/my_workspace/configs/affair_config.json").resolve()
+config_path = Path("/home/ethan/my_workspace/configs/affair_config.json").resolve()
 outputs = execute(config_path)
 print(outputs)
 ```
@@ -2810,7 +2775,7 @@ print(outputs)
 from pathlib import Path
 import autodokit as aok
 
-workspace_root = Path("/path/to/my_workspace").resolve()
+workspace_root = Path("/home/ethan/my_workspace").resolve()
 outputs = aok.run_affair("合并去重bibtex",
     config={},
     workspace_root=workspace_root,
@@ -2824,7 +2789,7 @@ print(outputs)
 from pathlib import Path
 from autodokit.affairs.合并去重bibtex.affair import execute
 
-config_path = Path("/path/to/my_workspace/configs/affair_config.json").resolve()
+config_path = Path("/home/ethan/my_workspace/configs/affair_config.json").resolve()
 outputs = execute(config_path)
 print(outputs)
 ```
@@ -2922,7 +2887,7 @@ print(outputs)
 from pathlib import Path
 import autodokit as aok
 
-workspace_root = Path("/path/to/my_workspace").resolve()
+workspace_root = Path("/home/ethan/my_workspace").resolve()
 outputs = aok.run_affair("实证四件套",
     config={'baseline_summary': '',
      'mechanism_points': [],
@@ -2940,7 +2905,7 @@ print(outputs)
 from pathlib import Path
 from autodokit.affairs.实证四件套.affair import execute
 
-config_path = Path("/path/to/my_workspace/configs/affair_config.json").resolve()
+config_path = Path("/home/ethan/my_workspace/configs/affair_config.json").resolve()
 outputs = execute(config_path)
 print(outputs)
 ```
@@ -3030,7 +2995,7 @@ print(outputs)
 from pathlib import Path
 import autodokit as aok
 
-workspace_root = Path("/path/to/my_workspace").resolve()
+workspace_root = Path("/home/ethan/my_workspace").resolve()
 outputs = aok.run_affair("审稿回复",
     config={'comments': [], 'manuscript_title': '', 'output_dir': ''},
     workspace_root=workspace_root,
@@ -3044,7 +3009,7 @@ print(outputs)
 from pathlib import Path
 from autodokit.affairs.审稿回复.affair import execute
 
-config_path = Path("/path/to/my_workspace/configs/affair_config.json").resolve()
+config_path = Path("/home/ethan/my_workspace/configs/affair_config.json").resolve()
 outputs = execute(config_path)
 print(outputs)
 ```
@@ -3134,7 +3099,7 @@ print(outputs)
 from pathlib import Path
 import autodokit as aok
 
-workspace_root = Path("/path/to/my_workspace").resolve()
+workspace_root = Path("/home/ethan/my_workspace").resolve()
 outputs = aok.run_affair("审稿意见拆解",
     config={'comments': [], 'manuscript_title': '', 'output_dir': ''},
     workspace_root=workspace_root,
@@ -3148,7 +3113,7 @@ print(outputs)
 from pathlib import Path
 from autodokit.affairs.审稿意见拆解.affair import execute
 
-config_path = Path("/path/to/my_workspace/configs/affair_config.json").resolve()
+config_path = Path("/home/ethan/my_workspace/configs/affair_config.json").resolve()
 outputs = execute(config_path)
 print(outputs)
 ```
@@ -3250,7 +3215,7 @@ print(outputs)
 from pathlib import Path
 import autodokit as aok
 
-workspace_root = Path("/path/to/my_workspace").resolve()
+workspace_root = Path("/home/ethan/my_workspace").resolve()
 outputs = aok.run_affair("工作区自检",
     config={'project_root': '',
      'mode': 'full',
@@ -3269,7 +3234,7 @@ print(outputs)
 from pathlib import Path
 from autodokit.affairs.工作区自检.affair import execute
 
-config_path = Path("/path/to/my_workspace/configs/affair_config.json").resolve()
+config_path = Path("/home/ethan/my_workspace/configs/affair_config.json").resolve()
 outputs = execute(config_path)
 print(outputs)
 ```
@@ -3359,7 +3324,7 @@ print(outputs)
 from pathlib import Path
 import autodokit as aok
 
-workspace_root = Path("/path/to/my_workspace").resolve()
+workspace_root = Path("/home/ethan/my_workspace").resolve()
 outputs = aok.run_affair("工作流执行",
     config={'workflow_path': '', 'dry_run': False, 'output_dir': ''},
     workspace_root=workspace_root,
@@ -3373,7 +3338,7 @@ print(outputs)
 from pathlib import Path
 from autodokit.affairs.工作流执行.affair import execute
 
-config_path = Path("/path/to/my_workspace/configs/affair_config.json").resolve()
+config_path = Path("/home/ethan/my_workspace/configs/affair_config.json").resolve()
 outputs = execute(config_path)
 print(outputs)
 ```
@@ -3463,7 +3428,7 @@ print(outputs)
 from pathlib import Path
 import autodokit as aok
 
-workspace_root = Path("/path/to/my_workspace").resolve()
+workspace_root = Path("/home/ethan/my_workspace").resolve()
 outputs = aok.run_affair("引文核验",
     config={'citations': [], 'references': [], 'output_dir': ''},
     workspace_root=workspace_root,
@@ -3477,7 +3442,7 @@ print(outputs)
 from pathlib import Path
 from autodokit.affairs.引文核验.affair import execute
 
-config_path = Path("/path/to/my_workspace/configs/affair_config.json").resolve()
+config_path = Path("/home/ethan/my_workspace/configs/affair_config.json").resolve()
 outputs = execute(config_path)
 print(outputs)
 ```
@@ -3571,7 +3536,7 @@ print(outputs)
 from pathlib import Path
 import autodokit as aok
 
-workspace_root = Path("/path/to/my_workspace").resolve()
+workspace_root = Path("/home/ethan/my_workspace").resolve()
 outputs = aok.run_affair("数据工程样本构建",
     config={'dataset_sources': [], 'join_keys': [], 'variable_specs': [], 'output_table': ''},
     workspace_root=workspace_root,
@@ -3585,7 +3550,7 @@ print(outputs)
 from pathlib import Path
 from autodokit.affairs.数据工程样本构建.affair import execute
 
-config_path = Path("/path/to/my_workspace/configs/affair_config.json").resolve()
+config_path = Path("/home/ethan/my_workspace/configs/affair_config.json").resolve()
 outputs = execute(config_path)
 print(outputs)
 ```
@@ -3682,7 +3647,7 @@ print(outputs)
 from pathlib import Path
 import autodokit as aok
 
-workspace_root = Path("/path/to/my_workspace").resolve()
+workspace_root = Path("/home/ethan/my_workspace").resolve()
 outputs = aok.run_affair("方法白名单选择",
     config={'candidate_methods': [], 'whitelist': [], 'top_k': 3, 'output_dir': ''},
     workspace_root=workspace_root,
@@ -3696,7 +3661,7 @@ print(outputs)
 from pathlib import Path
 from autodokit.affairs.方法白名单选择.affair import execute
 
-config_path = Path("/path/to/my_workspace/configs/affair_config.json").resolve()
+config_path = Path("/home/ethan/my_workspace/configs/affair_config.json").resolve()
 outputs = execute(config_path)
 print(outputs)
 ```
@@ -3790,7 +3755,7 @@ print(outputs)
 from pathlib import Path
 import autodokit as aok
 
-workspace_root = Path("/path/to/my_workspace").resolve()
+workspace_root = Path("/home/ethan/my_workspace").resolve()
 outputs = aok.run_affair("期刊投稿",
     config={'manuscript_title': '', 'target_journal': '', 'package_files': [], 'version_tag': 'v1'},
     workspace_root=workspace_root,
@@ -3804,7 +3769,7 @@ print(outputs)
 from pathlib import Path
 from autodokit.affairs.期刊投稿.affair import execute
 
-config_path = Path("/path/to/my_workspace/configs/affair_config.json").resolve()
+config_path = Path("/home/ethan/my_workspace/configs/affair_config.json").resolve()
 outputs = execute(config_path)
 print(outputs)
 ```
@@ -3936,7 +3901,7 @@ print(outputs)
 from pathlib import Path
 import autodokit as aok
 
-workspace_root = Path("/path/to/my_workspace").resolve()
+workspace_root = Path("/home/ethan/my_workspace").resolve()
 outputs = aok.run_affair("模型路由派发",
     config={'task_type': 'general',
      'quality_tier': 'standard',
@@ -3968,7 +3933,7 @@ print(outputs)
 from pathlib import Path
 from autodokit.affairs.模型路由派发.affair import execute
 
-config_path = Path("/path/to/my_workspace/configs/affair_config.json").resolve()
+config_path = Path("/home/ethan/my_workspace/configs/affair_config.json").resolve()
 outputs = execute(config_path)
 print(outputs)
 ```
@@ -4017,7 +3982,7 @@ Examples:
     >>> from pathlib import Path
     >>> # 说明：此处仅展示调用方式；具体配置由调度器写入 .tmp/*.json
     >>> # from autodokit.affairs.清洗bibtex文件 import execute
-    >>> # execute(Path(r"C:\workspace\.tmp\affair_config.json"))
+    >>> # execute(Path("/home/ethan/workspace/.tmp/affair_config.json"))
 
 #### 事务 Markdown 说明摘录
 
@@ -4083,7 +4048,7 @@ Examples:
 from pathlib import Path
 import autodokit as aok
 
-workspace_root = Path("/path/to/my_workspace").resolve()
+workspace_root = Path("/home/ethan/my_workspace").resolve()
 outputs = aok.run_affair("清洗bibtex文件",
     config={},
     workspace_root=workspace_root,
@@ -4097,7 +4062,7 @@ print(outputs)
 from pathlib import Path
 from autodokit.affairs.清洗bibtex文件.affair import execute
 
-config_path = Path("/path/to/my_workspace/configs/affair_config.json").resolve()
+config_path = Path("/home/ethan/my_workspace/configs/affair_config.json").resolve()
 outputs = execute(config_path)
 print(outputs)
 ```
@@ -4195,7 +4160,7 @@ print(outputs)
 from pathlib import Path
 import autodokit as aok
 
-workspace_root = Path("/path/to/my_workspace").resolve()
+workspace_root = Path("/home/ethan/my_workspace").resolve()
 outputs = aok.run_affair("白名单治理检查",
     config={'requested_scopes': [],
      'approved_scopes': [],
@@ -4213,7 +4178,7 @@ print(outputs)
 from pathlib import Path
 from autodokit.affairs.白名单治理检查.affair import execute
 
-config_path = Path("/path/to/my_workspace/configs/affair_config.json").resolve()
+config_path = Path("/home/ethan/my_workspace/configs/affair_config.json").resolve()
 outputs = execute(config_path)
 print(outputs)
 ```
@@ -4311,7 +4276,7 @@ print(outputs)
 from pathlib import Path
 import autodokit as aok
 
-workspace_root = Path("/path/to/my_workspace").resolve()
+workspace_root = Path("/home/ethan/my_workspace").resolve()
 outputs = aok.run_affair("百炼SDK接入检查",
     config={'key_file': '',
      'model': 'auto',
@@ -4329,7 +4294,7 @@ print(outputs)
 from pathlib import Path
 from autodokit.affairs.百炼SDK接入检查.affair import execute
 
-config_path = Path("/path/to/my_workspace/configs/affair_config.json").resolve()
+config_path = Path("/home/ethan/my_workspace/configs/affair_config.json").resolve()
 outputs = execute(config_path)
 print(outputs)
 ```
@@ -4427,7 +4392,7 @@ print(outputs)
 from pathlib import Path
 import autodokit as aok
 
-workspace_root = Path("/path/to/my_workspace").resolve()
+workspace_root = Path("/home/ethan/my_workspace").resolve()
 outputs = aok.run_affair("研究构思",
     config={'topic': '',
      'literature_gaps': [],
@@ -4445,7 +4410,7 @@ print(outputs)
 from pathlib import Path
 from autodokit.affairs.研究构思.affair import execute
 
-config_path = Path("/path/to/my_workspace/configs/affair_config.json").resolve()
+config_path = Path("/home/ethan/my_workspace/configs/affair_config.json").resolve()
 outputs = execute(config_path)
 print(outputs)
 ```
@@ -4557,7 +4522,7 @@ print(outputs)
 from pathlib import Path
 import autodokit as aok
 
-workspace_root = Path("/path/to/my_workspace").resolve()
+workspace_root = Path("/home/ethan/my_workspace").resolve()
 outputs = aok.run_affair("研究诚信检查",
     config={'project_root': '',
      'strict': False,
@@ -4574,7 +4539,7 @@ print(outputs)
 from pathlib import Path
 from autodokit.affairs.研究诚信检查.affair import execute
 
-config_path = Path("/path/to/my_workspace/configs/affair_config.json").resolve()
+config_path = Path("/home/ethan/my_workspace/configs/affair_config.json").resolve()
 outputs = execute(config_path)
 print(outputs)
 ```
@@ -4766,7 +4731,7 @@ Returns:
 from pathlib import Path
 import autodokit as aok
 
-workspace_root = Path("/path/to/my_workspace").resolve()
+workspace_root = Path("/home/ethan/my_workspace").resolve()
 outputs = aok.run_affair("管理文档单元数据库",
     config={'input_documents_dir': 'data/文献原文数据',
      'unit_db_dir': 'data/文档单元数据库',
@@ -4782,7 +4747,7 @@ print(outputs)
 from pathlib import Path
 from autodokit.affairs.管理文档单元数据库.affair import execute
 
-config_path = Path("/path/to/my_workspace/configs/affair_config.json").resolve()
+config_path = Path("/home/ethan/my_workspace/configs/affair_config.json").resolve()
 outputs = execute(config_path)
 print(outputs)
 ```
@@ -4876,7 +4841,7 @@ print(outputs)
 from pathlib import Path
 import autodokit as aok
 
-workspace_root = Path("/path/to/my_workspace").resolve()
+workspace_root = Path("/home/ethan/my_workspace").resolve()
 outputs = aok.run_affair("结果分析解读",
     config={'statistical_summary': '',
      'mechanism_points': [],
@@ -4893,7 +4858,7 @@ print(outputs)
 from pathlib import Path
 from autodokit.affairs.结果分析解读.affair import execute
 
-config_path = Path("/path/to/my_workspace/configs/affair_config.json").resolve()
+config_path = Path("/home/ethan/my_workspace/configs/affair_config.json").resolve()
 outputs = execute(config_path)
 print(outputs)
 ```
@@ -4991,7 +4956,7 @@ print(outputs)
 from pathlib import Path
 import autodokit as aok
 
-workspace_root = Path("/path/to/my_workspace").resolve()
+workspace_root = Path("/home/ethan/my_workspace").resolve()
 outputs = aok.run_affair("计量环境配置",
     config={'project_root': '',
      'require_r': True,
@@ -5009,7 +4974,7 @@ print(outputs)
 from pathlib import Path
 from autodokit.affairs.计量环境配置.affair import execute
 
-config_path = Path("/path/to/my_workspace/configs/affair_config.json").resolve()
+config_path = Path("/home/ethan/my_workspace/configs/affair_config.json").resolve()
 outputs = execute(config_path)
 print(outputs)
 ```
@@ -5103,7 +5068,7 @@ print(outputs)
 from pathlib import Path
 import autodokit as aok
 
-workspace_root = Path("/path/to/my_workspace").resolve()
+workspace_root = Path("/home/ethan/my_workspace").resolve()
 outputs = aok.run_affair("论文整编写作",
     config={'section_materials': {},
      'evidence_points': [],
@@ -5120,7 +5085,7 @@ print(outputs)
 from pathlib import Path
 from autodokit.affairs.论文整编写作.affair import execute
 
-config_path = Path("/path/to/my_workspace/configs/affair_config.json").resolve()
+config_path = Path("/home/ethan/my_workspace/configs/affair_config.json").resolve()
 outputs = execute(config_path)
 print(outputs)
 ```
@@ -5214,7 +5179,7 @@ print(outputs)
 from pathlib import Path
 import autodokit as aok
 
-workspace_root = Path("/path/to/my_workspace").resolve()
+workspace_root = Path("/home/ethan/my_workspace").resolve()
 outputs = aok.run_affair("论文自审",
     config={'manuscript_title': '', 'sections': {}, 'figures': [], 'output_dir': ''},
     workspace_root=workspace_root,
@@ -5228,7 +5193,7 @@ print(outputs)
 from pathlib import Path
 from autodokit.affairs.论文自审.affair import execute
 
-config_path = Path("/path/to/my_workspace/configs/affair_config.json").resolve()
+config_path = Path("/home/ethan/my_workspace/configs/affair_config.json").resolve()
 outputs = execute(config_path)
 print(outputs)
 ```
@@ -5322,7 +5287,7 @@ print(outputs)
 from pathlib import Path
 import autodokit as aok
 
-workspace_root = Path("/path/to/my_workspace").resolve()
+workspace_root = Path("/home/ethan/my_workspace").resolve()
 outputs = aok.run_affair("论文草稿",
     config={'topic': '', 'contributions': [], 'limitations': [], 'output_dir': ''},
     workspace_root=workspace_root,
@@ -5336,7 +5301,7 @@ print(outputs)
 from pathlib import Path
 from autodokit.affairs.论文草稿.affair import execute
 
-config_path = Path("/path/to/my_workspace/configs/affair_config.json").resolve()
+config_path = Path("/home/ethan/my_workspace/configs/affair_config.json").resolve()
 outputs = execute(config_path)
 print(outputs)
 ```
@@ -5432,7 +5397,7 @@ print(outputs)
 from pathlib import Path
 import autodokit as aok
 
-workspace_root = Path("/path/to/my_workspace").resolve()
+workspace_root = Path("/home/ethan/my_workspace").resolve()
 outputs = aok.run_affair("证据综合",
     config={'question': '', 'passages': [], 'top_k': 3, 'output_dir': ''},
     workspace_root=workspace_root,
@@ -5446,7 +5411,7 @@ print(outputs)
 from pathlib import Path
 from autodokit.affairs.证据综合.affair import execute
 
-config_path = Path("/path/to/my_workspace/configs/affair_config.json").resolve()
+config_path = Path("/home/ethan/my_workspace/configs/affair_config.json").resolve()
 outputs = execute(config_path)
 print(outputs)
 ```
@@ -5541,7 +5506,7 @@ print(outputs)
 from pathlib import Path
 import autodokit as aok
 
-workspace_root = Path("/path/to/my_workspace").resolve()
+workspace_root = Path("/home/ethan/my_workspace").resolve()
 outputs = aok.run_affair("项目初始化",
     config={'project_root': '', 'output_dir': ''},
     workspace_root=workspace_root,
@@ -5555,13 +5520,495 @@ print(outputs)
 from pathlib import Path
 from autodokit.affairs.项目初始化.affair import execute
 
-config_path = Path("/path/to/my_workspace/configs/affair_config.json").resolve()
+config_path = Path("/home/ethan/my_workspace/configs/affair_config.json").resolve()
 outputs = execute(config_path)
 print(outputs)
 ```
 
 
 ## 8. unknown 类事务
+
+### AOB用户级内容发布
+
+#### 基本信息
+
+| 字段 | 值 |
+| --- | --- |
+| 事务名 | AOB用户级内容发布 |
+| 领域 | business |
+| 所有者 | aok |
+| 版本 | migrated |
+| 描述 |  |
+| 目录 | autodokit/affairs/AOB用户级内容发布 |
+| Runner.module |  |
+| Runner.callable | execute |
+| Runner.pass_mode | config_path |
+| 文档源 | autodokit/affairs/AOB用户级内容发布/affair.md |
+
+#### 模块说明
+
+AOB 用户级内容发布事务。
+
+#### 事务 Markdown 说明摘录
+
+- AOB用户级内容发布
+
+调用 `autodokit.tools.aob.aob_publish_user_content`，把 `libs/aol/canonical.aol.json` 发布到目标用户目录。
+
+固定输出文件：
+
+- `aob_publish_user_content_result.json`
+
+- 关键参数
+
+- `target_paths`
+- `home_dir`
+
+#### interface.inputs
+
+- 无
+
+#### interface.outputs
+
+- 无
+
+#### node.inputs
+
+- 无
+
+#### node.outputs
+
+- 无
+
+#### 业务参数表（affair.json）
+
+| 字段 | 必填 | 默认值 | 示例值 |
+| --- | --- | --- | --- |
+| dry_run | 否 | true | true |
+| engine_vendors | 否 | [] | [] |
+| home_dir | 否 | "" | "" |
+| ide_vendors | 否 | [] | [] |
+| include_missing | 否 | false | false |
+| repo_root | 否 | "" | "" |
+| target_paths | 否 | [] | [] |
+
+#### 节点默认配置表（node_template.config）
+
+- 无
+
+#### node.config JSON 示例
+
+```json
+{}
+```
+
+#### affair.json 业务参数 JSON 示例
+
+```json
+{
+  "target_paths": [],
+  "home_dir": "",
+  "engine_vendors": [],
+  "ide_vendors": [],
+  "include_missing": false,
+  "dry_run": true,
+  "repo_root": ""
+}
+```
+
+#### 推荐调用示例：run_affair
+
+```python
+from pathlib import Path
+import autodokit as aok
+
+workspace_root = Path("/home/ethan/my_workspace").resolve()
+outputs = aok.run_affair("AOB用户级内容发布",
+    config={'target_paths': [],
+     'home_dir': '',
+     'engine_vendors': [],
+     'ide_vendors': [],
+     'include_missing': False,
+     'dry_run': True,
+     'repo_root': ''},
+    workspace_root=workspace_root,
+)
+print(outputs)
+```
+
+#### 高级调用示例：直接导入模块
+
+```python
+from pathlib import Path
+from  import execute
+
+config_path = Path("/home/ethan/my_workspace/configs/affair_config.json").resolve()
+outputs = execute(config_path)
+print(outputs)
+```
+
+### AOB用户级内容同步
+
+#### 基本信息
+
+| 字段 | 值 |
+| --- | --- |
+| 事务名 | AOB用户级内容同步 |
+| 领域 | business |
+| 所有者 | aok |
+| 版本 | migrated |
+| 描述 |  |
+| 目录 | autodokit/affairs/AOB用户级内容同步 |
+| Runner.module |  |
+| Runner.callable | execute |
+| Runner.pass_mode | config_path |
+| 文档源 | autodokit/affairs/AOB用户级内容同步/affair.md |
+
+#### 模块说明
+
+AOB 用户级内容同步事务。
+
+#### 事务 Markdown 说明摘录
+
+- AOB用户级内容同步
+
+调用 `autodokit.tools.aob.aob_update_user_content`，按“参与方解析 -> AOL 反编译 -> logical key / SQLite 基线判定 -> canonical 回写 -> 定向发布”的顺序执行用户级内容同步。
+
+固定输出文件：
+
+- `aob_update_user_content_result.json`
+
+- 关键参数
+
+- `target_paths`
+- `home_dir`
+
+#### interface.inputs
+
+- 无
+
+#### interface.outputs
+
+- 无
+
+#### node.inputs
+
+- 无
+
+#### node.outputs
+
+- 无
+
+#### 业务参数表（affair.json）
+
+| 字段 | 必填 | 默认值 | 示例值 |
+| --- | --- | --- | --- |
+| backup_dir | 否 | "" | "" |
+| dry_run | 否 | true | true |
+| engine_vendors | 否 | [] | [] |
+| home_dir | 否 | "" | "" |
+| ide_vendors | 否 | [] | [] |
+| include_missing | 否 | false | false |
+| repo_root | 否 | "" | "" |
+| skip_backup | 否 | false | false |
+| skip_items_sync | 否 | false | false |
+| target_paths | 否 | [] | [] |
+
+#### 节点默认配置表（node_template.config）
+
+- 无
+
+#### node.config JSON 示例
+
+```json
+{}
+```
+
+#### affair.json 业务参数 JSON 示例
+
+```json
+{
+  "target_paths": [],
+  "home_dir": "",
+  "engine_vendors": [],
+  "ide_vendors": [],
+  "include_missing": false,
+  "backup_dir": "",
+  "dry_run": true,
+  "skip_backup": false,
+  "skip_items_sync": false,
+  "repo_root": ""
+}
+```
+
+#### 推荐调用示例：run_affair
+
+```python
+from pathlib import Path
+import autodokit as aok
+
+workspace_root = Path("/home/ethan/my_workspace").resolve()
+outputs = aok.run_affair("AOB用户级内容同步",
+    config={'target_paths': [],
+     'home_dir': '',
+     'engine_vendors': [],
+     'ide_vendors': [],
+     'include_missing': False,
+     'backup_dir': '',
+     'dry_run': True,
+     'skip_backup': False,
+     'skip_items_sync': False,
+     'repo_root': ''},
+    workspace_root=workspace_root,
+)
+print(outputs)
+```
+
+#### 高级调用示例：直接导入模块
+
+```python
+from pathlib import Path
+from  import execute
+
+config_path = Path("/home/ethan/my_workspace/configs/affair_config.json").resolve()
+outputs = execute(config_path)
+print(outputs)
+```
+
+### AOB用户级内容备份
+
+#### 基本信息
+
+| 字段 | 值 |
+| --- | --- |
+| 事务名 | AOB用户级内容备份 |
+| 领域 | business |
+| 所有者 | aok |
+| 版本 | migrated |
+| 描述 |  |
+| 目录 | autodokit/affairs/AOB用户级内容备份 |
+| Runner.module |  |
+| Runner.callable | execute |
+| Runner.pass_mode | config_path |
+| 文档源 | autodokit/affairs/AOB用户级内容备份/affair.md |
+
+#### 模块说明
+
+AOB 用户级内容备份事务。
+
+#### 事务 Markdown 说明摘录
+
+- AOB用户级内容备份
+
+调用 `autodokit.tools.aob.aob_backup_user_content`，把目标用户目录中的资产备份到备份根目录。
+
+固定输出文件：
+
+- `aob_backup_user_content_result.json`
+
+- 关键参数
+
+- `target_paths`
+- `home_dir`
+
+#### interface.inputs
+
+- 无
+
+#### interface.outputs
+
+- 无
+
+#### node.inputs
+
+- 无
+
+#### node.outputs
+
+- 无
+
+#### 业务参数表（affair.json）
+
+| 字段 | 必填 | 默认值 | 示例值 |
+| --- | --- | --- | --- |
+| backup_dir | 否 | "" | "" |
+| dry_run | 否 | true | true |
+| engine_vendors | 否 | [] | [] |
+| home_dir | 否 | "" | "" |
+| ide_vendors | 否 | [] | [] |
+| include_missing | 否 | false | false |
+| repo_root | 否 | "" | "" |
+| target_paths | 否 | [] | [] |
+
+#### 节点默认配置表（node_template.config）
+
+- 无
+
+#### node.config JSON 示例
+
+```json
+{}
+```
+
+#### affair.json 业务参数 JSON 示例
+
+```json
+{
+  "target_paths": [],
+  "home_dir": "",
+  "engine_vendors": [],
+  "ide_vendors": [],
+  "include_missing": false,
+  "backup_dir": "",
+  "dry_run": true,
+  "repo_root": ""
+}
+```
+
+#### 推荐调用示例：run_affair
+
+```python
+from pathlib import Path
+import autodokit as aok
+
+workspace_root = Path("/home/ethan/my_workspace").resolve()
+outputs = aok.run_affair("AOB用户级内容备份",
+    config={'target_paths': [],
+     'home_dir': '',
+     'engine_vendors': [],
+     'ide_vendors': [],
+     'include_missing': False,
+     'backup_dir': '',
+     'dry_run': True,
+     'repo_root': ''},
+    workspace_root=workspace_root,
+)
+print(outputs)
+```
+
+#### 高级调用示例：直接导入模块
+
+```python
+from pathlib import Path
+from  import execute
+
+config_path = Path("/home/ethan/my_workspace/configs/affair_config.json").resolve()
+outputs = execute(config_path)
+print(outputs)
+```
+
+### AOB用户级内容聚合
+
+#### 基本信息
+
+| 字段 | 值 |
+| --- | --- |
+| 事务名 | AOB用户级内容聚合 |
+| 领域 | business |
+| 所有者 | aok |
+| 版本 | migrated |
+| 描述 |  |
+| 目录 | autodokit/affairs/AOB用户级内容聚合 |
+| Runner.module |  |
+| Runner.callable | execute |
+| Runner.pass_mode | config_path |
+| 文档源 | autodokit/affairs/AOB用户级内容聚合/affair.md |
+
+#### 模块说明
+
+AOB 用户级内容聚合事务。
+
+#### 事务 Markdown 说明摘录
+
+- AOB用户级内容聚合
+
+调用 `autodokit.tools.aob.aob_aggregate_user_content`，把用户侧内容聚合为 `libs/aol/canonical.aol.json`。
+
+固定输出文件：
+
+- `aob_aggregate_user_content_result.json`
+
+- 关键参数
+
+- `source_paths`
+- `home_dir`
+
+#### interface.inputs
+
+- 无
+
+#### interface.outputs
+
+- 无
+
+#### node.inputs
+
+- 无
+
+#### node.outputs
+
+- 无
+
+#### 业务参数表（affair.json）
+
+| 字段 | 必填 | 默认值 | 示例值 |
+| --- | --- | --- | --- |
+| dry_run | 否 | true | true |
+| home_dir | 否 | "" | "" |
+| repo_root | 否 | "" | "" |
+| skip_items_sync | 否 | false | false |
+| source_paths | 否 | [] | [] |
+
+#### 节点默认配置表（node_template.config）
+
+- 无
+
+#### node.config JSON 示例
+
+```json
+{}
+```
+
+#### affair.json 业务参数 JSON 示例
+
+```json
+{
+  "source_paths": [],
+  "home_dir": "",
+  "dry_run": true,
+  "skip_items_sync": false,
+  "repo_root": ""
+}
+```
+
+#### 推荐调用示例：run_affair
+
+```python
+from pathlib import Path
+import autodokit as aok
+
+workspace_root = Path("/home/ethan/my_workspace").resolve()
+outputs = aok.run_affair("AOB用户级内容聚合",
+    config={'source_paths': [],
+     'home_dir': '',
+     'dry_run': True,
+     'skip_items_sync': False,
+     'repo_root': ''},
+    workspace_root=workspace_root,
+)
+print(outputs)
+```
+
+#### 高级调用示例：直接导入模块
+
+```python
+from pathlib import Path
+from  import execute
+
+config_path = Path("/home/ethan/my_workspace/configs/affair_config.json").resolve()
+outputs = execute(config_path)
+print(outputs)
+```
 
 ### AOB统一业务事务
 
@@ -5588,11 +6035,16 @@ AOB 统一业务事务。
 
 - AOB统一业务事务
 
-调用 `autodokit.tools.aob` 中的 10 个原子 tool，并通过 `mode` 统一分派执行。
+调用 `autodokit.tools.aob` 中的 6 个原子 AOB tool，并通过 `mode` 字段选择具体功能。
 
 固定输出文件：
 
 - `aob_business_result.json`
+
+- mode 说明
+
+- `validate_content`
+  - 调用 `aob_validate_content`
 
 #### interface.inputs
 
@@ -5614,34 +6066,44 @@ AOB 统一业务事务。
 
 | 字段 | 必填 | 默认值 | 示例值 |
 | --- | --- | --- | --- |
-| mode | 否 | "validate_content" | "deploy_workflow" |
-| input_path | 否 | "libs" | "libs" |
-| strategy | 否 | "mtime_size_then_hash" | "mtime_size_then_hash" |
+| agents_dir | 否 | ".opencode/agents" | ".opencode/agents" |
+| allow_downgrade | 否 | true | true |
+| backup_dir | 否 | "" | "" |
+| canonical_dump_path | 否 | "" | "" |
 | dry_run | 否 | true | true |
-| repo_root | 否 | "" | "" |
-| source_paths | 否 | [] | ["C:/tmp/demo"] |
-| scopes | 否 | [] | ["project"] |
-| project_dirs | 否 | [] | ["C:/tmp/demo-project"] |
-| target_library_dir_name | 否 | "" | "外部模板导入示例" |
-| tags | 否 | "" | "文档管理" |
-| import_mode | 否 | "add" | "add" |
-| overwrite_existing | 否 | false | false |
-| project_dir | 否 | "" | "projects_templates/AcademicResearch-auto-workflow" |
-| source_engine | 否 | "opencode" | "opencode" |
-| target_engine | 否 | "claude" | "claude" |
-| title | 否 | "" | "办公区转换" |
-| workflow | 否 | "academic" | "academic" |
-| engine_ids | 否 | ["opencode"] | ["claude","copilot"] |
-| target_dir | 否 | "" | "/home/ethan/ProjectS" |
-| project_name | 否 | "" | "AOB回归项目" |
-| on_conflict | 否 | "skip" | "overwrite" |
-| skip_health_check | 否 | false | false |
+| engine_ids | 否 | ["opencode"] | ["opencode"] |
+| engine_vendors | 否 | [] | [] |
 | extras | 否 | "none" | "none" |
 | git_init_mode | 否 | "auto" | "auto" |
-| target_root | 否 | "" | "/tmp" |
-| agents_dir | 否 | ".opencode/agents" | ".opencode/agents" |
+| home_dir | 否 | "" | "" |
+| ide_vendors | 否 | [] | [] |
+| import_mode | 否 | "add" | "add" |
+| include_missing | 否 | false | false |
+| input_path | 否 | "libs" | "libs" |
+| mode | 否 | "validate_content" | "validate_content" |
+| on_conflict | 否 | "skip" | "skip" |
 | opencode_json | 否 | "opencode.json" | "opencode.json" |
 | output_dir | 否 | "" | "" |
+| overwrite_existing | 否 | false | false |
+| project_dir | 否 | "" | "" |
+| project_name | 否 | "" | "" |
+| repo_root | 否 | "" | "" |
+| skip_backup | 否 | false | false |
+| skip_health_check | 否 | false | false |
+| skip_items_sync | 否 | false | false |
+| source_engine | 否 | "opencode" | "opencode" |
+| source_paths | 否 | [] | [] |
+| strategy | 否 | "mtime_size_then_hash" | "mtime_size_then_hash" |
+| tags | 否 | "" | "" |
+| target_capability_mode | 否 | "balanced" | "balanced" |
+| target_dir | 否 | "" | "" |
+| target_engine | 否 | "claude" | "claude" |
+| target_library_dir_name | 否 | "" | "" |
+| target_paths | 否 | [] | [] |
+| target_root | 否 | "" | "" |
+| title | 否 | "" | "" |
+| validation_report_path | 否 | "" | "" |
+| workflow | 否 | "academic" | "academic" |
 
 #### 节点默认配置表（node_template.config）
 
@@ -5663,8 +6125,14 @@ AOB 统一业务事务。
   "dry_run": true,
   "repo_root": "",
   "source_paths": [],
-  "scopes": [],
-  "project_dirs": [],
+  "target_paths": [],
+  "home_dir": "",
+  "engine_vendors": [],
+  "ide_vendors": [],
+  "include_missing": false,
+  "backup_dir": "",
+  "skip_backup": false,
+  "skip_items_sync": false,
   "target_library_dir_name": "",
   "tags": "",
   "import_mode": "add",
@@ -5673,6 +6141,10 @@ AOB 统一业务事务。
   "source_engine": "opencode",
   "target_engine": "claude",
   "title": "",
+  "canonical_dump_path": "",
+  "validation_report_path": "",
+  "allow_downgrade": true,
+  "target_capability_mode": "balanced",
   "workflow": "academic",
   "engine_ids": [
     "opencode"
@@ -5696,15 +6168,46 @@ AOB 统一业务事务。
 from pathlib import Path
 import autodokit as aok
 
-workspace_root = Path("/path/to/my_workspace").resolve()
+workspace_root = Path("/home/ethan/my_workspace").resolve()
 outputs = aok.run_affair("AOB统一业务事务",
-  config={'mode': 'deploy_workflow',
-   'workflow': 'academic',
-   'engine_ids': ['opencode'],
-   'target_dir': '/home/ethan/ProjectS',
-   'dry_run': True,
-   'repo_root': '',
-   'output_dir': ''},
+    config={'mode': 'validate_content',
+     'input_path': 'libs',
+     'strategy': 'mtime_size_then_hash',
+     'dry_run': True,
+     'repo_root': '',
+     'source_paths': [],
+     'target_paths': [],
+     'home_dir': '',
+     'engine_vendors': [],
+     'ide_vendors': [],
+     'include_missing': False,
+     'backup_dir': '',
+     'skip_backup': False,
+     'skip_items_sync': False,
+     'target_library_dir_name': '',
+     'tags': '',
+     'import_mode': 'add',
+     'overwrite_existing': False,
+     'project_dir': '',
+     'source_engine': 'opencode',
+     'target_engine': 'claude',
+     'title': '',
+     'canonical_dump_path': '',
+     'validation_report_path': '',
+     'allow_downgrade': True,
+     'target_capability_mode': 'balanced',
+     'workflow': 'academic',
+     'engine_ids': ['opencode'],
+     'target_dir': '',
+     'project_name': '',
+     'on_conflict': 'skip',
+     'skip_health_check': False,
+     'extras': 'none',
+     'git_init_mode': 'auto',
+     'target_root': '',
+     'agents_dir': '.opencode/agents',
+     'opencode_json': 'opencode.json',
+     'output_dir': ''},
     workspace_root=workspace_root,
 )
 print(outputs)
@@ -5714,24 +6217,12 @@ print(outputs)
 
 ```python
 from pathlib import Path
-from autodokit.affairs.AOB统一业务事务.affair import execute
+from  import execute
 
-config_path = Path("/path/to/my_workspace/configs/affair_config.json").resolve()
+config_path = Path("/home/ethan/my_workspace/configs/affair_config.json").resolve()
 outputs = execute(config_path)
 print(outputs)
 ```
-
-模式说明补充：
-
-- `validate_content`：校验内容，不写目标项目。
-- `sync_items`：同步内容库条目，并通过 AOC 归一化模块扫描 `libs/`。
-- `aggregate_user_content` / `publish_user_content` / `backup_user_content` / `update_user_content`：共享 `scopes` 与 `project_dirs` 参数；`project` 范围会按 workspace profile 把项目根转换为 carrier 根参与反编译与发布。
-- `import_external_templates`：导入模板并入库。
-- `convert_workspace`：做模板项目跨引擎办公区转换，支持 `opencode`、`claude`、`copilot`、`gemini`、`codex`，结果包含 canonical AOL dump 与 `L1/L2/L3` capability report。
-- `deploy_workflow`：执行实际安装部署，`engine_ids` 可接收上述五类引擎。
-- `check_opencode_deploy_regression`：对部署结果做 OpenCode 回归验证。
-
-`convert_workspace` 的 capability report 中，`L2` 覆盖 `hooks`、`mcp`、`settings`、`policies`，`L3` 覆盖 `modes`、`plugins`、`tools`、`themes`、`plans`、`engine_overrides`。canonical AOL dump 会保留 `hooks`、`mcp_servers`、`settings`、`policies`、`engine_native` 根字段。
 
 ### AOK三库联动示例
 
@@ -5834,7 +6325,7 @@ AOK 三库联动示例事务。
 from pathlib import Path
 import autodokit as aok
 
-workspace_root = Path("/path/to/my_workspace").resolve()
+workspace_root = Path("/home/ethan/my_workspace").resolve()
 outputs = aok.run_affair("AOK三库联动示例",
     config={'project_root': '',
      'bib_path': '',
@@ -5853,7 +6344,7 @@ print(outputs)
 from pathlib import Path
 from  import execute
 
-config_path = Path("/path/to/my_workspace/configs/affair_config.json").resolve()
+config_path = Path("/home/ethan/my_workspace/configs/affair_config.json").resolve()
 outputs = execute(config_path)
 print(outputs)
 ```
@@ -5942,7 +6433,7 @@ AOK 旧任务数据库初始化事务。
 from pathlib import Path
 import autodokit as aok
 
-workspace_root = Path("/path/to/my_workspace").resolve()
+workspace_root = Path("/home/ethan/my_workspace").resolve()
 outputs = aok.run_affair("AOK任务数据库初始化",
     config={'project_root': '.', 'output_dir': ''},
     workspace_root=workspace_root,
@@ -5956,7 +6447,7 @@ print(outputs)
 from pathlib import Path
 from  import execute
 
-config_path = Path("/path/to/my_workspace/configs/affair_config.json").resolve()
+config_path = Path("/home/ethan/my_workspace/configs/affair_config.json").resolve()
 outputs = execute(config_path)
 print(outputs)
 ```
@@ -6047,7 +6538,7 @@ AOK 旧任务数据库校验事务。
 from pathlib import Path
 import autodokit as aok
 
-workspace_root = Path("/path/to/my_workspace").resolve()
+workspace_root = Path("/home/ethan/my_workspace").resolve()
 outputs = aok.run_affair("AOK任务数据库校验",
     config={'project_root': '.', 'output_dir': ''},
     workspace_root=workspace_root,
@@ -6061,7 +6552,7 @@ print(outputs)
 from pathlib import Path
 from  import execute
 
-config_path = Path("/path/to/my_workspace/configs/affair_config.json").resolve()
+config_path = Path("/home/ethan/my_workspace/configs/affair_config.json").resolve()
 outputs = execute(config_path)
 print(outputs)
 ```
@@ -6151,7 +6642,7 @@ Skill 渲染事务。
 from pathlib import Path
 import autodokit as aok
 
-workspace_root = Path("/path/to/my_workspace").resolve()
+workspace_root = Path("/home/ethan/my_workspace").resolve()
 outputs = aok.run_affair("Skill渲染",
     config={'skill_path': '', 'params': {}, 'output_dir': ''},
     workspace_root=workspace_root,
@@ -6165,7 +6656,7 @@ print(outputs)
 from pathlib import Path
 from  import execute
 
-config_path = Path("/path/to/my_workspace/configs/affair_config.json").resolve()
+config_path = Path("/home/ethan/my_workspace/configs/affair_config.json").resolve()
 outputs = execute(config_path)
 print(outputs)
 ```
@@ -6249,7 +6740,7 @@ print(outputs)
 from pathlib import Path
 import autodokit as aok
 
-workspace_root = Path("/path/to/my_workspace").resolve()
+workspace_root = Path("/home/ethan/my_workspace").resolve()
 outputs = aok.run_affair("创新点可行性验证",
     config={'innovation_pool_csv': '', 'innovations': [], 'output_dir': ''},
     workspace_root=workspace_root,
@@ -6263,7 +6754,7 @@ print(outputs)
 from pathlib import Path
 from  import execute
 
-config_path = Path("/path/to/my_workspace/configs/affair_config.json").resolve()
+config_path = Path("/home/ethan/my_workspace/configs/affair_config.json").resolve()
 outputs = execute(config_path)
 print(outputs)
 ```
@@ -6355,7 +6846,7 @@ print(outputs)
 from pathlib import Path
 import autodokit as aok
 
-workspace_root = Path("/path/to/my_workspace").resolve()
+workspace_root = Path("/home/ethan/my_workspace").resolve()
 outputs = aok.run_affair("创新点池构建",
     config={'topic': '',
      'gaps': [],
@@ -6375,7 +6866,7 @@ print(outputs)
 from pathlib import Path
 from  import execute
 
-config_path = Path("/path/to/my_workspace/configs/affair_config.json").resolve()
+config_path = Path("/home/ethan/my_workspace/configs/affair_config.json").resolve()
 outputs = execute(config_path)
 print(outputs)
 ```
@@ -6415,7 +6906,7 @@ Returns:
 Examples:
     >>> from pathlib import Path
     >>> from autodokit.affairs.单篇粗读.affair import execute
-    >>> execute(Path("/path/to/workspace/configs/single_rough_reading.json"))
+    >>> execute(Path("/home/ethan/workspace/configs/single_rough_reading.json"))
 
 #### 事务 Markdown 说明摘录
 
@@ -6494,7 +6985,7 @@ Examples:
 from pathlib import Path
 import autodokit as aok
 
-workspace_root = Path("/path/to/my_workspace").resolve()
+workspace_root = Path("/home/ethan/my_workspace").resolve()
 outputs = aok.run_affair("单篇粗读",
     config={'content_db': '',
      'input_structured_json': '',
@@ -6516,7 +7007,103 @@ print(outputs)
 from pathlib import Path
 from  import execute
 
-config_path = Path("/path/to/my_workspace/configs/affair_config.json").resolve()
+config_path = Path("/home/ethan/my_workspace/configs/affair_config.json").resolve()
+outputs = execute(config_path)
+print(outputs)
+```
+
+### 泛读批次分析汇总
+
+#### 基本信息
+
+| 字段 | 值 |
+| --- | --- |
+| 事务名 | 泛读批次分析汇总 |
+| 领域 | business |
+| 所有者 | aok |
+| 版本 | migrated |
+| 描述 |  |
+| 目录 | autodokit/affairs/泛读批次分析汇总 |
+| Runner.module |  |
+| Runner.callable | execute |
+| Runner.pass_mode | config_path |
+| 文档源 | autodokit/affairs/泛读批次分析汇总/affair.md |
+
+#### 模块说明
+
+A095 泛读批次分析汇总事务。
+
+#### 事务 Markdown 说明摘录
+
+- 泛读批次分析汇总
+
+- 用途
+
+- 该事务用于执行 `泛读批次分析汇总` 对应的业务逻辑。
+
+- 运行入口
+
+- module: `autodokit.affairs.<affair_name>.affair`
+- callable: `execute`
+- pass_mode: `config_path`
+
+#### interface.inputs
+
+- 无
+
+#### interface.outputs
+
+- 无
+
+#### node.inputs
+
+- 无
+
+#### node.outputs
+
+- 无
+
+#### 业务参数表（affair.json）
+
+- 无
+
+#### 节点默认配置表（node_template.config）
+
+- 无
+
+#### node.config JSON 示例
+
+```json
+{}
+```
+
+#### affair.json 业务参数 JSON 示例
+
+```json
+{}
+```
+
+#### 推荐调用示例：run_affair
+
+```python
+from pathlib import Path
+import autodokit as aok
+
+workspace_root = Path("/home/ethan/my_workspace").resolve()
+outputs = aok.run_affair("泛读批次分析汇总",
+    config={},
+    workspace_root=workspace_root,
+)
+print(outputs)
+```
+
+#### 高级调用示例：直接导入模块
+
+```python
+from pathlib import Path
+from  import execute
+
+config_path = Path("/home/ethan/my_workspace/configs/affair_config.json").resolve()
 outputs = execute(config_path)
 print(outputs)
 ```
@@ -6602,7 +7189,7 @@ print(outputs)
 from pathlib import Path
 import autodokit as aok
 
-workspace_root = Path("/path/to/my_workspace").resolve()
+workspace_root = Path("/home/ethan/my_workspace").resolve()
 outputs = aok.run_affair("研究脉络梳理",
     config={'topic': '', 'input_csv': '', 'items': [], 'output_dir': ''},
     workspace_root=workspace_root,
@@ -6616,7 +7203,106 @@ print(outputs)
 from pathlib import Path
 from  import execute
 
-config_path = Path("/path/to/my_workspace/configs/affair_config.json").resolve()
+config_path = Path("/home/ethan/my_workspace/configs/affair_config.json").resolve()
+outputs = execute(config_path)
+print(outputs)
+```
+
+### 领域知识框架构建
+
+#### 基本信息
+
+| 字段 | 值 |
+| --- | --- |
+| 事务名 | 领域知识框架构建 |
+| 领域 | business |
+| 所有者 | aok |
+| 版本 | migrated |
+| 描述 |  |
+| 目录 | autodokit/affairs/领域知识框架构建 |
+| Runner.module |  |
+| Runner.callable | execute |
+| Runner.pass_mode | config_path |
+| 文档源 | autodokit/affairs/领域知识框架构建/affair.md |
+
+#### 模块说明
+
+A130 领域知识框架构建占位事务程序。
+
+当前文件用于开发阶段的入口联调与产物占位。
+该事务可执行并默认放行主链，但会在回执中显式声明“占位实现”状态。
+
+#### 事务 Markdown 说明摘录
+
+- 领域知识框架构建
+
+- 用途
+
+- 该事务用于执行 `领域知识框架构建` 对应的业务逻辑。
+
+- 运行入口
+
+- module: `autodokit.affairs.<affair_name>.affair`
+- callable: `execute`
+- pass_mode: `config_path`
+
+#### interface.inputs
+
+- 无
+
+#### interface.outputs
+
+- 无
+
+#### node.inputs
+
+- 无
+
+#### node.outputs
+
+- 无
+
+#### 业务参数表（affair.json）
+
+- 无
+
+#### 节点默认配置表（node_template.config）
+
+- 无
+
+#### node.config JSON 示例
+
+```json
+{}
+```
+
+#### affair.json 业务参数 JSON 示例
+
+```json
+{}
+```
+
+#### 推荐调用示例：run_affair
+
+```python
+from pathlib import Path
+import autodokit as aok
+
+workspace_root = Path("/home/ethan/my_workspace").resolve()
+outputs = aok.run_affair("领域知识框架构建",
+    config={},
+    workspace_root=workspace_root,
+)
+print(outputs)
+```
+
+#### 高级调用示例：直接导入模块
+
+```python
+from pathlib import Path
+from  import execute
+
+config_path = Path("/home/ethan/my_workspace/configs/affair_config.json").resolve()
 outputs = execute(config_path)
 print(outputs)
 ```
@@ -6728,7 +7414,7 @@ Returns:
 from pathlib import Path
 import autodokit as aok
 
-workspace_root = Path("/path/to/my_workspace").resolve()
+workspace_root = Path("/home/ethan/my_workspace").resolve()
 outputs = aok.run_affair("task_docs_aggregate",
     config={},
     workspace_root=workspace_root,
@@ -6742,7 +7428,7 @@ print(outputs)
 from pathlib import Path
 from autodokit.affairs.task_docs_aggregate.affair import execute
 
-config_path = Path("/path/to/my_workspace/configs/affair_config.json").resolve()
+config_path = Path("/home/ethan/my_workspace/configs/affair_config.json").resolve()
 outputs = execute(config_path)
 print(outputs)
 ```
@@ -6844,7 +7530,7 @@ Returns:
 from pathlib import Path
 import autodokit as aok
 
-workspace_root = Path("/path/to/my_workspace").resolve()
+workspace_root = Path("/home/ethan/my_workspace").resolve()
 outputs = aok.run_affair("task_docs_archive",
     config={},
     workspace_root=workspace_root,
@@ -6858,7 +7544,7 @@ print(outputs)
 from pathlib import Path
 from autodokit.affairs.task_docs_archive.affair import execute
 
-config_path = Path("/path/to/my_workspace/configs/affair_config.json").resolve()
+config_path = Path("/home/ethan/my_workspace/configs/affair_config.json").resolve()
 outputs = execute(config_path)
 print(outputs)
 ```
@@ -6963,7 +7649,7 @@ Returns:
 from pathlib import Path
 import autodokit as aok
 
-workspace_root = Path("/path/to/my_workspace").resolve()
+workspace_root = Path("/home/ethan/my_workspace").resolve()
 outputs = aok.run_affair("task_docs_create_latest",
     config={},
     workspace_root=workspace_root,
@@ -6977,7 +7663,7 @@ print(outputs)
 from pathlib import Path
 from autodokit.affairs.task_docs_create_latest.affair import execute
 
-config_path = Path("/path/to/my_workspace/configs/affair_config.json").resolve()
+config_path = Path("/home/ethan/my_workspace/configs/affair_config.json").resolve()
 outputs = execute(config_path)
 print(outputs)
 ```
@@ -7086,7 +7772,7 @@ Returns:
 from pathlib import Path
 import autodokit as aok
 
-workspace_root = Path("/path/to/my_workspace").resolve()
+workspace_root = Path("/home/ethan/my_workspace").resolve()
 outputs = aok.run_affair("task_docs_finalize_latest",
     config={},
     workspace_root=workspace_root,
@@ -7100,7 +7786,7 @@ print(outputs)
 from pathlib import Path
 from autodokit.affairs.task_docs_finalize_latest.affair import execute
 
-config_path = Path("/path/to/my_workspace/configs/affair_config.json").resolve()
+config_path = Path("/home/ethan/my_workspace/configs/affair_config.json").resolve()
 outputs = execute(config_path)
 print(outputs)
 ```
@@ -7216,7 +7902,7 @@ P1 阶段使用受限表达式执行器实现最小可运行能力。
 from pathlib import Path
 import autodokit as aok
 
-workspace_root = Path("/path/to/my_workspace").resolve()
+workspace_root = Path("/home/ethan/my_workspace").resolve()
 outputs = aok.run_affair("图节点_calc",
     config={'expression': '',
      'expression_mode': 'safe',
@@ -7233,7 +7919,7 @@ print(outputs)
 from pathlib import Path
 from autodokit.affairs.图节点_calc.affair import execute
 
-config_path = Path("/path/to/my_workspace/configs/affair_config.json").resolve()
+config_path = Path("/home/ethan/my_workspace/configs/affair_config.json").resolve()
 outputs = execute(config_path)
 print(outputs)
 ```
@@ -7349,7 +8035,7 @@ P1 阶段提供最小比较能力并输出分支方向。
 from pathlib import Path
 import autodokit as aok
 
-workspace_root = Path("/path/to/my_workspace").resolve()
+workspace_root = Path("/home/ethan/my_workspace").resolve()
 outputs = aok.run_affair("图节点_compare",
     config={'left': None, 'operator': '!=', 'right': None},
     workspace_root=workspace_root,
@@ -7363,7 +8049,7 @@ print(outputs)
 from pathlib import Path
 from autodokit.affairs.图节点_compare.affair import execute
 
-config_path = Path("/path/to/my_workspace/configs/affair_config.json").resolve()
+config_path = Path("/home/ethan/my_workspace/configs/affair_config.json").resolve()
 outputs = execute(config_path)
 print(outputs)
 ```
@@ -7491,7 +8177,7 @@ P1 阶段仅解析并回显容器循环参数。
 from pathlib import Path
 import autodokit as aok
 
-workspace_root = Path("/path/to/my_workspace").resolve()
+workspace_root = Path("/home/ethan/my_workspace").resolve()
 outputs = aok.run_affair("图节点_container",
     config={'container_name': 'container',
      'expression_mode': 'safe',
@@ -7509,7 +8195,7 @@ print(outputs)
 from pathlib import Path
 from autodokit.affairs.图节点_container.affair import execute
 
-config_path = Path("/path/to/my_workspace/configs/affair_config.json").resolve()
+config_path = Path("/home/ethan/my_workspace/configs/affair_config.json").resolve()
 outputs = execute(config_path)
 print(outputs)
 ```
@@ -7609,7 +8295,7 @@ P1 阶段仅提供可调度与可观测占位实现。
 from pathlib import Path
 import autodokit as aok
 
-workspace_root = Path("/path/to/my_workspace").resolve()
+workspace_root = Path("/home/ethan/my_workspace").resolve()
 outputs = aok.run_affair("图节点_end",
     config={'node_role': 'end'},
     workspace_root=workspace_root,
@@ -7623,7 +8309,7 @@ print(outputs)
 from pathlib import Path
 from autodokit.affairs.图节点_end.affair import execute
 
-config_path = Path("/path/to/my_workspace/configs/affair_config.json").resolve()
+config_path = Path("/home/ethan/my_workspace/configs/affair_config.json").resolve()
 outputs = execute(config_path)
 print(outputs)
 ```
@@ -7735,7 +8421,7 @@ P1 阶段仅输出分支规划信息，不直接调度并发执行。
 from pathlib import Path
 import autodokit as aok
 
-workspace_root = Path("/path/to/my_workspace").resolve()
+workspace_root = Path("/home/ethan/my_workspace").resolve()
 outputs = aok.run_affair("图节点_fork",
     config={'branches': ['branch_1', 'branch_2']},
     workspace_root=workspace_root,
@@ -7749,7 +8435,7 @@ print(outputs)
 from pathlib import Path
 from autodokit.affairs.图节点_fork.affair import execute
 
-config_path = Path("/path/to/my_workspace/configs/affair_config.json").resolve()
+config_path = Path("/home/ethan/my_workspace/configs/affair_config.json").resolve()
 outputs = execute(config_path)
 print(outputs)
 ```
@@ -7859,7 +8545,7 @@ P1 阶段仅提供最小可运行判断能力。
 from pathlib import Path
 import autodokit as aok
 
-workspace_root = Path("/path/to/my_workspace").resolve()
+workspace_root = Path("/home/ethan/my_workspace").resolve()
 outputs = aok.run_affair("图节点_if",
     config={'condition': False, 'default': False},
     workspace_root=workspace_root,
@@ -7873,7 +8559,7 @@ print(outputs)
 from pathlib import Path
 from autodokit.affairs.图节点_if.affair import execute
 
-config_path = Path("/path/to/my_workspace/configs/affair_config.json").resolve()
+config_path = Path("/home/ethan/my_workspace/configs/affair_config.json").resolve()
 outputs = execute(config_path)
 print(outputs)
 ```
@@ -7977,7 +8663,7 @@ P1 阶段仅回显输入元信息。
 from pathlib import Path
 import autodokit as aok
 
-workspace_root = Path("/path/to/my_workspace").resolve()
+workspace_root = Path("/home/ethan/my_workspace").resolve()
 outputs = aok.run_affair("图节点_input",
     config={'input_name': 'input', 'input_source': ''},
     workspace_root=workspace_root,
@@ -7991,7 +8677,7 @@ print(outputs)
 from pathlib import Path
 from autodokit.affairs.图节点_input.affair import execute
 
-config_path = Path("/path/to/my_workspace/configs/affair_config.json").resolve()
+config_path = Path("/home/ethan/my_workspace/configs/affair_config.json").resolve()
 outputs = execute(config_path)
 print(outputs)
 ```
@@ -8107,7 +8793,7 @@ P5 阶段由控制流引擎负责“等待所有已激活上游”语义，本�
 from pathlib import Path
 import autodokit as aok
 
-workspace_root = Path("/path/to/my_workspace").resolve()
+workspace_root = Path("/home/ethan/my_workspace").resolve()
 outputs = aok.run_affair("图节点_merge",
     config={'merge_strategy': 'wait_all_activated',
      'quorum': 1,
@@ -8124,7 +8810,7 @@ print(outputs)
 from pathlib import Path
 from autodokit.affairs.图节点_merge.affair import execute
 
-config_path = Path("/path/to/my_workspace/configs/affair_config.json").resolve()
+config_path = Path("/home/ethan/my_workspace/configs/affair_config.json").resolve()
 outputs = execute(config_path)
 print(outputs)
 ```
@@ -8228,7 +8914,7 @@ P1 阶段仅回显导出元信息。
 from pathlib import Path
 import autodokit as aok
 
-workspace_root = Path("/path/to/my_workspace").resolve()
+workspace_root = Path("/home/ethan/my_workspace").resolve()
 outputs = aok.run_affair("图节点_output",
     config={'output_name': 'output', 'output_target': ''},
     workspace_root=workspace_root,
@@ -8242,7 +8928,7 @@ print(outputs)
 from pathlib import Path
 from autodokit.affairs.图节点_output.affair import execute
 
-config_path = Path("/path/to/my_workspace/configs/affair_config.json").resolve()
+config_path = Path("/home/ethan/my_workspace/configs/affair_config.json").resolve()
 outputs = execute(config_path)
 print(outputs)
 ```
@@ -8342,7 +9028,7 @@ P1 阶段仅提供可调度与可观测占位实现。
 from pathlib import Path
 import autodokit as aok
 
-workspace_root = Path("/path/to/my_workspace").resolve()
+workspace_root = Path("/home/ethan/my_workspace").resolve()
 outputs = aok.run_affair("图节点_start",
     config={'node_role': 'start'},
     workspace_root=workspace_root,
@@ -8356,7 +9042,7 @@ print(outputs)
 from pathlib import Path
 from autodokit.affairs.图节点_start.affair import execute
 
-config_path = Path("/path/to/my_workspace/configs/affair_config.json").resolve()
+config_path = Path("/home/ethan/my_workspace/configs/affair_config.json").resolve()
 outputs = execute(config_path)
 print(outputs)
 ```
@@ -8502,7 +9188,7 @@ P5 阶段提供最小可运行实现。
 from pathlib import Path
 import autodokit as aok
 
-workspace_root = Path("/path/to/my_workspace").resolve()
+workspace_root = Path("/home/ethan/my_workspace").resolve()
 outputs = aok.run_affair("图节点_switch",
     config={'switch_value': 'A',
      'route_expression': '',
@@ -8522,7 +9208,7 @@ print(outputs)
 from pathlib import Path
 from autodokit.affairs.图节点_switch.affair import execute
 
-config_path = Path("/path/to/my_workspace/configs/affair_config.json").resolve()
+config_path = Path("/home/ethan/my_workspace/configs/affair_config.json").resolve()
 outputs = execute(config_path)
 print(outputs)
 ```
@@ -8627,7 +9313,7 @@ CNKI 基础检索事务。
 from pathlib import Path
 import autodokit as aok
 
-workspace_root = Path("/path/to/my_workspace").resolve()
+workspace_root = Path("/home/ethan/my_workspace").resolve()
 outputs = aok.run_affair("CNKI基础检索",
     config={'query': '',
      'page': 1,
@@ -8646,7 +9332,7 @@ print(outputs)
 from pathlib import Path
 from autodokit.affairs.CNKI基础检索.affair import execute
 
-config_path = Path("/path/to/my_workspace/configs/affair_config.json").resolve()
+config_path = Path("/home/ethan/my_workspace/configs/affair_config.json").resolve()
 outputs = execute(config_path)
 print(outputs)
 ```
@@ -8740,7 +9426,7 @@ CNKI 期刊检索事务。
 from pathlib import Path
 import autodokit as aok
 
-workspace_root = Path("/path/to/my_workspace").resolve()
+workspace_root = Path("/home/ethan/my_workspace").resolve()
 outputs = aok.run_affair("CNKI期刊检索",
     config={'journal_query': '', 'access_type': 'closed', 'metadata': {}, 'output_dir': ''},
     workspace_root=workspace_root,
@@ -8754,7 +9440,7 @@ print(outputs)
 from pathlib import Path
 from autodokit.affairs.CNKI期刊检索.affair import execute
 
-config_path = Path("/path/to/my_workspace/configs/affair_config.json").resolve()
+config_path = Path("/home/ethan/my_workspace/configs/affair_config.json").resolve()
 outputs = execute(config_path)
 print(outputs)
 ```
@@ -8872,7 +9558,7 @@ CNKI 高级检索事务。
 from pathlib import Path
 import autodokit as aok
 
-workspace_root = Path("/path/to/my_workspace").resolve()
+workspace_root = Path("/home/ethan/my_workspace").resolve()
 outputs = aok.run_affair("CNKI高级检索",
     config={'query': '',
      'author': '',
@@ -8895,7 +9581,7 @@ print(outputs)
 from pathlib import Path
 from autodokit.affairs.CNKI高级检索.affair import execute
 
-config_path = Path("/path/to/my_workspace/configs/affair_config.json").resolve()
+config_path = Path("/home/ethan/my_workspace/configs/affair_config.json").resolve()
 outputs = execute(config_path)
 print(outputs)
 ```
@@ -8927,13 +9613,14 @@ print(outputs)
 
 - 用途
 
-本事务服务 A05 节点，用于直接从统一内容主库生成综述候选视图、阅读池和阅读批次，并把入口写入 A060。
+本事务用于直接从统一内容主库生成综述候选视图、阅读池和阅读批次。
+
+在 AcademicResearch-auto-workflow 当前主链口径中，本事务对应 A060“综述候选文献视图构建”的官方 AOK 入口。
 
 - 输入
 
-1. `content_db`：统一内容主库绝对路径。A05 直接从 `content.db` 读取文献主表；旧 `literature_csv` / `input_csv` 仅作兼容。
+1. `content_db`：统一内容主库绝对路径。本事务直接从 `content.db` 读取文献主表；旧 `literature_csv` / `input_csv` 仅作兼容。
 2. `research_topic`、`topic_terms`、`topic_keyword_groups`、`required_topic_group_indices`、`recent_years` 等主题直筛参数。
-3. 主题筛选参数用于 A050 直题筛选，结构化解析和参考文献处理在 A060/A065 执行。
 
 #### interface.inputs
 
@@ -8963,6 +9650,7 @@ print(outputs)
 | min_score | 否 | 0.0 | 0.0 |
 | min_topic_group_matches | 否 | 1 | 1 |
 | output_dir | 否 | "" | "" |
+| persist_review_views_to_content_db | 否 | false | false |
 | recent_years | 否 | 5 | 5 |
 | reference_block_model | 否 | "qwen-flash" | "qwen-flash" |
 | relevance_text_fields | 否 | ["title", "keywords", "abstract"] | ["title", "keywords", "abstract"] |
@@ -8996,6 +9684,7 @@ print(outputs)
 {
   "input_csv": "",
   "content_db": "",
+  "persist_review_views_to_content_db": false,
   "candidates": [],
   "output_dir": "",
   "source_round": "round_01",
@@ -9037,10 +9726,11 @@ print(outputs)
 from pathlib import Path
 import autodokit as aok
 
-workspace_root = Path("/path/to/my_workspace").resolve()
+workspace_root = Path("/home/ethan/my_workspace").resolve()
 outputs = aok.run_affair("候选文献视图构建",
     config={'input_csv': '',
      'content_db': '',
+     'persist_review_views_to_content_db': False,
      'candidates': [],
      'output_dir': '',
      'source_round': 'round_01',
@@ -9074,7 +9764,7 @@ print(outputs)
 from pathlib import Path
 from  import execute
 
-config_path = Path("/path/to/my_workspace/configs/affair_config.json").resolve()
+config_path = Path("/home/ethan/my_workspace/configs/affair_config.json").resolve()
 outputs = execute(config_path)
 print(outputs)
 ```
@@ -9190,7 +9880,7 @@ print(outputs)
 from pathlib import Path
 import autodokit as aok
 
-workspace_root = Path("/path/to/my_workspace").resolve()
+workspace_root = Path("/home/ethan/my_workspace").resolve()
 outputs = aok.run_affair("合并去重文献元数据",
     config={'input_table_path': '', 'output_table_path': '', 'dry_run': False, 'backup': True},
     workspace_root=workspace_root,
@@ -9204,7 +9894,7 @@ print(outputs)
 from pathlib import Path
 from autodokit.affairs.合并去重文献元数据.affair import execute
 
-config_path = Path("/path/to/my_workspace/configs/affair_config.json").resolve()
+config_path = Path("/home/ethan/my_workspace/configs/affair_config.json").resolve()
 outputs = execute(config_path)
 print(outputs)
 ```
@@ -9346,7 +10036,7 @@ Examples:
 from pathlib import Path
 import autodokit as aok
 
-workspace_root = Path("/path/to/my_workspace").resolve()
+workspace_root = Path("/home/ethan/my_workspace").resolve()
 outputs = aok.run_affair("向量化与索引构建",
     config={'input_chunk_manifest_json': 'workflows/workflow_解析与分块/output/03_chunk/chunk_manifest.json',
      'output_dir': 'workflows/workflow_向量化与索引构建/output/04_vector_index',
@@ -9364,7 +10054,7 @@ print(outputs)
 from pathlib import Path
 from autodokit.affairs.向量化与索引构建.affair import execute
 
-config_path = Path("/path/to/my_workspace/configs/affair_config.json").resolve()
+config_path = Path("/home/ethan/my_workspace/configs/affair_config.json").resolve()
 outputs = execute(config_path)
 print(outputs)
 ```
@@ -9534,7 +10224,7 @@ print(outputs)
 from pathlib import Path
 import autodokit as aok
 
-workspace_root = Path("/path/to/my_workspace").resolve()
+workspace_root = Path("/home/ethan/my_workspace").resolve()
 outputs = aok.run_affair("导入和预处理文献元数据",
     config={'bibtex_path': 'workspace/references/bib/library.bib',
      'pdf_dir': 'workspace/references/attachments',
@@ -9570,7 +10260,199 @@ print(outputs)
 from pathlib import Path
 from autodokit.affairs.导入和预处理文献元数据.affair import execute
 
-config_path = Path("/path/to/my_workspace/configs/affair_config.json").resolve()
+config_path = Path("/home/ethan/my_workspace/configs/affair_config.json").resolve()
+outputs = execute(config_path)
+print(outputs)
+```
+
+### 文献批判性研读与标准笔记
+
+#### 基本信息
+
+| 字段 | 值 |
+| --- | --- |
+| 事务名 | 文献批判性研读与标准笔记 |
+| 领域 | business |
+| 所有者 | aok |
+| 版本 | migrated |
+| 描述 |  |
+| 目录 | autodokit/affairs/文献批判性研读与标准笔记 |
+| Runner.module |  |
+| Runner.callable | execute |
+| Runner.pass_mode | config_path |
+| 文档源 | autodokit/affairs/文献批判性研读与标准笔记/affair.md |
+
+#### 模块说明
+
+A105 文献批判性研读与标准笔记事务。
+
+#### 事务 Markdown 说明摘录
+
+- 文献批判性研读与标准笔记
+
+- 用途
+
+- 该事务用于执行 `文献批判性研读与标准笔记` 对应的业务逻辑。
+
+- 运行入口
+
+- module: `autodokit.affairs.<affair_name>.affair`
+- callable: `execute`
+- pass_mode: `config_path`
+
+#### interface.inputs
+
+- 无
+
+#### interface.outputs
+
+- 无
+
+#### node.inputs
+
+- 无
+
+#### node.outputs
+
+- 无
+
+#### 业务参数表（affair.json）
+
+- 无
+
+#### 节点默认配置表（node_template.config）
+
+- 无
+
+#### node.config JSON 示例
+
+```json
+{}
+```
+
+#### affair.json 业务参数 JSON 示例
+
+```json
+{}
+```
+
+#### 推荐调用示例：run_affair
+
+```python
+from pathlib import Path
+import autodokit as aok
+
+workspace_root = Path("/home/ethan/my_workspace").resolve()
+outputs = aok.run_affair("文献批判性研读与标准笔记",
+    config={},
+    workspace_root=workspace_root,
+)
+print(outputs)
+```
+
+#### 高级调用示例：直接导入模块
+
+```python
+from pathlib import Path
+from  import execute
+
+config_path = Path("/home/ethan/my_workspace/configs/affair_config.json").resolve()
+outputs = execute(config_path)
+print(outputs)
+```
+
+### 文献泛读与粗读
+
+#### 基本信息
+
+| 字段 | 值 |
+| --- | --- |
+| 事务名 | 文献泛读与粗读 |
+| 领域 | business |
+| 所有者 | aok |
+| 版本 | migrated |
+| 描述 |  |
+| 目录 | autodokit/affairs/文献泛读与粗读 |
+| Runner.module |  |
+| Runner.callable | execute |
+| Runner.pass_mode | config_path |
+| 文档源 | autodokit/affairs/文献泛读与粗读/affair.md |
+
+#### 模块说明
+
+A090 文献泛读与轻量分析事务。
+
+#### 事务 Markdown 说明摘录
+
+- 文献泛读与粗读
+
+- 用途
+
+- 该事务用于执行 `文献泛读与粗读` 对应的业务逻辑。
+
+- 运行入口
+
+- module: `autodokit.affairs.<affair_name>.affair`
+- callable: `execute`
+- pass_mode: `config_path`
+
+#### interface.inputs
+
+- 无
+
+#### interface.outputs
+
+- 无
+
+#### node.inputs
+
+- 无
+
+#### node.outputs
+
+- 无
+
+#### 业务参数表（affair.json）
+
+- 无
+
+#### 节点默认配置表（node_template.config）
+
+- 无
+
+#### node.config JSON 示例
+
+```json
+{}
+```
+
+#### affair.json 业务参数 JSON 示例
+
+```json
+{}
+```
+
+#### 推荐调用示例：run_affair
+
+```python
+from pathlib import Path
+import autodokit as aok
+
+workspace_root = Path("/home/ethan/my_workspace").resolve()
+outputs = aok.run_affair("文献泛读与粗读",
+    config={},
+    workspace_root=workspace_root,
+)
+print(outputs)
+```
+
+#### 高级调用示例：直接导入模块
+
+```python
+from pathlib import Path
+from  import execute
+
+config_path = Path("/home/ethan/my_workspace/configs/affair_config.json").resolve()
 outputs = execute(config_path)
 print(outputs)
 ```
@@ -9710,7 +10592,7 @@ Returns:
 from pathlib import Path
 import autodokit as aok
 
-workspace_root = Path("/path/to/my_workspace").resolve()
+workspace_root = Path("/home/ethan/my_workspace").resolve()
 outputs = aok.run_affair("文献矩阵",
     config={'input_structured_dir': '',
      'content_db': '',
@@ -9734,7 +10616,103 @@ print(outputs)
 from pathlib import Path
 from autodokit.affairs.文献矩阵.affair import execute
 
-config_path = Path("/path/to/my_workspace/configs/affair_config.json").resolve()
+config_path = Path("/home/ethan/my_workspace/configs/affair_config.json").resolve()
+outputs = execute(config_path)
+print(outputs)
+```
+
+### 文献研读与正式知识回写
+
+#### 基本信息
+
+| 字段 | 值 |
+| --- | --- |
+| 事务名 | 文献研读与正式知识回写 |
+| 领域 | business |
+| 所有者 | aok |
+| 版本 | migrated |
+| 描述 |  |
+| 目录 | autodokit/affairs/文献研读与正式知识回写 |
+| Runner.module |  |
+| Runner.callable | execute |
+| Runner.pass_mode | config_path |
+| 文档源 | autodokit/affairs/文献研读与正式知识回写/affair.md |
+
+#### 模块说明
+
+A100 文献精解析资产化事务。
+
+#### 事务 Markdown 说明摘录
+
+- 文献研读与正式知识回写
+
+- 用途
+
+- 该事务用于执行 `文献研读与正式知识回写` 对应的业务逻辑。
+
+- 运行入口
+
+- module: `autodokit.affairs.<affair_name>.affair`
+- callable: `execute`
+- pass_mode: `config_path`
+
+#### interface.inputs
+
+- 无
+
+#### interface.outputs
+
+- 无
+
+#### node.inputs
+
+- 无
+
+#### node.outputs
+
+- 无
+
+#### 业务参数表（affair.json）
+
+- 无
+
+#### 节点默认配置表（node_template.config）
+
+- 无
+
+#### node.config JSON 示例
+
+```json
+{}
+```
+
+#### affair.json 业务参数 JSON 示例
+
+```json
+{}
+```
+
+#### 推荐调用示例：run_affair
+
+```python
+from pathlib import Path
+import autodokit as aok
+
+workspace_root = Path("/home/ethan/my_workspace").resolve()
+outputs = aok.run_affair("文献研读与正式知识回写",
+    config={},
+    workspace_root=workspace_root,
+)
+print(outputs)
+```
+
+#### 高级调用示例：直接导入模块
+
+```python
+from pathlib import Path
+from  import execute
+
+config_path = Path("/home/ethan/my_workspace/configs/affair_config.json").resolve()
 outputs = execute(config_path)
 print(outputs)
 ```
@@ -9831,7 +10809,7 @@ print(outputs)
 from pathlib import Path
 import autodokit as aok
 
-workspace_root = Path("/path/to/my_workspace").resolve()
+workspace_root = Path("/home/ethan/my_workspace").resolve()
 outputs = aok.run_affair("文献阅读规划",
     config={'focus': '', 'candidates': [], 'max_items': 12, 'output_dir': ''},
     workspace_root=workspace_root,
@@ -9845,7 +10823,7 @@ print(outputs)
 from pathlib import Path
 from autodokit.affairs.文献阅读规划.affair import execute
 
-config_path = Path("/path/to/my_workspace/configs/affair_config.json").resolve()
+config_path = Path("/home/ethan/my_workspace/configs/affair_config.json").resolve()
 outputs = execute(config_path)
 print(outputs)
 ```
@@ -9942,7 +10920,7 @@ print(outputs)
 from pathlib import Path
 import autodokit as aok
 
-workspace_root = Path("/path/to/my_workspace").resolve()
+workspace_root = Path("/home/ethan/my_workspace").resolve()
 outputs = aok.run_affair("本地文献导入",
     config={'project_root': '', 'source_paths': [], 'persist': False, 'output_dir': ''},
     workspace_root=workspace_root,
@@ -9956,7 +10934,7 @@ print(outputs)
 from pathlib import Path
 from autodokit.affairs.本地文献导入.affair import execute
 
-config_path = Path("/path/to/my_workspace/configs/affair_config.json").resolve()
+config_path = Path("/home/ethan/my_workspace/configs/affair_config.json").resolve()
 outputs = execute(config_path)
 print(outputs)
 ```
@@ -10118,7 +11096,7 @@ print(outputs)
 from pathlib import Path
 import autodokit as aok
 
-workspace_root = Path("/path/to/my_workspace").resolve()
+workspace_root = Path("/home/ethan/my_workspace").resolve()
 outputs = aok.run_affair("检索治理",
     config={'request_uid': '',
      'query': '',
@@ -10158,7 +11136,7 @@ print(outputs)
 from pathlib import Path
 from autodokit.affairs.检索治理.affair import execute
 
-config_path = Path("/path/to/my_workspace/configs/affair_config.json").resolve()
+config_path = Path("/home/ethan/my_workspace/configs/affair_config.json").resolve()
 outputs = execute(config_path)
 print(outputs)
 ```
@@ -10403,7 +11381,7 @@ Examples:
 from pathlib import Path
 import autodokit as aok
 
-workspace_root = Path("/path/to/my_workspace").resolve()
+workspace_root = Path("/home/ethan/my_workspace").resolve()
 outputs = aok.run_affair("生成关键词集合",
     config={'description': '研究主题：房地产市场与银行系统性风险的交叉研究，关注房价波动、抵押品渠道、银行风险传导与宏观审慎监管。',
      'research_domains': {'房地产': ['房地产', '房价', '住房市场', '房地产价格波动', '抵押品', '房地产周期'],
@@ -10447,7 +11425,7 @@ print(outputs)
 from pathlib import Path
 from autodokit.affairs.生成关键词集合.affair import execute
 
-config_path = Path("/path/to/my_workspace/configs/affair_config.json").resolve()
+config_path = Path("/home/ethan/my_workspace/configs/affair_config.json").resolve()
 outputs = execute(config_path)
 print(outputs)
 ```
@@ -10565,7 +11543,7 @@ print(outputs)
 from pathlib import Path
 import autodokit as aok
 
-workspace_root = Path("/path/to/my_workspace").resolve()
+workspace_root = Path("/home/ethan/my_workspace").resolve()
 outputs = aok.run_affair("生成文献元数据关系图",
     config={'content_db': '',
      'output_dir': '',
@@ -10582,7 +11560,7 @@ print(outputs)
 from pathlib import Path
 from autodokit.affairs.生成文献元数据关系图.affair import execute
 
-config_path = Path("/path/to/my_workspace/configs/affair_config.json").resolve()
+config_path = Path("/home/ethan/my_workspace/configs/affair_config.json").resolve()
 outputs = execute(config_path)
 print(outputs)
 ```
@@ -10693,7 +11671,7 @@ print(outputs)
 from pathlib import Path
 import autodokit as aok
 
-workspace_root = Path("/path/to/my_workspace").resolve()
+workspace_root = Path("/home/ethan/my_workspace").resolve()
 outputs = aok.run_affair("知识预筛选",
     config={'focus': '',
      'items': [],
@@ -10713,7 +11691,152 @@ print(outputs)
 from pathlib import Path
 from autodokit.affairs.知识预筛选.affair import execute
 
-config_path = Path("/path/to/my_workspace/configs/affair_config.json").resolve()
+config_path = Path("/home/ethan/my_workspace/configs/affair_config.json").resolve()
+outputs = execute(config_path)
+print(outputs)
+```
+
+### 统一文献预处理解析
+
+#### 基本信息
+
+| 字段 | 值 |
+| --- | --- |
+| 事务名 | 统一文献预处理解析 |
+| 领域 | business |
+| 所有者 | aok |
+| 版本 | migrated |
+| 描述 |  |
+| 目录 | autodokit/affairs/统一文献预处理解析 |
+| Runner.module |  |
+| Runner.callable | execute |
+| Runner.pass_mode | config_path |
+| 文档源 | autodokit/affairs/统一文献预处理解析/affair.md |
+
+#### 模块说明
+
+A050/A055 统一文献预处理事务。
+
+该事务模块支持两种执行模式：
+1. priority_only：用于 A050，只生成预处理优先级清单，不执行具体解析。
+2. full_preprocess：用于 A055，按 profile 执行具体预处理。
+
+full_preprocess 支持按 profile 调度 MonkeyOCR：
+1. review：消费 `文献预处理` 的 A050_REVIEW 队列，产出 review_deep 资产并推进 A060。
+2. non_review：消费 `文献预处理` 的 A050_NON_REVIEW 队列，产出 non_review_rough 资产并推进 A090。
+3. mixed：自动按文献类型拆分到 review/non_review 两条子链执行。
+
+#### 事务 Markdown 说明摘录
+
+- 统一文献预处理解析
+
+- 用途
+
+- 该事务用于执行 `统一文献预处理解析` 对应的业务逻辑。
+
+- 运行入口
+
+- module: `autodokit.affairs.<affair_name>.affair`
+- callable: `execute`
+- pass_mode: `config_path`
+
+#### interface.inputs
+
+- 无
+
+#### interface.outputs
+
+- 无
+
+#### node.inputs
+
+- 无
+
+#### node.outputs
+
+- 无
+
+#### 业务参数表（affair.json）
+
+| 字段 | 必填 | 默认值 | 示例值 |
+| --- | --- | --- | --- |
+| auto_fill_literature_type | 否 | true | true |
+| content_db | 否 | "" | "" |
+| is_auto_git_commit | 否 | "是" | "是" |
+| max_items | 否 | 0 | 0 |
+| output_dir | 否 | "" | "" |
+| parse_model | 否 | "auto" | "auto" |
+| profile | 否 | "mixed" | "mixed" |
+| strict_structured_only | 否 | true | true |
+| structured_converter | 否 | "monkeyocr" | "monkeyocr" |
+| structured_generation_required | 否 | true | true |
+| structured_reuse_any_variant | 否 | false | false |
+| workspace_root | 否 | "" | "" |
+| 自动提交前是否询问人类 | 否 | "是" | "是" |
+
+#### 节点默认配置表（node_template.config）
+
+- 无
+
+#### node.config JSON 示例
+
+```json
+{}
+```
+
+#### affair.json 业务参数 JSON 示例
+
+```json
+{
+  "workspace_root": "",
+  "content_db": "",
+  "output_dir": "",
+  "profile": "mixed",
+  "auto_fill_literature_type": true,
+  "max_items": 0,
+  "structured_converter": "monkeyocr",
+  "structured_reuse_any_variant": false,
+  "structured_generation_required": true,
+  "strict_structured_only": true,
+  "parse_model": "auto",
+  "is_auto_git_commit": "是",
+  "自动提交前是否询问人类": "是"
+}
+```
+
+#### 推荐调用示例：run_affair
+
+```python
+from pathlib import Path
+import autodokit as aok
+
+workspace_root = Path("/home/ethan/my_workspace").resolve()
+outputs = aok.run_affair("统一文献预处理解析",
+    config={'workspace_root': '',
+     'content_db': '',
+     'output_dir': '',
+     'profile': 'mixed',
+     'auto_fill_literature_type': True,
+     'max_items': 0,
+     'structured_converter': 'monkeyocr',
+     'structured_reuse_any_variant': False,
+     'structured_generation_required': True,
+     'strict_structured_only': True,
+     'parse_model': 'auto',
+     'is_auto_git_commit': '是',
+     '自动提交前是否询问人类': '是'},
+    workspace_root=workspace_root,
+)
+print(outputs)
+```
+
+#### 高级调用示例：直接导入模块
+
+```python
+from pathlib import Path
+from  import execute
+
+config_path = Path("/home/ethan/my_workspace/configs/affair_config.json").resolve()
 outputs = execute(config_path)
 print(outputs)
 ```
@@ -10751,7 +11874,7 @@ A065 承接 A060 已就绪的综述解析资产，执行参考文献扫描、cit
 - 输入
 - `workspace_root`：工作区绝对路径。
 - `content_db`：文献主库 SQLite 路径。
-- `review_read_pool_path`：兼容输入；新项目默认优先使用 `content.db` 中 `流程轨道='综述主链'`、`节点编码='A065'` 的 `文献流程状态` 当前态。
+- `review_read_pool_path`：兼容输入，默认优先使用 `literature_reading_queue(stage='A065')` 当前态。
 - `review_reading_batches_path`：A050 产出的 `review_reading_batches.csv`。
 
 - 输出
@@ -10840,7 +11963,7 @@ A065 承接 A060 已就绪的综述解析资产，执行参考文献扫描、cit
 from pathlib import Path
 import autodokit as aok
 
-workspace_root = Path("/path/to/my_workspace").resolve()
+workspace_root = Path("/home/ethan/my_workspace").resolve()
 outputs = aok.run_affair("综述参考文献预处理与笔记骨架",
     config={'workspace_root': '',
      'content_db': '',
@@ -10872,7 +11995,7 @@ print(outputs)
 from pathlib import Path
 from  import execute
 
-config_path = Path("/path/to/my_workspace/configs/affair_config.json").resolve()
+config_path = Path("/home/ethan/my_workspace/configs/affair_config.json").resolve()
 outputs = execute(config_path)
 print(outputs)
 ```
@@ -10981,7 +12104,7 @@ print(outputs)
 from pathlib import Path
 import autodokit as aok
 
-workspace_root = Path("/path/to/my_workspace").resolve()
+workspace_root = Path("/home/ethan/my_workspace").resolve()
 outputs = aok.run_affair("综述研读与研究地图生成",
     config={'topic': '',
      'readable_view_csv': '',
@@ -11001,7 +12124,7 @@ print(outputs)
 from pathlib import Path
 from  import execute
 
-config_path = Path("/path/to/my_workspace/configs/affair_config.json").resolve()
+config_path = Path("/home/ethan/my_workspace/configs/affair_config.json").resolve()
 outputs = execute(config_path)
 print(outputs)
 ```
@@ -11144,7 +12267,7 @@ Returns:
 from pathlib import Path
 import autodokit as aok
 
-workspace_root = Path("/path/to/my_workspace").resolve()
+workspace_root = Path("/home/ethan/my_workspace").resolve()
 outputs = aok.run_affair("综述草稿生成",
     config={'input_matrix_jsonl': 'output/matrix/matrix.jsonl',
      'input_structured_dir': None,
@@ -11169,7 +12292,7 @@ print(outputs)
 from pathlib import Path
 from autodokit.affairs.综述草稿生成.affair import execute
 
-config_path = Path("/path/to/my_workspace/configs/affair_config.json").resolve()
+config_path = Path("/home/ethan/my_workspace/configs/affair_config.json").resolve()
 outputs = execute(config_path)
 print(outputs)
 ```
@@ -11195,22 +12318,25 @@ print(outputs)
 
 综述预处理事务。
 
-A060 仅负责综述结构化解析资产准备，不执行参考文献映射与笔记骨架生成。
+本事务保留为历史兼容与局部补位入口，负责综述结构化解析资产准备。
+
+它不再是 AcademicResearch-auto-workflow 当前主链中 A060 的官方 AOK 映射；
+当前主链 A060 官方入口已切换为候选文献视图构建事务。
 
 #### 事务 Markdown 说明摘录
 
 - 综述预处理
 
 - 概述
-A060 综述预处理事务。仅承接 A050 已产出的阅读池，执行 parse asset 复用/补齐，并把可执行条目推进到 A065。
+本事务保留为历史兼容与局部补位事务。
+
+它执行综述 parse asset 的复用/补齐，并把可执行条目推进到后续综述处理阶段；但它不再是 AcademicResearch-auto-workflow 当前主链中 A060 的官方 AOK 映射。
 
 - 输入
 - `workspace_root`：工作区绝对路径。
 - `content_db`：文献主库 SQLite 路径。
 
 - 输出
-- `steps/A060_review_preprocessing/` 下的审计产物。
-- `gate_review.json`（G060）。
 
 #### interface.inputs
 
@@ -11280,7 +12406,7 @@ A060 综述预处理事务。仅承接 A050 已产出的阅读池，执行 parse
 from pathlib import Path
 import autodokit as aok
 
-workspace_root = Path("/path/to/my_workspace").resolve()
+workspace_root = Path("/home/ethan/my_workspace").resolve()
 outputs = aok.run_affair("综述预处理",
     config={'workspace_root': '',
      'content_db': '',
@@ -11304,7 +12430,7 @@ print(outputs)
 from pathlib import Path
 from  import execute
 
-config_path = Path("/path/to/my_workspace/configs/affair_config.json").resolve()
+config_path = Path("/home/ethan/my_workspace/configs/affair_config.json").resolve()
 outputs = execute(config_path)
 print(outputs)
 ```
@@ -11399,7 +12525,7 @@ python -m pip install playwright
 python -m playwright install
 
 # 运行脚本（会打开一个新的 Chrome 窗口）
-python .utodo-kitffairs\自动化导入知网研学专题.py
+python ./autodo-kit/affairs/自动化导入知网研学专题.py
 ```
 
 模块其余部分实现自动化逻辑：定位器、验证码检测、点击重试与循环控制（见下文代码）。
@@ -11460,7 +12586,7 @@ python .utodo-kitffairs\自动化导入知网研学专题.py
 from pathlib import Path
 import autodokit as aok
 
-workspace_root = Path("/path/to/my_workspace").resolve()
+workspace_root = Path("/home/ethan/my_workspace").resolve()
 outputs = aok.run_affair("自动化导入知网研学专题",
     config={},
     workspace_root=workspace_root,
@@ -11474,7 +12600,7 @@ print(outputs)
 from pathlib import Path
 from autodokit.affairs.自动化导入知网研学专题.affair import execute
 
-config_path = Path("/path/to/my_workspace/configs/affair_config.json").resolve()
+config_path = Path("/home/ethan/my_workspace/configs/affair_config.json").resolve()
 outputs = execute(config_path)
 print(outputs)
 ```
@@ -11591,7 +12717,7 @@ print(outputs)
 from pathlib import Path
 import autodokit as aok
 
-workspace_root = Path("/path/to/my_workspace").resolve()
+workspace_root = Path("/home/ethan/my_workspace").resolve()
 outputs = aok.run_affair("解析与分块",
     config={'content_db': 'workflows/workspace/database/content/content.db',
      'output_dir': 'workflows/workflow_解析与分块/output/03_chunk',
@@ -11609,7 +12735,7 @@ print(outputs)
 from pathlib import Path
 from autodokit.affairs.解析与分块.affair import execute
 
-config_path = Path("/path/to/my_workspace/configs/affair_config.json").resolve()
+config_path = Path("/home/ethan/my_workspace/configs/affair_config.json").resolve()
 outputs = execute(config_path)
 print(outputs)
 ```
@@ -11703,7 +12829,7 @@ print(outputs)
 from pathlib import Path
 import autodokit as aok
 
-workspace_root = Path("/path/to/my_workspace").resolve()
+workspace_root = Path("/home/ethan/my_workspace").resolve()
 outputs = aok.run_affair("订阅文献访问治理",
     config={'target_records': [],
      'access_scope': 'campus',
@@ -11720,7 +12846,7 @@ print(outputs)
 from pathlib import Path
 from autodokit.affairs.订阅文献访问治理.affair import execute
 
-config_path = Path("/path/to/my_workspace/configs/affair_config.json").resolve()
+config_path = Path("/home/ethan/my_workspace/configs/affair_config.json").resolve()
 outputs = execute(config_path)
 print(outputs)
 ```
@@ -11913,7 +13039,7 @@ Examples:
 from pathlib import Path
 import autodokit as aok
 
-workspace_root = Path("/path/to/my_workspace").resolve()
+workspace_root = Path("/home/ethan/my_workspace").resolve()
 outputs = aok.run_affair("语义预筛选",
     config={'content_db': '',
      'input_keywords': 'workflows/workflow_生成关键词集合/data/01_keyword_set',
@@ -11936,7 +13062,202 @@ print(outputs)
 from pathlib import Path
 from autodokit.affairs.语义预筛选.affair import execute
 
-config_path = Path("/path/to/my_workspace/configs/affair_config.json").resolve()
+config_path = Path("/home/ethan/my_workspace/configs/affair_config.json").resolve()
+outputs = execute(config_path)
+print(outputs)
+```
+
+### 非综述候选种子生成
+
+#### 基本信息
+
+| 字段 | 值 |
+| --- | --- |
+| 事务名 | 非综述候选种子生成 |
+| 领域 | business |
+| 所有者 | aok |
+| 版本 | migrated |
+| 描述 |  |
+| 目录 | autodokit/affairs/非综述候选种子生成 |
+| Runner.module |  |
+| Runner.callable | execute |
+| Runner.pass_mode | config_path |
+| 文档源 | autodokit/affairs/非综述候选种子生成/affair.md |
+
+#### 模块说明
+
+A075 非综述候选种子生成事务。
+
+#### 事务 Markdown 说明摘录
+
+- 非综述候选种子生成
+
+- 用途
+
+- 该事务用于执行 `非综述候选种子生成` 对应的业务逻辑。
+
+- 运行入口
+
+- module: `autodokit.affairs.<affair_name>.affair`
+- callable: `execute`
+- pass_mode: `config_path`
+
+#### interface.inputs
+
+- 无
+
+#### interface.outputs
+
+- 无
+
+#### node.inputs
+
+- 无
+
+#### node.outputs
+
+- 无
+
+#### 业务参数表（affair.json）
+
+- 无
+
+#### 节点默认配置表（node_template.config）
+
+- 无
+
+#### node.config JSON 示例
+
+```json
+{}
+```
+
+#### affair.json 业务参数 JSON 示例
+
+```json
+{}
+```
+
+#### 推荐调用示例：run_affair
+
+```python
+from pathlib import Path
+import autodokit as aok
+
+workspace_root = Path("/home/ethan/my_workspace").resolve()
+outputs = aok.run_affair("非综述候选种子生成",
+    config={},
+    workspace_root=workspace_root,
+)
+print(outputs)
+```
+
+#### 高级调用示例：直接导入模块
+
+```python
+from pathlib import Path
+from  import execute
+
+config_path = Path("/home/ethan/my_workspace/configs/affair_config.json").resolve()
+outputs = execute(config_path)
+print(outputs)
+```
+
+### 非综述候选视图构建
+
+#### 基本信息
+
+| 字段 | 值 |
+| --- | --- |
+| 事务名 | 非综述候选视图构建 |
+| 领域 | business |
+| 所有者 | aok |
+| 版本 | migrated |
+| 描述 |  |
+| 目录 | autodokit/affairs/非综述候选视图构建 |
+| Runner.module |  |
+| Runner.callable | execute |
+| Runner.pass_mode | config_path |
+| 文档源 | autodokit/affairs/非综述候选视图构建/affair.md |
+
+#### 模块说明
+
+A080 非综述文献预处理事务。
+
+A080 优先消费正式 `A080` 阶段队列，并结合 `文献主表.current_parse_*`
+与结构化摘要字段完成统一预处理；旧 reading_state 仅保留兼容回写。
+
+#### 事务 Markdown 说明摘录
+
+- 非综述候选视图构建
+
+- 用途
+
+- 该事务用于执行 `非综述候选视图构建` 对应的业务逻辑。
+
+- 运行入口
+
+- module: `autodokit.affairs.<affair_name>.affair`
+- callable: `execute`
+- pass_mode: `config_path`
+
+#### interface.inputs
+
+- 无
+
+#### interface.outputs
+
+- 无
+
+#### node.inputs
+
+- 无
+
+#### node.outputs
+
+- 无
+
+#### 业务参数表（affair.json）
+
+- 无
+
+#### 节点默认配置表（node_template.config）
+
+- 无
+
+#### node.config JSON 示例
+
+```json
+{}
+```
+
+#### affair.json 业务参数 JSON 示例
+
+```json
+{}
+```
+
+#### 推荐调用示例：run_affair
+
+```python
+from pathlib import Path
+import autodokit as aok
+
+workspace_root = Path("/home/ethan/my_workspace").resolve()
+outputs = aok.run_affair("非综述候选视图构建",
+    config={},
+    workspace_root=workspace_root,
+)
+print(outputs)
+```
+
+#### 高级调用示例：直接导入模块
+
+```python
+from pathlib import Path
+from  import execute
+
+config_path = Path("/home/ethan/my_workspace/configs/affair_config.json").resolve()
 outputs = execute(config_path)
 print(outputs)
 ```
@@ -12040,7 +13361,7 @@ Raises:
 from pathlib import Path
 import autodokit as aok
 
-workspace_root = Path("/path/to/my_workspace").resolve()
+workspace_root = Path("/home/ethan/my_workspace").resolve()
 outputs = aok.run_affair("CAJ文件转PDF",
     config={},
     workspace_root=workspace_root,
@@ -12054,7 +13375,7 @@ print(outputs)
 from pathlib import Path
 from autodokit.affairs.CAJ文件转PDF.affair import execute
 
-config_path = Path("/path/to/my_workspace/configs/affair_config.json").resolve()
+config_path = Path("/home/ethan/my_workspace/configs/affair_config.json").resolve()
 outputs = execute(config_path)
 print(outputs)
 ```
@@ -12150,7 +13471,7 @@ print(outputs)
 from pathlib import Path
 import autodokit as aok
 
-workspace_root = Path("/path/to/my_workspace").resolve()
+workspace_root = Path("/home/ethan/my_workspace").resolve()
 outputs = aok.run_affair("LaTeX转Word",
     config={},
     workspace_root=workspace_root,
@@ -12164,7 +13485,107 @@ print(outputs)
 from pathlib import Path
 from autodokit.affairs.LaTeX转Word.affair import execute
 
-config_path = Path("/path/to/my_workspace/configs/affair_config.json").resolve()
+config_path = Path("/home/ethan/my_workspace/configs/affair_config.json").resolve()
+outputs = execute(config_path)
+print(outputs)
+```
+
+### MonkeyOCR批量解析PDF
+
+#### 基本信息
+
+| 字段 | 值 |
+| --- | --- |
+| 事务名 | MonkeyOCR批量解析PDF |
+| 领域 | business |
+| 所有者 | aok |
+| 版本 | migrated |
+| 描述 |  |
+| 目录 | autodokit/affairs/MonkeyOCR批量解析PDF |
+| Runner.module |  |
+| Runner.callable | execute |
+| Runner.pass_mode | config_path |
+| 文档源 | autodokit/affairs/MonkeyOCR批量解析PDF/affair.md |
+
+#### 模块说明
+
+事务：按优先级串行批量运行 MonkeyOCR。
+
+本事务将 sandbox 中的临时批处理逻辑正式收敛到 AOK affairs，统一通过
+``autodokit.tools`` 暴露的 MonkeyOCR 路由运行，而不是在事务层直接调用上游
+``parse.py``。
+
+#### 事务 Markdown 说明摘录
+
+- MonkeyOCR批量解析PDF
+
+- 用途
+
+- 该事务用于执行 `MonkeyOCR批量解析PDF` 对应的业务逻辑。
+
+- 运行入口
+
+- module: `autodokit.affairs.<affair_name>.affair`
+- callable: `execute`
+- pass_mode: `config_path`
+
+#### interface.inputs
+
+- 无
+
+#### interface.outputs
+
+- 无
+
+#### node.inputs
+
+- 无
+
+#### node.outputs
+
+- 无
+
+#### 业务参数表（affair.json）
+
+- 无
+
+#### 节点默认配置表（node_template.config）
+
+- 无
+
+#### node.config JSON 示例
+
+```json
+{}
+```
+
+#### affair.json 业务参数 JSON 示例
+
+```json
+{}
+```
+
+#### 推荐调用示例：run_affair
+
+```python
+from pathlib import Path
+import autodokit as aok
+
+workspace_root = Path("/home/ethan/my_workspace").resolve()
+outputs = aok.run_affair("MonkeyOCR批量解析PDF",
+    config={},
+    workspace_root=workspace_root,
+)
+print(outputs)
+```
+
+#### 高级调用示例：直接导入模块
+
+```python
+from pathlib import Path
+from  import execute
+
+config_path = Path("/home/ethan/my_workspace/configs/affair_config.json").resolve()
 outputs = execute(config_path)
 print(outputs)
 ```
@@ -12290,7 +13711,7 @@ print(outputs)
 from pathlib import Path
 import autodokit as aok
 
-workspace_root = Path("/path/to/my_workspace").resolve()
+workspace_root = Path("/home/ethan/my_workspace").resolve()
 outputs = aok.run_affair("PDF文件转md文件",
     config={'input_pdf_dir': 'data/文献原文数据',
      'output_md_dir': 'data/文献原文转md数据',
@@ -12309,7 +13730,7 @@ print(outputs)
 from pathlib import Path
 from autodokit.affairs.PDF文件转md文件.affair import execute
 
-config_path = Path("/path/to/my_workspace/configs/affair_config.json").resolve()
+config_path = Path("/home/ethan/my_workspace/configs/affair_config.json").resolve()
 outputs = execute(config_path)
 print(outputs)
 ```
@@ -12409,7 +13830,7 @@ print(outputs)
 from pathlib import Path
 import autodokit as aok
 
-workspace_root = Path("/path/to/my_workspace").resolve()
+workspace_root = Path("/home/ethan/my_workspace").resolve()
 outputs = aok.run_affair("PDF文件转结构化数据文件",
     config={},
     workspace_root=workspace_root,
@@ -12423,7 +13844,7 @@ print(outputs)
 from pathlib import Path
 from autodokit.affairs.PDF文件转结构化数据文件.affair import execute
 
-config_path = Path("/path/to/my_workspace/configs/affair_config.json").resolve()
+config_path = Path("/home/ethan/my_workspace/configs/affair_config.json").resolve()
 outputs = execute(config_path)
 print(outputs)
 ```
@@ -12519,7 +13940,7 @@ print(outputs)
 from pathlib import Path
 import autodokit as aok
 
-workspace_root = Path("/path/to/my_workspace").resolve()
+workspace_root = Path("/home/ethan/my_workspace").resolve()
 outputs = aok.run_affair("Word转LaTeX",
     config={},
     workspace_root=workspace_root,
@@ -12533,7 +13954,7 @@ print(outputs)
 from pathlib import Path
 from autodokit.affairs.Word转LaTeX.affair import execute
 
-config_path = Path("/path/to/my_workspace/configs/affair_config.json").resolve()
+config_path = Path("/home/ethan/my_workspace/configs/affair_config.json").resolve()
 outputs = execute(config_path)
 print(outputs)
 ```

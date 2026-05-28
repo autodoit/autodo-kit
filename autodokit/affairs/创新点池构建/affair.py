@@ -8,7 +8,7 @@ from typing import Any, Dict, List
 
 import pandas as pd
 
-from autodokit.tools import build_gate_review, innovation_pool_upsert, init_empty_innovation_pool_table, load_json_or_py
+from autodokit.tools import build_gate_review, innovation_feasibility_score, innovation_pool_upsert, init_empty_innovation_pool_table, load_json_or_py
 from autodokit.tools.atomic.task_aok.task_instance_dir import create_task_instance_dir, mirror_artifacts_to_legacy, resolve_legacy_output_dir
 from autodokit.tools.atomic.task_aok.post_affair_git_commit import affair_auto_git_commit
 
@@ -20,6 +20,33 @@ NOVELTY_METHODS = {
     "特殊到一般法": "从典型案例提升为一般性研究命题",
     "问题导向法": "围绕现有理论无法解释的问题提出新方案",
 }
+
+def _stringify(value: Any) -> str:
+    if value is None:
+        return ""
+    return str(value).strip()
+
+
+def _archive_publication(raw_cfg: Dict[str, Any], scored_table: pd.DataFrame) -> Dict[str, Any]:
+    """构造 A140 内联后的交付归档结果。"""
+
+    archive_files = list(raw_cfg.get("archive_files") or [])
+    if scored_table is not None and not scored_table.empty:
+        archive_files = [*archive_files, "innovation_feasibility_scores.csv"]
+
+    publication_status = _stringify(raw_cfg.get("publication_status")) or ("ready_for_delivery" if len(archive_files) > 0 else "draft")
+    return {
+        "status": "PASS",
+        "mode": "publication-archive-release",
+        "result": {
+            "manuscript_title": _stringify(raw_cfg.get("manuscript_title") or raw_cfg.get("topic") or ""),
+            "publication_status": publication_status,
+            "archive_files": archive_files,
+            "archive_count": len(archive_files),
+            "release_note": _stringify(raw_cfg.get("release_note") or "A140 已在同一节点内完成创新点池、可行性评分与交付归档摘要。"),
+            "closed": publication_status.strip().lower() in {"accepted", "published", "ready_for_delivery"},
+        },
+    }
 
 
 def _generate_innovation_items(raw_cfg: Dict[str, Any]) -> List[Dict[str, Any]]:
@@ -68,16 +95,31 @@ def execute(config_path: Path) -> List[Path]:
     pool_path = output_dir / "innovation_pool.csv"
     pool_table.to_csv(pool_path, index=False, encoding="utf-8-sig")
 
+    scored_rows = [innovation_feasibility_score(item) for item in generated_items]
+    scored_table = pd.DataFrame(scored_rows)
+    scored_path = output_dir / "innovation_feasibility_scores.csv"
+    scored_table.to_csv(scored_path, index=False, encoding="utf-8-sig")
+
+    promotable_count = 0 if scored_table.empty else int((scored_table["recommendation"] == "promote").sum())
+    publication_result = _archive_publication(raw_cfg, scored_table)
+    publication_path = output_dir / "publication_archive_release_result.json"
+    publication_path.write_text(json.dumps(publication_result, ensure_ascii=False, indent=2), encoding="utf-8")
+
     gate_review = build_gate_review(
-        node_uid="A12",
-        node_name="创新点池构建",
-        summary=f"生成 {len(pool_table)} 条候选创新点。",
-        checks=[{"name": "innovation_count", "value": len(pool_table)}],
-        artifacts=[str(pool_path)],
-        recommendation="pass" if len(pool_table) > 0 else "revise",
+        node_uid="A140",
+        node_name="创新与交付链整合事务",
+        summary=f"生成 {len(pool_table)} 条候选创新点，完成 {len(scored_table)} 条可行性评分，其中建议提升 {promotable_count} 条，并在同一节点内输出交付归档摘要。",
+        checks=[
+            {"name": "innovation_count", "value": len(pool_table)},
+            {"name": "feasibility_scored_count", "value": len(scored_table)},
+            {"name": "promotable_count", "value": promotable_count},
+            {"name": "archive_count", "value": publication_result["result"]["archive_count"]},
+        ],
+        artifacts=[str(pool_path), str(scored_path), str(publication_path)],
+        recommendation="pass_next" if len(pool_table) > 0 else "revise",
         score=92.0 if len(pool_table) > 0 else 30.0,
     )
     gate_path = output_dir / "gate_review.json"
     gate_path.write_text(json.dumps(gate_review, ensure_ascii=False, indent=2), encoding="utf-8")
-    mirror_artifacts_to_legacy([pool_path, gate_path], legacy_output_dir, output_dir)
-    return [pool_path, gate_path]
+    mirror_artifacts_to_legacy([pool_path, scored_path, publication_path, gate_path], legacy_output_dir, output_dir)
+    return [pool_path, scored_path, publication_path, gate_path]

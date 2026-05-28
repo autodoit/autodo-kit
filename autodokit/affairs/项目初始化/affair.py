@@ -42,21 +42,12 @@ class ProjectInitializationEngine:
         "A040",
         "A045",
         "A050",
+        "A055",
         "A060",
-        "A065",
-        "A070",
-        "A075",
         "A080",
-        "A090",
-        "A095",
         "A100",
-        "A105",
         "A110",
-        "A120",
-        "A130",
         "A140",
-        "A150",
-        "A160",
     ]
 
     def _resolve_workspace_root(self, raw_cfg: Mapping[str, Any], config_path: Path) -> Path:

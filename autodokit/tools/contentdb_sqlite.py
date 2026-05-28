@@ -39,13 +39,6 @@ KNOWLEDGE_ATTACHMENT_TABLE_NAME = "知识附件"
 KNOWLEDGE_LINK_TABLE_NAME = "知识文献关联"
 KNOWLEDGE_EVIDENCE_TABLE_NAME = "知识证据关联"
 KNOWLEDGE_NOTES_TABLE_NAME = "知识笔记"
-AUTO_KNOWLEDGE_LINK_SOURCE_FIELDS: tuple[str, ...] = (
-    "知识索引",
-    "文献主表.standard_note_uid",
-)
-AUTO_KNOWLEDGE_EVIDENCE_SOURCE_FIELDS: tuple[str, ...] = (
-    "知识索引.evidence_uids",
-)
 READING_STATE_TABLE_NAME = "文献阅读状态"
 WORKSPACE_NODE_STATE_TABLE_NAME = "工作区节点状态"
 REVIEW_STATE_TABLE_NAME = "综述文献阅读状态"
@@ -72,55 +65,22 @@ FLOW_STAGE_LIST_VIEWS: tuple[tuple[str, str], ...] = (
     ("待泛读文献清单", "IFNULL(当前阶段, '') = '普通文献泛读' AND IFNULL(当前状态, '') = '待处理'"),
     ("待批判性研读文献清单", "IFNULL(当前阶段, '') = '批判性研读' AND IFNULL(当前状态, '') = '待处理'"),
 )
-TRANSACTION_RELATION_OVERVIEW_VIEW_NAME = "事务关联总视图"
+TRANSACTION_RELATION_OVERVIEW_VIEW_NAME = "事务编号关联总视图"
 TRANSACTION_RELATION_NODE_LABELS: tuple[tuple[str, str], ...] = (
-    ("A040", "文献检索事务"),
-    ("A050", "预处理排序事务"),
-    ("A055", "预处理执行事务"),
-    ("A060", "综述候选构建事务"),
-    ("A065", "综述参考扩展事务"),
-    ("A070", "综述综合研读事务"),
-    ("A075", "普通候选导入事务"),
-    ("A080", "普通文献预处理事务"),
-    ("A090", "普通文献泛读事务"),
-    ("A095", "泛读批次汇总事务"),
-    ("A100", "深度解析准备事务"),
-    ("A105", "批判性研读事务"),
-    ("A110", "文献矩阵事务"),
-    ("A120", "研究脉络梳理事务"),
-    ("A130", "领域知识框架构建事务"),
-    ("A140", "创新点池构建事务"),
-    ("A150", "创新点可行性验证事务"),
-    ("A160", "成果收敛交付事务"),
+    ("A040", "文献检索与入库"),
+    ("A050", "预处理优先级生成"),
+    ("A055", "统一文献预处理执行"),
+    ("A060", "综述候选文献视图构建"),
+    ("A065", "综述参考文献预处理与笔记骨架"),
+    ("A070", "综述研读与研究脉络"),
+    ("A075", "非综述候选种子生成"),
+    ("A080", "非综述文献预处理"),
+    ("A100", "文献精解析资产化"),
+    ("A105", "文献批判性研读与标准笔记"),
 )
 TRANSACTION_RELATION_FILTER_VIEWS: tuple[tuple[str, str], ...] = tuple(
-    (f"{node_code}事务关联视图", node_code)
+    (f"{node_code}事务编号关联视图", node_code)
     for node_code, _ in TRANSACTION_RELATION_NODE_LABELS
-)
-LEGACY_TRANSACTION_RELATION_OVERVIEW_VIEW_NAMES: tuple[str, ...] = (
-    "事务编号关联总视图",
-    "研究任务关联总视图",
-)
-LEGACY_TRANSACTION_RELATION_FILTER_VIEW_NAMES: tuple[str, ...] = (
-    *(f"{node_code}事务编号关联视图" for node_code, _ in TRANSACTION_RELATION_NODE_LABELS),
-    "候选发现任务视图",
-    "预处理排序任务视图",
-    "预处理执行任务视图",
-    "综述候选构建任务视图",
-    "综述参考扩展任务视图",
-    "综述综合研读任务视图",
-    "普通候选导入任务视图",
-    "普通文献预处理任务视图",
-    "普通文献泛读任务视图",
-    "泛读批次汇总任务视图",
-    "深度解析准备任务视图",
-    "批判性研读任务视图",
-    "文献矩阵任务视图",
-    "研究脉络梳理任务视图",
-    "领域知识框架构建任务视图",
-    "创新点池构建任务视图",
-    "创新点可行性验证任务视图",
-    "成果收敛交付任务视图",
 )
 LITERATURE_PARSE_STATE_PENDING = "未完成"
 LITERATURE_PARSE_STATE_RUNNING = "在运行"
@@ -1672,7 +1632,7 @@ def _qualified_physical_column(table_name: str, logical_name: str, table_alias: 
     return f"{table_alias}.{physical_name}"
 
 
-def _build_transaction_name_case(column_name: str = "事务编码") -> str:
+def _build_transaction_name_case(column_name: str = "事务编号") -> str:
     cases = [f"WHEN {column_name} = '{node_code}' THEN '{node_label}'" for node_code, node_label in TRANSACTION_RELATION_NODE_LABELS]
     if not cases:
         return "''"
@@ -1721,91 +1681,6 @@ def _replace_table_rows(conn: sqlite3.Connection, table_name: str, frame: pd.Dat
     if working.empty or not list(working.columns):
         return
     working.to_sql(table_name, conn, if_exists="append", index=False)
-
-
-def _delete_rows_by_column_values(
-    conn: sqlite3.Connection,
-    table_name: str,
-    column_name: str,
-    values: list[object] | tuple[object, ...] | set[object],
-) -> None:
-    if _sqlite_object_type(conn, table_name) != "table":
-        return
-    normalized_values = [value for value in values if str(value or "").strip()]
-    if not normalized_values:
-        return
-    physical_column_name = _resolve_physical_column(table_name, str(column_name))
-    placeholders = ", ".join(["?"] * len(normalized_values))
-    conn.execute(
-        f"DELETE FROM {_quote_identifier(table_name)} WHERE {_quote_identifier(physical_column_name)} IN ({placeholders})",
-        normalized_values,
-    )
-
-
-def _upsert_table_rows(
-    conn: sqlite3.Connection,
-    table_name: str,
-    frame: pd.DataFrame,
-    *,
-    key_columns: list[str] | tuple[str, ...],
-    update_columns: list[str] | tuple[str, ...] | None = None,
-) -> None:
-    if _sqlite_object_type(conn, table_name) != "table":
-        return
-    if frame is None or frame.empty:
-        return
-
-    physical_frame = _adapt_frame_to_physical_schema(conn, table_name, frame)
-    working = physical_frame.where(pd.notnull(physical_frame), None)
-    if working.empty or not list(working.columns):
-        return
-
-    physical_key_columns = [
-        _resolve_physical_column(table_name, str(column_name))
-        for column_name in key_columns
-        if _resolve_physical_column(table_name, str(column_name)) in working.columns
-    ]
-    if not physical_key_columns:
-        working.to_sql(table_name, conn, if_exists="append", index=False)
-        return
-
-    if update_columns is None:
-        physical_update_columns = [column for column in working.columns if column not in physical_key_columns]
-    else:
-        physical_update_columns = [
-            _resolve_physical_column(table_name, str(column_name))
-            for column_name in update_columns
-            if _resolve_physical_column(table_name, str(column_name)) in working.columns
-            and _resolve_physical_column(table_name, str(column_name)) not in physical_key_columns
-        ]
-
-    insert_columns = list(working.columns)
-    insert_placeholders = ", ".join(["?"] * len(insert_columns))
-    if physical_update_columns:
-        update_clause = ", ".join(
-            [
-                f"{_quote_identifier(column_name)} = excluded.{_quote_identifier(column_name)}"
-                for column_name in physical_update_columns
-            ]
-        )
-        sql = (
-            f"INSERT INTO {_quote_identifier(table_name)} "
-            f"({', '.join(_quote_identifier(column_name) for column_name in insert_columns)}) "
-            f"VALUES ({insert_placeholders}) "
-            f"ON CONFLICT({', '.join(_quote_identifier(column_name) for column_name in physical_key_columns)}) "
-            f"DO UPDATE SET {update_clause}"
-        )
-    else:
-        sql = (
-            f"INSERT OR IGNORE INTO {_quote_identifier(table_name)} "
-            f"({', '.join(_quote_identifier(column_name) for column_name in insert_columns)}) "
-            f"VALUES ({insert_placeholders})"
-        )
-
-    conn.executemany(
-        sql,
-        [tuple(row.get(column_name) for column_name in insert_columns) for row in working.to_dict(orient="records")],
-    )
 
 
 def _sqlite_object_type(conn: sqlite3.Connection, object_name: str) -> str:
@@ -1863,14 +1738,7 @@ def _create_or_replace_view(conn: sqlite3.Connection, view_name: str, select_sql
         raise sqlite3.OperationalError(f"对象 {view_name} 已存在且为表，无法覆盖为视图")
     # 无论探测结果如何，统一先删除同名视图，避免编码/缓存差异下误判导致重复创建失败。
     conn.execute(f"DROP VIEW IF EXISTS {_quote_identifier(view_name)}")
-    create_sql = f"CREATE VIEW {_quote_identifier(view_name)} AS\n{select_sql.strip()}"
-    try:
-        conn.execute(create_sql)
-    except sqlite3.OperationalError as exc:
-        if "already exists" not in str(exc):
-            raise
-        conn.execute(f"DROP VIEW IF EXISTS {_quote_identifier(view_name)}")
-        conn.execute(create_sql)
+    conn.execute(f"CREATE VIEW {_quote_identifier(view_name)} AS\n{select_sql.strip()}")
 
 
 CONTENTDB_CONTRACT_VIEW_ALIAS_OVERRIDES: dict[str, str] = {
@@ -2354,25 +2222,6 @@ def _refresh_reading_state_views(conn: sqlite3.Connection) -> None:
         """
         _create_or_replace_view(conn, view_name, view_sql)
 
-    flow_columns = {
-        str(row[1])
-        for row in conn.execute(f"PRAGMA table_info({_quote_identifier(FLOW_STATE_TABLE_NAME)})")
-    }
-    flow_cite_key_column = _resolve_physical_column(FLOW_STATE_TABLE_NAME, "cite_key")
-    if flow_cite_key_column not in flow_columns:
-        if "题录键" in flow_columns:
-            flow_cite_key_column = "题录键"
-        elif "cite_key" in flow_columns:
-            flow_cite_key_column = "cite_key"
-        else:
-            flow_cite_key_column = ""
-
-    flow_cite_key_expr = (
-        f"fs.{_quote_identifier(flow_cite_key_column)}"
-        if flow_cite_key_column
-        else "''"
-    )
-
     flow_overview_sql = f"""
     WITH parse_summary AS (
         SELECT
@@ -2385,7 +2234,7 @@ def _refresh_reading_state_views(conn: sqlite3.Connection) -> None:
     )
     SELECT
         fs.{_quote_identifier(_resolve_physical_column(FLOW_STATE_TABLE_NAME, 'uid_literature'))} AS 文献标识,
-        COALESCE({flow_cite_key_expr}, lit.{_quote_identifier(_resolve_physical_column(LITERATURE_TABLE_NAME, 'cite_key'))}, '') AS 引文键,
+        COALESCE(fs.{_quote_identifier(_resolve_physical_column(FLOW_STATE_TABLE_NAME, 'cite_key'))}, lit.{_quote_identifier(_resolve_physical_column(LITERATURE_TABLE_NAME, 'cite_key'))}, '') AS 引文键,
         COALESCE(lit.{_quote_identifier(_resolve_physical_column(LITERATURE_TABLE_NAME, 'title'))}, '') AS 标题,
         COALESCE(lit.{_quote_identifier(_resolve_physical_column(LITERATURE_TABLE_NAME, 'first_author'))}, '') AS 第一作者,
         COALESCE(lit.{_quote_identifier(_resolve_physical_column(LITERATURE_TABLE_NAME, 'year'))}, '') AS 年份,
@@ -2435,7 +2284,7 @@ def _refresh_reading_state_views(conn: sqlite3.Connection) -> None:
         _create_or_replace_view(conn, view_name, view_sql)
 
     flow_transaction_name_case = _build_transaction_name_case("节点编码")
-    queue_transaction_name_case = _build_transaction_name_case("qb.事务编码")
+    queue_transaction_name_case = _build_transaction_name_case("qb.事务编号")
     queue_transaction_code_case = "CASE\n"
     for node_code, _node_label in TRANSACTION_RELATION_NODE_LABELS:
         queue_transaction_code_case += (
@@ -2446,24 +2295,6 @@ def _refresh_reading_state_views(conn: sqlite3.Connection) -> None:
             f"            WHEN COALESCE(q.{_quote_identifier(_resolve_physical_column(READING_QUEUE_TABLE_NAME, 'stage'))}, '') = '{node_code}' THEN '{node_code}'\n"
         )
     queue_transaction_code_case += "            ELSE ''\n        END"
-    queue_stage_name_case = "CASE\n"
-    for node_code, node_label in TRANSACTION_RELATION_NODE_LABELS:
-        queue_stage_name_case += (
-            f"            WHEN COALESCE(q.{_quote_identifier(_resolve_physical_column(READING_QUEUE_TABLE_NAME, 'stage'))}, '') = '{node_code}' THEN '{node_label}'\n"
-        )
-    queue_stage_name_case += (
-        f"            ELSE COALESCE(q.{_quote_identifier(_resolve_physical_column(READING_QUEUE_TABLE_NAME, 'stage'))}, '')\n"
-        "        END"
-    )
-    queue_next_stage_name_case = "CASE\n"
-    for node_code, node_label in TRANSACTION_RELATION_NODE_LABELS:
-        queue_next_stage_name_case += (
-            f"            WHEN COALESCE(q.{_quote_identifier(_resolve_physical_column(READING_QUEUE_TABLE_NAME, 'preferred_next_stage'))}, '') = '{node_code}' THEN '{node_label}'\n"
-        )
-    queue_next_stage_name_case += (
-        f"            ELSE COALESCE(q.{_quote_identifier(_resolve_physical_column(READING_QUEUE_TABLE_NAME, 'preferred_next_stage'))}, '')\n"
-        "        END"
-    )
     queue_status_case = f"""
         CASE
             WHEN COALESCE(q.{_quote_identifier(_resolve_physical_column(READING_QUEUE_TABLE_NAME, 'queue_status'))}, '') IN ('queued', 'pending', 'ready') THEN '待处理'
@@ -2477,7 +2308,7 @@ def _refresh_reading_state_views(conn: sqlite3.Connection) -> None:
     transaction_overview_sql = f"""
     WITH flow_base AS (
         SELECT
-            节点编码 AS 事务编码,
+            节点编码 AS 事务编号,
             {flow_transaction_name_case} AS 事务名称,
             文献标识,
             引文键,
@@ -2507,7 +2338,7 @@ def _refresh_reading_state_views(conn: sqlite3.Connection) -> None:
     ),
     queue_base AS (
         SELECT
-            {queue_transaction_code_case} AS 事务编码,
+            {queue_transaction_code_case} AS 事务编号,
             COALESCE(lit.{_quote_identifier(_resolve_physical_column(LITERATURE_TABLE_NAME, 'uid_literature'))}, q.{_quote_identifier(_resolve_physical_column(READING_QUEUE_TABLE_NAME, 'uid_literature'))}) AS 文献标识,
             COALESCE(q.{_quote_identifier(_resolve_physical_column(READING_QUEUE_TABLE_NAME, 'cite_key'))}, lit.{_quote_identifier(_resolve_physical_column(LITERATURE_TABLE_NAME, 'cite_key'))}, '') AS 引文键,
             COALESCE(lit.{_quote_identifier(_resolve_physical_column(LITERATURE_TABLE_NAME, 'title'))}, '') AS 标题,
@@ -2516,14 +2347,14 @@ def _refresh_reading_state_views(conn: sqlite3.Connection) -> None:
             '' AS 文献角色,
             CASE
                 WHEN COALESCE(q.{_quote_identifier(_resolve_physical_column(READING_QUEUE_TABLE_NAME, 'stage'))}, '') IN ('A050', 'A055', 'A060', 'A065', 'A070') THEN '综述主链'
-                WHEN COALESCE(q.{_quote_identifier(_resolve_physical_column(READING_QUEUE_TABLE_NAME, 'stage'))}, '') IN ('A075', 'A080', 'A090', 'A095', 'A100', 'A105', 'A110', 'A120', 'A130', 'A140', 'A150', 'A160') THEN '普通主链'
+                WHEN COALESCE(q.{_quote_identifier(_resolve_physical_column(READING_QUEUE_TABLE_NAME, 'stage'))}, '') IN ('A075', 'A080', 'A100', 'A105') THEN '普通主链'
                 ELSE ''
             END AS 流程轨道,
             COALESCE(lit.{_quote_identifier(_resolve_physical_column(LITERATURE_TABLE_NAME, 'primary_attachment_name'))}, '') AS 主附件名称,
             '队列表' AS 当前阶段组,
-            {queue_stage_name_case} AS 当前阶段,
+            COALESCE(q.{_quote_identifier(_resolve_physical_column(READING_QUEUE_TABLE_NAME, 'stage'))}, '') AS 当前阶段,
             {queue_status_case} AS 当前状态,
-            {queue_next_stage_name_case} AS 下一阶段,
+            COALESCE(q.{_quote_identifier(_resolve_physical_column(READING_QUEUE_TABLE_NAME, 'preferred_next_stage'))}, '') AS 下一阶段,
             COALESCE(q.{_quote_identifier(_resolve_physical_column(READING_QUEUE_TABLE_NAME, 'recommended_reason'))}, '') AS 推荐原因,
             COALESCE(q.{_quote_identifier(_resolve_physical_column(READING_QUEUE_TABLE_NAME, 'preprocess_failure_reason'))}, '') AS 失败原因,
             CASE
@@ -2551,7 +2382,7 @@ def _refresh_reading_state_views(conn: sqlite3.Connection) -> None:
     FROM flow_base
     UNION ALL
     SELECT
-        qb.事务编码,
+        qb.事务编号,
         {queue_transaction_name_case} AS 事务名称,
         qb.文献标识,
         qb.引文键,
@@ -2577,33 +2408,76 @@ def _refresh_reading_state_views(conn: sqlite3.Connection) -> None:
         qb.最近任务标识,
         qb.更新时间
     FROM queue_base AS qb
-        WHERE IFNULL(qb.事务编码, '') <> ''
+    WHERE IFNULL(qb.事务编号, '') <> ''
       AND NOT EXISTS (
           SELECT 1
           FROM flow_base AS fb
-                    WHERE fb.事务编码 = qb.事务编码
+          WHERE fb.事务编号 = qb.事务编号
             AND COALESCE(fb.文献标识, '') = COALESCE(qb.文献标识, '')
             AND COALESCE(fb.引文键, '') = COALESCE(qb.引文键, '')
       )
-        ORDER BY 事务编码, 更新时间 DESC, 年份 DESC, 引文键, 文献标识
+    ORDER BY 事务编号, 更新时间 DESC, 年份 DESC, 引文键, 文献标识
     """
-    current_transaction_views = {TRANSACTION_RELATION_OVERVIEW_VIEW_NAME, *(view_name for view_name, _ in TRANSACTION_RELATION_FILTER_VIEWS)}
-    legacy_transaction_views = {*LEGACY_TRANSACTION_RELATION_OVERVIEW_VIEW_NAMES, *LEGACY_TRANSACTION_RELATION_FILTER_VIEW_NAMES}
-    for legacy_view_name in legacy_transaction_views:
-        if legacy_view_name in current_transaction_views:
-            continue
-        conn.execute(f"DROP VIEW IF EXISTS {_quote_identifier(legacy_view_name)}")
-
     _create_or_replace_view(conn, TRANSACTION_RELATION_OVERVIEW_VIEW_NAME, transaction_overview_sql)
     quoted_transaction_name = _quote_identifier(TRANSACTION_RELATION_OVERVIEW_VIEW_NAME)
+    legacy_stage_name_case = """
+    CASE 当前阶段
+        WHEN 'A040' THEN '文献检索与入库事务'
+        WHEN 'A050' THEN '预处理优先级生成事务'
+        WHEN 'A055' THEN '统一文献预处理执行事务'
+        WHEN 'A060' THEN '综述候选文献视图构建事务'
+        WHEN 'A065' THEN '综述参考文献预处理与笔记骨架事务'
+        WHEN 'A070' THEN '综述研读与研究脉络事务'
+        WHEN 'A075' THEN '非综述候选种子生成事务'
+        WHEN 'A080' THEN '普通文献预处理事务'
+        WHEN 'A100' THEN '文献精解析资产化事务'
+        WHEN 'A105' THEN '文献批判性研读与标准笔记事务'
+        ELSE 当前阶段
+    END
+    """
+    _create_or_replace_view(
+        conn,
+        "事务关联总视图",
+        f"""
+        SELECT
+            事务编号 AS 事务编码,
+            事务编号,
+            事务名称,
+            文献标识,
+            引文键,
+            标题,
+            第一作者,
+            年份,
+            文献角色,
+            流程轨道,
+            主附件名称,
+            当前阶段组,
+            {legacy_stage_name_case} AS 当前阶段,
+            当前状态,
+            下一阶段,
+            推荐原因,
+            失败原因,
+            阻塞原因,
+            解析资产标识,
+            标准笔记标识,
+            解析状态,
+            当前解析状态,
+            是否当前有效,
+            是否可执行,
+            最近任务标识,
+            更新时间
+        FROM {quoted_transaction_name}
+        """,
+    )
     for view_name, node_code in TRANSACTION_RELATION_FILTER_VIEWS:
         view_sql = f"""
         SELECT *
         FROM {quoted_transaction_name}
-            WHERE 事务编码 = '{node_code}'
+        WHERE 事务编号 = '{node_code}'
         ORDER BY 更新时间 DESC, 年份 DESC, 引文键, 文献标识
         """
         _create_or_replace_view(conn, view_name, view_sql)
+        _create_or_replace_view(conn, view_name.replace("事务编号关联视图", "事务关联视图"), view_sql)
 
     workflow_overview_sql = f"""
     SELECT *
@@ -2897,6 +2771,7 @@ def _sync_tag_entities(conn: sqlite3.Connection) -> None:
 
     tag_links_df = pd.read_sql_query(f"SELECT * FROM {_quote_identifier(LITERATURE_TAG_TABLE_NAME)}", conn)
     if tag_links_df.empty:
+        _replace_table_rows(conn, TAG_TABLE_NAME, pd.DataFrame(columns=list(TAG_REQUIRED_COLUMNS.keys())))
         return
 
     now = _utc_now_iso()
@@ -2918,18 +2793,28 @@ def _sync_tag_entities(conn: sqlite3.Connection) -> None:
         }
 
     tags_df = pd.DataFrame(list(rows_by_uid.values()), columns=list(TAG_REQUIRED_COLUMNS.keys()))
-    _upsert_table_rows(conn, TAG_TABLE_NAME, tags_df, key_columns=["uid_tag"])
+    _replace_table_rows(conn, TAG_TABLE_NAME, tags_df)
 
 
-def _build_author_entity_and_link_frames_from_literature_df(
-    literature_df: pd.DataFrame | None,
-    *,
-    source_type: str = "文献主表.authors",
-) -> tuple[pd.DataFrame, pd.DataFrame]:
-    empty_authors = pd.DataFrame(columns=list(AUTHOR_REQUIRED_COLUMNS.keys()))
-    empty_links = pd.DataFrame(columns=list(AUTHOR_LINK_REQUIRED_COLUMNS.keys()))
-    if literature_df is None or literature_df.empty:
-        return empty_authors, empty_links
+def _sync_author_entities(conn: sqlite3.Connection) -> None:
+    if _sqlite_object_type(conn, LITERATURE_TABLE_NAME) != "table":
+        return
+
+    literature_columns = _physical_table_columns(conn, LITERATURE_TABLE_NAME)
+    authors_column = "作者串" if "作者串" in literature_columns else "authors"
+    created_column = "创建时间" if "创建时间" in literature_columns else "created_at"
+    updated_column = "更新时间" if "更新时间" in literature_columns else "updated_at"
+    if authors_column not in literature_columns:
+        return
+    uid_literature_column = resolve_content_physical_column(LITERATURE_TABLE_NAME, "uid_literature")
+    literature_df = pd.read_sql_query(
+        f"SELECT {_quote_identifier(uid_literature_column)} AS uid_literature, {_quote_identifier(authors_column)} AS authors, {_quote_identifier(created_column)} AS created_at, {_quote_identifier(updated_column)} AS updated_at FROM {_quote_identifier(LITERATURE_TABLE_NAME)}",
+        conn,
+    )
+    if literature_df.empty:
+        _replace_table_rows(conn, AUTHOR_TABLE_NAME, pd.DataFrame(columns=list(AUTHOR_REQUIRED_COLUMNS.keys())))
+        _replace_table_rows(conn, AUTHOR_LINK_TABLE_NAME, pd.DataFrame(columns=list(AUTHOR_LINK_REQUIRED_COLUMNS.keys())))
+        return
 
     now = _utc_now_iso()
     author_rows_by_uid: dict[str, dict[str, object]] = {}
@@ -2958,7 +2843,7 @@ def _build_author_entity_and_link_frames_from_literature_df(
                 "作者类型": str(author_meta.get("作者类型") or "个人作者"),
                 "作者质量标记": str(author_meta.get("作者质量标记") or ""),
                 "orcid": "",
-                "source_type": source_type,
+                "source_type": "文献主表.authors",
                 "created_at": str(row.get("created_at") or now).strip() or now,
                 "updated_at": str(row.get("updated_at") or now).strip() or now,
             }
@@ -2971,387 +2856,25 @@ def _build_author_entity_and_link_frames_from_literature_df(
                     "is_first_author": 1 if index == 1 else 0,
                     "is_corresponding": 0,
                     "display_name": display_name,
-                    "source_type": source_type,
+                    "source_type": "文献主表.authors",
                     "created_at": str(row.get("created_at") or now).strip() or now,
                     "updated_at": str(row.get("updated_at") or now).strip() or now,
                 }
             )
 
-    if not author_rows_by_uid and not author_link_rows:
-        return empty_authors, empty_links
     authors_df = pd.DataFrame(list(author_rows_by_uid.values()), columns=list(AUTHOR_REQUIRED_COLUMNS.keys()))
     links_df = pd.DataFrame(author_link_rows, columns=list(AUTHOR_LINK_REQUIRED_COLUMNS.keys()))
-    if not links_df.empty:
-        links_df = links_df.drop_duplicates(subset=["uid_literature_author"], keep="last")
-    return authors_df, links_df
-
-
-def sync_author_entities_from_literature_rows(
-    db_path: str | Path,
-    literature_df: pd.DataFrame | None,
-    *,
-    replace_link_scope: list[str] | tuple[str, ...] | set[str] | None = None,
-) -> dict[str, int]:
-    """根据文献主表作者串直接维护作者实体与作者关系。"""
-
-    init_content_db(db_path)
-    authors_df, links_df = _build_author_entity_and_link_frames_from_literature_df(literature_df)
-    with connect_sqlite(db_path) as conn:
-        if replace_link_scope:
-            _delete_rows_by_column_values(conn, AUTHOR_LINK_TABLE_NAME, "uid_literature", replace_link_scope)
-        if not authors_df.empty:
-            _upsert_table_rows(conn, AUTHOR_TABLE_NAME, authors_df, key_columns=["uid_author"])
-        if not links_df.empty:
-            try:
-                _upsert_table_rows(conn, AUTHOR_LINK_TABLE_NAME, links_df, key_columns=["uid_literature_author"])
-            except Exception:
-                pass
-        conn.commit()
-    return {
-        "author_count": int(len(authors_df)),
-        "author_link_count": int(len(links_df)),
-    }
-
-
-def _sync_author_entities(conn: sqlite3.Connection) -> None:
-    if _sqlite_object_type(conn, AUTHOR_LINK_TABLE_NAME) != "table":
-        return
-
-    author_link_columns = _physical_table_columns(conn, AUTHOR_LINK_TABLE_NAME)
-    if not author_link_columns:
-        return
-    author_links_df = pd.read_sql_query(
-        f"SELECT "
-        f"{_quote_identifier(resolve_content_physical_column(AUTHOR_LINK_TABLE_NAME, 'uid_author'))} AS uid_author, "
-        f"{_quote_identifier(resolve_content_physical_column(AUTHOR_LINK_TABLE_NAME, 'display_name'))} AS display_name, "
-        f"{_quote_identifier(resolve_content_physical_column(AUTHOR_LINK_TABLE_NAME, 'source_type'))} AS source_type, "
-        f"{_quote_identifier(resolve_content_physical_column(AUTHOR_LINK_TABLE_NAME, 'created_at'))} AS created_at, "
-        f"{_quote_identifier(resolve_content_physical_column(AUTHOR_LINK_TABLE_NAME, 'updated_at'))} AS updated_at "
-        f"FROM {_quote_identifier(AUTHOR_LINK_TABLE_NAME)}",
-        conn,
-    )
-    if author_links_df.empty:
-        return
-
-    now = _utc_now_iso()
-    author_rows_by_uid: dict[str, dict[str, object]] = {}
-    for _, row in author_links_df.fillna("").iterrows():
-        display_name = str(row.get("display_name") or "").strip()
-        uid_author = str(row.get("uid_author") or "").strip()
-        if not display_name and not uid_author:
-            continue
-        cleaned_author_name, _ = _clean_author_display_name(display_name)
-        normalized_name = _normalize_person_name(cleaned_author_name or display_name)
-        if not uid_author:
-            if not normalized_name:
-                continue
-            uid_author = _stable_author_uid(normalized_name)
-        author_meta = _classify_author_display_name(cleaned_author_name or display_name)
-        canonical_name = str(author_meta.get("标准作者名") or cleaned_author_name or display_name).strip()
-        surname, given_names = _split_author_name_components(canonical_name or display_name)
-        author_rows_by_uid[uid_author] = {
-            "uid_author": uid_author,
-            "display_name": cleaned_author_name or display_name,
-            "normalized_name": normalized_name,
-            "surname": surname,
-            "given_names": given_names,
-            "标准作者名": str(author_meta.get("标准作者名") or ""),
-            "作者类型": str(author_meta.get("作者类型") or "个人作者"),
-            "作者质量标记": str(author_meta.get("作者质量标记") or ""),
-            "orcid": "",
-            "source_type": str(row.get("source_type") or "文献作者关联").strip() or "文献作者关联",
-            "created_at": str(row.get("created_at") or now).strip() or now,
-            "updated_at": str(row.get("updated_at") or now).strip() or now,
-        }
-
-    if not author_rows_by_uid:
-        return
-    authors_df = pd.DataFrame(list(author_rows_by_uid.values()), columns=list(AUTHOR_REQUIRED_COLUMNS.keys()))
-    _upsert_table_rows(conn, AUTHOR_TABLE_NAME, authors_df, key_columns=["uid_author"])
-
-
-def _load_knowledge_relation_source_frames(
-    conn: sqlite3.Connection,
-) -> tuple[pd.DataFrame, pd.DataFrame]:
-    literatures = pd.read_sql_query(
-        f"SELECT {_quote_identifier(resolve_content_physical_column(LITERATURE_TABLE_NAME, 'uid_literature'))} AS uid_literature, "
-        f"{_quote_identifier(resolve_content_physical_column(LITERATURE_TABLE_NAME, 'cite_key'))} AS cite_key, "
-        f"{_quote_identifier(resolve_content_physical_column(LITERATURE_TABLE_NAME, 'standard_note_uid'))} AS standard_note_uid "
-        f"FROM {_quote_identifier(LITERATURE_TABLE_NAME)}",
-        conn,
-    )
-    if _sqlite_object_type(conn, KNOWLEDGE_INDEX_TABLE_NAME) == "table":
-        uid_knowledge_column = resolve_content_physical_column(KNOWLEDGE_INDEX_TABLE_NAME, "uid_knowledge")
-        note_type_column = resolve_content_physical_column(KNOWLEDGE_INDEX_TABLE_NAME, "note_type")
-        uid_literature_column = resolve_content_physical_column(KNOWLEDGE_INDEX_TABLE_NAME, "uid_literature")
-        cite_key_column = resolve_content_physical_column(KNOWLEDGE_INDEX_TABLE_NAME, "cite_key")
-        evidence_uids_column = resolve_content_physical_column(KNOWLEDGE_INDEX_TABLE_NAME, "evidence_uids")
-        knowledge = pd.read_sql_query(
-            f"SELECT {_quote_identifier(uid_knowledge_column)} AS uid_knowledge, "
-            f"{_quote_identifier(note_type_column)} AS note_type, "
-            f"{_quote_identifier(uid_literature_column)} AS uid_literature, "
-            f"{_quote_identifier(cite_key_column)} AS cite_key, "
-            f"{_quote_identifier(evidence_uids_column)} AS evidence_uids "
-            f"FROM {_quote_identifier(KNOWLEDGE_INDEX_TABLE_NAME)}",
-            conn,
-        )
-    else:
-        knowledge = pd.DataFrame(
-            columns=["uid_knowledge", "note_type", "uid_literature", "cite_key", "evidence_uids"]
-        )
-    return literatures, knowledge
-
-
-def _build_knowledge_relation_frames(
-    literatures: pd.DataFrame,
-    knowledge: pd.DataFrame,
-) -> tuple[pd.DataFrame, pd.DataFrame]:
-    literature_uid_set = {
-        str(uid).strip()
-        for uid in literatures.get("uid_literature", pd.Series(dtype=str)).tolist()
-        if str(uid).strip()
-    }
-    knowledge_uid_set = {
-        str(uid).strip()
-        for uid in knowledge.get("uid_knowledge", pd.Series(dtype=str)).tolist()
-        if str(uid).strip()
-    }
-    literature_cite_lookup = {
-        str(row.get("uid_literature") or "").strip(): str(row.get("cite_key") or "").strip()
-        for _, row in literatures.fillna("").iterrows()
-        if str(row.get("uid_literature") or "").strip()
-    }
-    literature_standard_note_lookup = {
-        str(row.get("uid_literature") or "").strip(): str(row.get("standard_note_uid") or "").strip()
-        for _, row in literatures.fillna("").iterrows()
-        if str(row.get("uid_literature") or "").strip()
-    }
-
-    link_rows: list[dict[str, object]] = []
-    now = _utc_now_iso()
-    for _, row in knowledge.fillna("").iterrows():
-        uid_knowledge = str(row.get("uid_knowledge") or "").strip()
-        uid_literature = str(row.get("uid_literature") or "").strip()
-        if uid_knowledge and uid_literature and uid_knowledge in knowledge_uid_set and uid_literature in literature_uid_set:
-            note_type = str(row.get("note_type") or "").strip()
-            designated_standard_note_uid = literature_standard_note_lookup.get(uid_literature, "")
-            if note_type == "literature_standard_note":
-                if designated_standard_note_uid:
-                    relation_type = "standard_note" if designated_standard_note_uid == uid_knowledge else "mention"
-                else:
-                    relation_type = "standard_note"
-            else:
-                relation_type = "mention"
-            link_rows.append(
-                {
-                    "uid_knowledge": uid_knowledge,
-                    "uid_literature": uid_literature,
-                    "relation_type": relation_type,
-                    "is_primary": 1 if relation_type == "standard_note" else 0,
-                    "cite_key": str(row.get("cite_key") or literature_cite_lookup.get(uid_literature) or "").strip(),
-                    "source_field": "知识索引",
-                    "created_at": now,
-                    "updated_at": now,
-                }
-            )
-
-    evidence_rows: list[dict[str, object]] = []
-    for _, row in knowledge.fillna("").iterrows():
-        uid_knowledge = str(row.get("uid_knowledge") or "").strip()
-        if not uid_knowledge or uid_knowledge not in knowledge_uid_set:
-            continue
-        for evidence_uid in _split_pipe_values(row.get("evidence_uids")):
-            evidence_rows.append(
-                {
-                    "uid_knowledge": uid_knowledge,
-                    "evidence_type": "literature" if evidence_uid in literature_uid_set else "unknown",
-                    "target_uid": evidence_uid,
-                    "evidence_role": "supporting",
-                    "source_field": "知识索引.evidence_uids",
-                    "created_at": now,
-                }
-            )
-
-    for _, row in literatures.fillna("").iterrows():
-        uid_literature = str(row.get("uid_literature") or "").strip()
-        uid_knowledge = str(row.get("standard_note_uid") or "").strip()
-        if uid_literature and uid_knowledge and uid_literature in literature_uid_set and uid_knowledge in knowledge_uid_set:
-            link_rows.append(
-                {
-                    "uid_knowledge": uid_knowledge,
-                    "uid_literature": uid_literature,
-                    "relation_type": "standard_note",
-                    "is_primary": 1,
-                    "cite_key": str(row.get("cite_key") or "").strip(),
-                    "source_field": "文献主表.standard_note_uid",
-                    "created_at": now,
-                    "updated_at": now,
-                }
-            )
-
-    link_df = pd.DataFrame(link_rows)
-    if not link_df.empty:
-        link_df = link_df.drop_duplicates(subset=["uid_knowledge", "uid_literature", "relation_type"], keep="last")
-    else:
-        link_df = pd.DataFrame(
-            columns=[
-                "uid_knowledge",
-                "uid_literature",
-                "relation_type",
-                "is_primary",
-                "cite_key",
-                "source_field",
-                "created_at",
-                "updated_at",
-            ]
-        )
-
-    evidence_df = pd.DataFrame(evidence_rows)
-    if not evidence_df.empty:
-        evidence_df = evidence_df.drop_duplicates(
-            subset=["uid_knowledge", "evidence_type", "target_uid", "evidence_role"],
-            keep="last",
-        )
-    else:
-        evidence_df = pd.DataFrame(
-            columns=[
-                "uid_knowledge",
-                "evidence_type",
-                "target_uid",
-                "evidence_role",
-                "source_field",
-                "created_at",
-            ]
-        )
-
-    return link_df, evidence_df
-
-
-def _delete_auto_managed_knowledge_rows(
-    conn: sqlite3.Connection,
-    *,
-    knowledge_scope: set[str],
-    literature_scope: set[str],
-) -> None:
+    conn.execute("PRAGMA foreign_keys = OFF")
     try:
-        if knowledge_scope and _sqlite_object_type(conn, KNOWLEDGE_EVIDENCE_TABLE_NAME) == "table":
-            source_field_column = resolve_content_physical_column(KNOWLEDGE_EVIDENCE_TABLE_NAME, "source_field")
-            uid_knowledge_column = resolve_content_physical_column(KNOWLEDGE_EVIDENCE_TABLE_NAME, "uid_knowledge")
-            source_placeholders = ", ".join(["?"] * len(AUTO_KNOWLEDGE_EVIDENCE_SOURCE_FIELDS))
-            scope_placeholders = ", ".join(["?"] * len(knowledge_scope))
-            conn.execute(
-                f"DELETE FROM {_quote_identifier(KNOWLEDGE_EVIDENCE_TABLE_NAME)} "
-                f"WHERE {_quote_identifier(source_field_column)} IN ({source_placeholders}) "
-                f"AND {_quote_identifier(uid_knowledge_column)} IN ({scope_placeholders})",
-                tuple(AUTO_KNOWLEDGE_EVIDENCE_SOURCE_FIELDS) + tuple(sorted(knowledge_scope)),
-            )
-
-        if (knowledge_scope or literature_scope) and _sqlite_object_type(conn, KNOWLEDGE_LINK_TABLE_NAME) == "table":
-            source_field_column = resolve_content_physical_column(KNOWLEDGE_LINK_TABLE_NAME, "source_field")
-            uid_knowledge_column = resolve_content_physical_column(KNOWLEDGE_LINK_TABLE_NAME, "uid_knowledge")
-            uid_literature_column = resolve_content_physical_column(KNOWLEDGE_LINK_TABLE_NAME, "uid_literature")
-            source_placeholders = ", ".join(["?"] * len(AUTO_KNOWLEDGE_LINK_SOURCE_FIELDS))
-            conditions: list[str] = []
-            params: list[object] = list(AUTO_KNOWLEDGE_LINK_SOURCE_FIELDS)
-            if knowledge_scope:
-                knowledge_placeholders = ", ".join(["?"] * len(knowledge_scope))
-                conditions.append(f"{_quote_identifier(uid_knowledge_column)} IN ({knowledge_placeholders})")
-                params.extend(sorted(knowledge_scope))
-            if literature_scope:
-                literature_placeholders = ", ".join(["?"] * len(literature_scope))
-                conditions.append(f"{_quote_identifier(uid_literature_column)} IN ({literature_placeholders})")
-                params.extend(sorted(literature_scope))
-            if conditions:
-                conn.execute(
-                    f"DELETE FROM {_quote_identifier(KNOWLEDGE_LINK_TABLE_NAME)} "
-                    f"WHERE {_quote_identifier(source_field_column)} IN ({source_placeholders}) "
-                    f"AND ({' OR '.join(conditions)})",
-                    tuple(params),
-                )
-    except sqlite3.OperationalError:
-        return
-
-
-def sync_knowledge_relationships(
-    db_path: str | Path,
-    *,
-    replace_knowledge_scope: list[str] | tuple[str, ...] | set[str] | None = None,
-    replace_literature_scope: list[str] | tuple[str, ...] | set[str] | None = None,
-) -> dict[str, int]:
-    """根据当前文献表与知识索引直接维护自动生成的知识关系。"""
-
-    init_content_db(db_path)
-    knowledge_scope = {
-        str(value).strip()
-        for value in (replace_knowledge_scope or [])
-        if str(value).strip()
-    }
-    literature_scope = {
-        str(value).strip()
-        for value in (replace_literature_scope or [])
-        if str(value).strip()
-    }
-    with connect_sqlite(db_path) as conn:
-        literatures, knowledge = _load_knowledge_relation_source_frames(conn)
-        link_df, evidence_df = _build_knowledge_relation_frames(literatures, knowledge)
-
-        if knowledge_scope or literature_scope:
-            _delete_auto_managed_knowledge_rows(
-                conn,
-                knowledge_scope=knowledge_scope,
-                literature_scope=literature_scope,
-            )
-            if not link_df.empty:
-                link_mask = pd.Series(False, index=link_df.index)
-                if knowledge_scope:
-                    link_mask = link_mask | link_df["uid_knowledge"].astype(str).isin(knowledge_scope)
-                if literature_scope:
-                    link_mask = link_mask | link_df["uid_literature"].astype(str).isin(literature_scope)
-                link_df = link_df.loc[link_mask].reset_index(drop=True)
-            if not evidence_df.empty:
-                if knowledge_scope:
-                    evidence_df = evidence_df.loc[
-                        evidence_df["uid_knowledge"].astype(str).isin(knowledge_scope)
-                    ].reset_index(drop=True)
-                else:
-                    evidence_df = evidence_df.iloc[0:0].copy()
-
+        _replace_table_rows(conn, AUTHOR_TABLE_NAME, authors_df)
         try:
-            _upsert_table_rows(
-                conn,
-                KNOWLEDGE_LINK_TABLE_NAME,
-                link_df,
-                key_columns=["uid_knowledge", "uid_literature", "relation_type"],
-            )
-            _upsert_table_rows(
-                conn,
-                KNOWLEDGE_EVIDENCE_TABLE_NAME,
-                evidence_df,
-                key_columns=["uid_knowledge", "evidence_type", "target_uid", "evidence_role"],
-            )
-        except sqlite3.OperationalError:
-            try:
-                with sqlite3.connect(str(Path(db_path)), timeout=60) as fallback_conn:
-                    _upsert_table_rows(
-                        fallback_conn,
-                        KNOWLEDGE_LINK_TABLE_NAME,
-                        link_df,
-                        key_columns=["uid_knowledge", "uid_literature", "relation_type"],
-                    )
-                    _upsert_table_rows(
-                        fallback_conn,
-                        KNOWLEDGE_EVIDENCE_TABLE_NAME,
-                        evidence_df,
-                        key_columns=["uid_knowledge", "evidence_type", "target_uid", "evidence_role"],
-                    )
-                    fallback_conn.commit()
-            except sqlite3.OperationalError:
-                pass
-        conn.commit()
-    return {
-        "knowledge_link_count": int(len(link_df)),
-        "knowledge_evidence_count": int(len(evidence_df)),
-    }
+            _replace_table_rows(conn, AUTHOR_LINK_TABLE_NAME, pd.DataFrame(columns=list(AUTHOR_LINK_REQUIRED_COLUMNS.keys())))
+            _replace_table_rows(conn, AUTHOR_LINK_TABLE_NAME, links_df)
+        except Exception:
+            # 兼容历史库：若外键契约不一致，则保留作者主表并跳过关联表重建。
+            pass
+    finally:
+        conn.execute("PRAGMA foreign_keys = ON")
 
 
 def _known_contentdb_table_has_rows(conn: sqlite3.Connection, table_name: str) -> bool:
@@ -4204,13 +3727,13 @@ def load_knowledge_literature_links_df(db_path: str | Path) -> pd.DataFrame:
 def load_author_entities_df(db_path: str | Path) -> pd.DataFrame:
     init_content_db(db_path)
     with connect_sqlite(db_path) as conn:
-        return _logicalize_runtime_frame(AUTHOR_TABLE_NAME, pd.read_sql_query(f"SELECT * FROM {AUTHOR_TABLE_NAME}", conn))
+        return pd.read_sql_query(f"SELECT * FROM {AUTHOR_TABLE_NAME}", conn)
 
 
 def load_literature_author_links_df(db_path: str | Path) -> pd.DataFrame:
     init_content_db(db_path)
     with connect_sqlite(db_path) as conn:
-        return _logicalize_runtime_frame(AUTHOR_LINK_TABLE_NAME, pd.read_sql_query(f"SELECT * FROM {AUTHOR_LINK_TABLE_NAME}", conn))
+        return pd.read_sql_query(f"SELECT * FROM {AUTHOR_LINK_TABLE_NAME}", conn)
 
 
 def load_attachment_entities_df(db_path: str | Path) -> pd.DataFrame:
@@ -4252,6 +3775,162 @@ def load_knowledge_evidence_links_df(db_path: str | Path) -> pd.DataFrame:
     init_content_db(db_path)
     with connect_sqlite(db_path) as conn:
         return pd.read_sql_query(f"SELECT * FROM {KNOWLEDGE_EVIDENCE_TABLE_NAME}", conn)
+
+
+AUTO_KNOWLEDGE_LINK_SOURCE_FIELDS: tuple[str, ...] = (
+    "知识索引",
+    "文献主表.standard_note_uid",
+)
+AUTO_KNOWLEDGE_EVIDENCE_SOURCE_FIELDS: tuple[str, ...] = (
+    "知识索引.evidence_uids",
+)
+
+
+def _load_knowledge_relation_source_frames(conn: sqlite3.Connection) -> tuple[pd.DataFrame, pd.DataFrame]:
+    literatures = pd.read_sql_query(
+        f"SELECT {_quote_identifier(resolve_content_physical_column(LITERATURE_TABLE_NAME, 'uid_literature'))} AS uid_literature, {_quote_identifier(resolve_content_physical_column(LITERATURE_TABLE_NAME, 'cite_key'))} AS cite_key, {_quote_identifier(resolve_content_physical_column(LITERATURE_TABLE_NAME, 'standard_note_uid'))} AS standard_note_uid FROM {_quote_identifier(LITERATURE_TABLE_NAME)}",
+        conn,
+    )
+    if _sqlite_object_type(conn, KNOWLEDGE_INDEX_TABLE_NAME) == "table":
+        uid_knowledge_column = resolve_content_physical_column(KNOWLEDGE_INDEX_TABLE_NAME, "uid_knowledge")
+        note_type_column = resolve_content_physical_column(KNOWLEDGE_INDEX_TABLE_NAME, "note_type")
+        uid_literature_column = resolve_content_physical_column(KNOWLEDGE_INDEX_TABLE_NAME, "uid_literature")
+        cite_key_column = resolve_content_physical_column(KNOWLEDGE_INDEX_TABLE_NAME, "cite_key")
+        evidence_uids_column = resolve_content_physical_column(KNOWLEDGE_INDEX_TABLE_NAME, "evidence_uids")
+        knowledge = pd.read_sql_query(
+            f"SELECT {_quote_identifier(uid_knowledge_column)} AS uid_knowledge, {_quote_identifier(note_type_column)} AS note_type, {_quote_identifier(uid_literature_column)} AS uid_literature, {_quote_identifier(cite_key_column)} AS cite_key, {_quote_identifier(evidence_uids_column)} AS evidence_uids FROM {_quote_identifier(KNOWLEDGE_INDEX_TABLE_NAME)}",
+            conn,
+        )
+    else:
+        knowledge = pd.DataFrame(columns=["uid_knowledge", "note_type", "uid_literature", "cite_key", "evidence_uids"])
+    return literatures, knowledge
+
+
+def _build_knowledge_relation_frames(
+    literatures: pd.DataFrame,
+    knowledge: pd.DataFrame,
+) -> tuple[pd.DataFrame, pd.DataFrame]:
+    literature_uid_set = {
+        str(uid).strip()
+        for uid in literatures.get("uid_literature", pd.Series(dtype=str)).tolist()
+        if str(uid).strip()
+    }
+    knowledge_uid_set = {
+        str(uid).strip()
+        for uid in knowledge.get("uid_knowledge", pd.Series(dtype=str)).tolist()
+        if str(uid).strip()
+    }
+    literature_cite_lookup = {
+        str(row.get("uid_literature") or "").strip(): str(row.get("cite_key") or "").strip()
+        for _, row in literatures.fillna("").iterrows()
+        if str(row.get("uid_literature") or "").strip()
+    }
+
+    now = _utc_now_iso()
+    link_rows: list[dict[str, object]] = []
+    for _, row in knowledge.fillna("").iterrows():
+        uid_knowledge = str(row.get("uid_knowledge") or "").strip()
+        uid_literature = str(row.get("uid_literature") or "").strip()
+        if uid_knowledge and uid_literature and uid_knowledge in knowledge_uid_set and uid_literature in literature_uid_set:
+            note_type = str(row.get("note_type") or "").strip()
+            relation_type = "standard_note" if note_type == "literature_standard_note" else "mention"
+            link_rows.append(
+                {
+                    "uid_knowledge": uid_knowledge,
+                    "uid_literature": uid_literature,
+                    "relation_type": relation_type,
+                    "is_primary": 1 if relation_type == "standard_note" else 0,
+                    "cite_key": str(row.get("cite_key") or literature_cite_lookup.get(uid_literature) or "").strip(),
+                    "source_field": "知识索引",
+                    "created_at": now,
+                    "updated_at": now,
+                }
+            )
+
+    evidence_rows: list[dict[str, object]] = []
+    for _, row in knowledge.fillna("").iterrows():
+        uid_knowledge = str(row.get("uid_knowledge") or "").strip()
+        if not uid_knowledge or uid_knowledge not in knowledge_uid_set:
+            continue
+        for evidence_uid in _split_pipe_values(row.get("evidence_uids")):
+            evidence_rows.append(
+                {
+                    "uid_knowledge": uid_knowledge,
+                    "evidence_type": "literature" if evidence_uid in literature_uid_set else "unknown",
+                    "target_uid": evidence_uid,
+                    "evidence_role": "supporting",
+                    "source_field": "知识索引.evidence_uids",
+                    "created_at": now,
+                }
+            )
+
+    for _, row in literatures.fillna("").iterrows():
+        uid_literature = str(row.get("uid_literature") or "").strip()
+        uid_knowledge = str(row.get("standard_note_uid") or "").strip()
+        if uid_literature and uid_knowledge and uid_literature in literature_uid_set and uid_knowledge in knowledge_uid_set:
+            link_rows.append(
+                {
+                    "uid_knowledge": uid_knowledge,
+                    "uid_literature": uid_literature,
+                    "relation_type": "standard_note",
+                    "is_primary": 1,
+                    "cite_key": str(row.get("cite_key") or "").strip(),
+                    "source_field": "文献主表.standard_note_uid",
+                    "created_at": now,
+                    "updated_at": now,
+                }
+            )
+
+    link_df = pd.DataFrame(link_rows)
+    if not link_df.empty:
+        link_df = link_df.drop_duplicates(subset=["uid_knowledge", "uid_literature", "relation_type"], keep="last")
+    else:
+        link_df = pd.DataFrame(columns=["uid_knowledge", "uid_literature", "relation_type", "is_primary", "cite_key", "source_field", "created_at", "updated_at"])
+
+    evidence_df = pd.DataFrame(evidence_rows)
+    if not evidence_df.empty:
+        evidence_df = evidence_df.drop_duplicates(subset=["uid_knowledge", "evidence_type", "target_uid", "evidence_role"], keep="last")
+    else:
+        evidence_df = pd.DataFrame(columns=["uid_knowledge", "evidence_type", "target_uid", "evidence_role", "source_field", "created_at"])
+
+    return link_df, evidence_df
+
+
+def _upsert_table_rows(
+    conn: sqlite3.Connection,
+    table_name: str,
+    frame: pd.DataFrame,
+    *,
+    key_columns: Sequence[str],
+) -> None:
+    if frame is None or frame.empty or _sqlite_object_type(conn, table_name) != "table":
+        return
+
+    adapted = adapt_frame_to_content_physical_schema(conn, table_name, frame.where(pd.notnull(frame), None))
+    if adapted.empty:
+        return
+    physical_columns = list(adapted.columns)
+    physical_key_columns = [resolve_content_physical_column(table_name, column) for column in key_columns if resolve_content_physical_column(table_name, column) in physical_columns]
+    update_columns = [column for column in physical_columns if column not in physical_key_columns]
+    insert_sql = (
+        f"INSERT INTO {_quote_identifier(table_name)} ({', '.join(_quote_identifier(column) for column in physical_columns)}) "
+        f"VALUES ({', '.join(['?'] * len(physical_columns))})"
+    )
+    update_sql = ""
+    if physical_key_columns and update_columns:
+        update_sql = (
+            f"UPDATE {_quote_identifier(table_name)} SET {', '.join(f'{_quote_identifier(column)} = ?' for column in update_columns)} "
+            f"WHERE {' AND '.join(f'{_quote_identifier(column)} = ?' for column in physical_key_columns)}"
+        )
+
+    for row in adapted.to_dict(orient="records"):
+        if update_sql:
+            key_values = [row.get(column) for column in physical_key_columns]
+            if all(value not in (None, "") for value in key_values):
+                cursor = conn.execute(update_sql, [row.get(column) for column in update_columns] + key_values)
+                if cursor.rowcount and cursor.rowcount > 0:
+                    continue
+        conn.execute(insert_sql, [row.get(column) for column in physical_columns])
 
 
 def load_translation_assets_df(
@@ -4417,7 +4096,213 @@ def upsert_translation_asset_rows(
 def backfill_content_relationships(db_path: str | Path) -> None:
     """根据兼容字段回填跨域关系表。"""
 
-    sync_knowledge_relationships(db_path)
+    init_content_db(db_path)
+    with connect_sqlite(db_path) as conn:
+        literatures = pd.read_sql_query(
+            f"SELECT {_quote_identifier(resolve_content_physical_column(LITERATURE_TABLE_NAME, 'uid_literature'))} AS uid_literature, {_quote_identifier(resolve_content_physical_column(LITERATURE_TABLE_NAME, 'cite_key'))} AS cite_key, {_quote_identifier(resolve_content_physical_column(LITERATURE_TABLE_NAME, 'standard_note_uid'))} AS standard_note_uid FROM {_quote_identifier(LITERATURE_TABLE_NAME)}",
+            conn,
+        )
+        if _sqlite_object_type(conn, KNOWLEDGE_INDEX_TABLE_NAME) == "table":
+            uid_knowledge_column = resolve_content_physical_column(KNOWLEDGE_INDEX_TABLE_NAME, "uid_knowledge")
+            note_type_column = resolve_content_physical_column(KNOWLEDGE_INDEX_TABLE_NAME, "note_type")
+            uid_literature_column = resolve_content_physical_column(KNOWLEDGE_INDEX_TABLE_NAME, "uid_literature")
+            cite_key_column = resolve_content_physical_column(KNOWLEDGE_INDEX_TABLE_NAME, "cite_key")
+            evidence_uids_column = resolve_content_physical_column(KNOWLEDGE_INDEX_TABLE_NAME, "evidence_uids")
+            knowledge = pd.read_sql_query(
+                f"SELECT {_quote_identifier(uid_knowledge_column)} AS uid_knowledge, {_quote_identifier(note_type_column)} AS note_type, {_quote_identifier(uid_literature_column)} AS uid_literature, {_quote_identifier(cite_key_column)} AS cite_key, {_quote_identifier(evidence_uids_column)} AS evidence_uids FROM {_quote_identifier(KNOWLEDGE_INDEX_TABLE_NAME)}",
+                conn,
+            )
+        else:
+            knowledge = pd.DataFrame(columns=["uid_knowledge", "note_type", "uid_literature", "cite_key", "evidence_uids"])
+
+        literature_uid_set = {
+            str(uid).strip()
+            for uid in literatures.get("uid_literature", pd.Series(dtype=str)).tolist()
+            if str(uid).strip()
+        }
+        knowledge_uid_set = {
+            str(uid).strip()
+            for uid in knowledge.get("uid_knowledge", pd.Series(dtype=str)).tolist()
+            if str(uid).strip()
+        }
+        literature_cite_lookup = {
+            str(row.get("uid_literature") or "").strip(): str(row.get("cite_key") or "").strip()
+            for _, row in literatures.fillna("").iterrows()
+            if str(row.get("uid_literature") or "").strip()
+        }
+
+        link_rows: list[dict[str, object]] = []
+        now = _utc_now_iso()
+        for _, row in knowledge.fillna("").iterrows():
+            uid_knowledge = str(row.get("uid_knowledge") or "").strip()
+            uid_literature = str(row.get("uid_literature") or "").strip()
+            if uid_knowledge and uid_literature and uid_knowledge in knowledge_uid_set and uid_literature in literature_uid_set:
+                note_type = str(row.get("note_type") or "").strip()
+                relation_type = "standard_note" if note_type == "literature_standard_note" else "mention"
+                link_rows.append(
+                    {
+                        "uid_knowledge": uid_knowledge,
+                        "uid_literature": uid_literature,
+                        "relation_type": relation_type,
+                        "is_primary": 1 if relation_type == "standard_note" else 0,
+                        "cite_key": str(row.get("cite_key") or literature_cite_lookup.get(uid_literature) or "").strip(),
+                        "source_field": "知识索引",
+                        "created_at": now,
+                        "updated_at": now,
+                    }
+                )
+
+        evidence_rows: list[dict[str, object]] = []
+        for _, row in knowledge.fillna("").iterrows():
+            uid_knowledge = str(row.get("uid_knowledge") or "").strip()
+            if not uid_knowledge or uid_knowledge not in knowledge_uid_set:
+                continue
+            for evidence_uid in _split_pipe_values(row.get("evidence_uids")):
+                evidence_rows.append(
+                    {
+                        "uid_knowledge": uid_knowledge,
+                        "evidence_type": "literature" if evidence_uid in literature_uid_set else "unknown",
+                        "target_uid": evidence_uid,
+                        "evidence_role": "supporting",
+                        "source_field": "知识索引.evidence_uids",
+                        "created_at": now,
+                    }
+                )
+
+        for _, row in literatures.fillna("").iterrows():
+            uid_literature = str(row.get("uid_literature") or "").strip()
+            uid_knowledge = str(row.get("standard_note_uid") or "").strip()
+            if uid_literature and uid_knowledge and uid_literature in literature_uid_set and uid_knowledge in knowledge_uid_set:
+                link_rows.append(
+                    {
+                        "uid_knowledge": uid_knowledge,
+                        "uid_literature": uid_literature,
+                        "relation_type": "standard_note",
+                        "is_primary": 1,
+                        "cite_key": str(row.get("cite_key") or "").strip(),
+                        "source_field": "文献主表.standard_note_uid",
+                        "created_at": now,
+                        "updated_at": now,
+                    }
+                )
+
+        link_df = pd.DataFrame(link_rows)
+        if not link_df.empty:
+            link_df = link_df.drop_duplicates(subset=["uid_knowledge", "uid_literature", "relation_type"], keep="last")
+        else:
+            link_df = pd.DataFrame(
+                columns=[
+                    "uid_knowledge",
+                    "uid_literature",
+                    "relation_type",
+                    "is_primary",
+                    "cite_key",
+                    "source_field",
+                    "created_at",
+                    "updated_at",
+                ]
+            )
+
+        evidence_df = pd.DataFrame(evidence_rows)
+        if not evidence_df.empty:
+            evidence_df = evidence_df.drop_duplicates(
+                subset=["uid_knowledge", "evidence_type", "target_uid", "evidence_role"],
+                keep="last",
+            )
+        else:
+            evidence_df = pd.DataFrame(
+                columns=[
+                    "uid_knowledge",
+                    "evidence_type",
+                    "target_uid",
+                    "evidence_role",
+                    "source_field",
+                    "created_at",
+                ]
+            )
+
+        try:
+            _replace_table_rows(conn, KNOWLEDGE_LINK_TABLE_NAME, link_df)
+            _replace_table_rows(conn, KNOWLEDGE_EVIDENCE_TABLE_NAME, evidence_df)
+        except sqlite3.OperationalError:
+            # 兼容旧库：部分工作区把关系对象保留为 view 或历史外键契约，回填失败时跳过。
+            pass
+        conn.commit()
+
+
+def sync_author_entities_from_literature_rows(
+    db_path: str | Path,
+    literature_rows: pd.DataFrame | Sequence[dict[str, object]] | None = None,
+    *,
+    replace_link_scope: Sequence[str] | None = None,
+) -> None:
+    """按文献主表当前内容重建作者实体与作者关联。
+
+    保留 `literature_rows` 与 `replace_link_scope` 参数仅用于兼容旧调用签名；当前统一以
+    content.db 里的 `文献主表` 作为真相源，避免外部再维护第二套作者回写逻辑。
+    """
+
+    del literature_rows, replace_link_scope
+    init_content_db(db_path)
+    with connect_sqlite(db_path) as conn:
+        _sync_author_entities(conn)
+        conn.commit()
+
+
+def sync_knowledge_relationships(
+    db_path: str | Path,
+    *,
+    replace_literature_scope: Sequence[str] | None = None,
+    replace_knowledge_scope: Sequence[str] | None = None,
+) -> None:
+    """按知识索引与文献主表当前内容刷新自动知识关系。"""
+
+    init_content_db(db_path)
+    with connect_sqlite(db_path) as conn:
+        link_df, evidence_df = _build_knowledge_relation_frames(*_load_knowledge_relation_source_frames(conn))
+
+        literature_scope = {
+            str(value).strip()
+            for value in (replace_literature_scope or [])
+            if str(value).strip()
+        }
+        knowledge_scope = {
+            str(value).strip()
+            for value in (replace_knowledge_scope or [])
+            if str(value).strip()
+        }
+
+        if knowledge_scope:
+            if not link_df.empty:
+                link_df = link_df.loc[link_df["uid_knowledge"].astype(str).isin(knowledge_scope)].reset_index(drop=True)
+            if not evidence_df.empty:
+                evidence_df = evidence_df.loc[evidence_df["uid_knowledge"].astype(str).isin(knowledge_scope)].reset_index(drop=True)
+        if literature_scope:
+            if not link_df.empty:
+                link_df = link_df.loc[link_df["uid_literature"].astype(str).isin(literature_scope)].reset_index(drop=True)
+            if not evidence_df.empty:
+                evidence_df = evidence_df.loc[
+                    ~evidence_df["evidence_type"].astype(str).eq("literature")
+                    | evidence_df["target_uid"].astype(str).isin(literature_scope)
+                ].reset_index(drop=True)
+
+        try:
+            _upsert_table_rows(
+                conn,
+                KNOWLEDGE_LINK_TABLE_NAME,
+                link_df,
+                key_columns=["uid_knowledge", "uid_literature", "relation_type"],
+            )
+            _upsert_table_rows(
+                conn,
+                KNOWLEDGE_EVIDENCE_TABLE_NAME,
+                evidence_df,
+                key_columns=["uid_knowledge", "evidence_type", "target_uid", "evidence_role"],
+            )
+        except sqlite3.OperationalError:
+            # 兼容旧库：知识关系表可能保留历史外键契约，遇到 mismatch 时跳过自动同步。
+            pass
+        conn.commit()
 
 
 def upsert_knowledge_literature_link(
@@ -4533,6 +4418,8 @@ def backfill_content_relative_paths(
 
 
 __all__ = [
+    "AUTO_KNOWLEDGE_EVIDENCE_SOURCE_FIELDS",
+    "AUTO_KNOWLEDGE_LINK_SOURCE_FIELDS",
     "ATTACHMENT_LINK_TABLE_NAME",
     "ATTACHMENT_TABLE_NAME",
     "AUTHOR_LINK_TABLE_NAME",
@@ -4576,9 +4463,9 @@ __all__ = [
     "infer_workspace_root_from_content_db",
     "init_content_db",
     "load_attachment_entities_df",
+    "load_author_entities_df",
     "derive_literature_parse_state",
     "normalize_literature_parse_state",
-    "load_author_entities_df",
     "load_knowledge_evidence_links_df",
     "load_knowledge_literature_links_df",
     "load_literature_author_links_df",

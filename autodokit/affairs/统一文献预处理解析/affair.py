@@ -6,7 +6,7 @@
 
 full_preprocess 支持按 profile 调度 MonkeyOCR：
 1. review：消费 `文献预处理` 的 A050_REVIEW 队列，产出 review_deep 资产并推进 A060。
-2. non_review：消费 `文献预处理` 的 A050_NON_REVIEW 队列，产出 non_review_rough 资产并推进 A090。
+2. non_review：消费 `文献预处理` 的 A050_NON_REVIEW 队列，产出 non_review_rough 资产并推进 A080。
 3. mixed：自动按文献类型拆分到 review/non_review 两条子链执行。
 """
 
@@ -808,7 +808,7 @@ def _build_full_library_priority_rows(
                 "decision": "preserve_in_progress" if _stringify(row.get("queue_status")) == "in_progress" else "ranked",
                 "priority": int(row.get("priority") or 0),
                 "bucket": _bucket_from_row(queue_status=_stringify(row.get("queue_status")), family_hits=_stringify(row.get("family_hits")).split("/") if _stringify(row.get("family_hits")) else []),
-                "preferred_next_stage": "A060" if profile == "review" else "A090",
+                "preferred_next_stage": "A060" if profile == "review" else "A080",
                 "recommended_reason": _stringify(row.get("recommended_reason")),
                 "theme_relation": _stringify(row.get("theme_relation")),
                 "preprocess_state": _stringify(row.get("preprocess_state")),
@@ -1062,7 +1062,7 @@ def _seed_a050_queue_rows(content_db: Path, profile: str, source_df: pd.DataFram
         if pd.isna(priority_value):
             priority_value = None
 
-        next_stage = "A060" if normalized_profile == "review" else "A090"
+        next_stage = "A060" if normalized_profile == "review" else "A080"
         bucket = "review_parse_ready" if normalized_profile == "review" else "non_review_preprocess"
         recommended_reason = _stringify(row.get("recommended_reason"))
         if not recommended_reason:
@@ -1257,7 +1257,7 @@ def _run_profile_parse(
         output_dir=output_dir,
         source_stage="A050_NON_REVIEW",
         upstream_stage="A050",
-        downstream_stage="A090",
+        downstream_stage="A080",
         parse_level="non_review_rough",
         literature_scope="non_review",
         runtime_settings=parse_runtime,
@@ -1419,16 +1419,16 @@ def _update_flow_state_after_preprocess(
                     "uid_literature": uid_literature,
                     "cite_key": cite_key,
                     "stage_code": "rough_read",
-                    "node_code": "A090",
+                    "node_code": "A080",
                     "文献角色": "普通候选文献",
                     "流程轨道": "普通主链",
-                    "当前阶段": "普通文献泛读",
-                    "当前阶段组": "泛读",
+                    "当前阶段": "普通阅读链处理",
+                    "当前阶段组": "普通阅读链",
                     "当前状态": "待处理",
-                    "下一阶段": "泛读批次汇总",
+                    "下一阶段": "深度解析准备",
                     "来源阶段": source_stage,
                     "来源类型": "A055_unified_preprocess",
-                    "推荐原因": "A055 统一预处理完成，进入 A090 文献泛读与轻量分析",
+                    "推荐原因": "A055 统一预处理完成，进入 A080 普通阅读链整合事务",
                     "主题关系": _stringify(row.get("theme_relation")) or "A055_non_review",
                     "是否当前有效": 1,
                     "是否可执行": 1,
@@ -1440,7 +1440,7 @@ def _update_flow_state_after_preprocess(
     return len(rows)
 
 
-def _upsert_a090_queue(content_db: Path, ready_df: pd.DataFrame, *, source_affair: str) -> int:
+def _upsert_a080_queue(content_db: Path, ready_df: pd.DataFrame, *, source_affair: str) -> int:
     rows: List[Dict[str, Any]] = []
     for _, row in ready_df.fillna("").iterrows():
         uid_literature = _stringify(row.get("uid_literature"))
@@ -1451,20 +1451,20 @@ def _upsert_a090_queue(content_db: Path, ready_df: pd.DataFrame, *, source_affai
             {
                 "uid_literature": uid_literature,
                 "cite_key": cite_key,
-                "stage": "A090",
+                "stage": "A080",
                 "source_affair": source_affair,
                 "queue_status": "queued",
                 "priority": row.get("priority") or row.get("priority_rank") or 60.0,
-                "bucket": "non_review_rough_read",
-                "preferred_next_stage": "A095",
-                "recommended_reason": f"{source_affair} 统一预处理完成，进入 A090",
+                "bucket": "non_review_reading_chain",
+                "preferred_next_stage": "A100",
+                "recommended_reason": f"{source_affair} 统一预处理完成，进入 A080",
                 "theme_relation": _stringify(row.get("theme_relation")) or f"{source_affair}_non_review",
                 "preprocess_state": _stringify(row.get("preprocess_state")) or "已处理",
                 "preprocess_result_path": _stringify(row.get("preprocess_result_path")) or _stringify(row.get("asset_dir")),
                 "preprocess_failure_reason": "",
                 "preprocess_finished_at": _stringify(row.get("preprocess_finished_at")),
                 "source_round": source_affair.lower(),
-                "scope_key": f"{source_affair.lower()}_to_a090",
+                "scope_key": f"{source_affair.lower()}_to_a080",
                 "is_current": 1,
             }
         )
@@ -1853,7 +1853,7 @@ def execute(config_path: Path) -> List[Path]:
         consumed_non_review = _consume_current_stage_queue_rows(content_db, stage="A050_NON_REVIEW", ready_df=non_review_record_df)
         _update_flow_state_after_preprocess(content_db, review_record_df, profile="review", source_stage=f"{node_code}_record")
         _update_flow_state_after_preprocess(content_db, non_review_record_df, profile="non_review", source_stage=f"{node_code}_record")
-        a090_queue_count = _upsert_a090_queue(content_db, non_review_record_df, source_affair=node_code)
+        a090_queue_count = _upsert_a080_queue(content_db, non_review_record_df, source_affair=node_code)
 
         record_rows: List[Dict[str, Any]] = []
         for current_profile, current_df in [("review", review_record_df), ("non_review", non_review_record_df)]:
@@ -2007,7 +2007,7 @@ def execute(config_path: Path) -> List[Path]:
         else:
             non_review_ready_count += len(ready_df)
             non_review_failed_count += len(failed_df)
-            a090_queue_count += _upsert_a090_queue(content_db, ready_df, source_affair=node_code)
+            a090_queue_count += _upsert_a080_queue(content_db, ready_df, source_affair=node_code)
             _update_flow_state_after_preprocess(content_db, ready_df, profile="non_review", source_stage=f"{node_code}_non_review")
             consumed_a050_queue_count += _consume_current_stage_queue_rows(content_db, stage="A050_NON_REVIEW", ready_df=ready_df)
 

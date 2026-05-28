@@ -433,6 +433,10 @@ def init_db(db_path: Path) -> None:
             f"CREATE TABLE IF NOT EXISTS {LITERATURE_REVIEW_STATE_TABLE_NAME} ({_quote_identifier(resolve_content_physical_column(LITERATURE_REVIEW_STATE_TABLE_NAME, 'uid_literature'))} TEXT PRIMARY KEY)"
         )
         _ensure_columns(conn, LITERATURE_REVIEW_STATE_TABLE_NAME, {key: value for key, value in REVIEW_STATE_COLUMNS.items() if key != "uid_literature"})
+        conn.execute(
+            f"CREATE TABLE IF NOT EXISTS {READING_STATE_TABLE_NAME} ({_quote_identifier(resolve_content_physical_column(READING_STATE_TABLE_NAME, 'uid_literature'))} TEXT PRIMARY KEY)"
+        )
+        _ensure_columns(conn, READING_STATE_TABLE_NAME, {key: value for key, value in READING_STATE_COLUMNS.items() if key != "uid_literature"})
 
         literature_columns = {
             row[1]
@@ -694,26 +698,26 @@ def _build_reading_flow_row(row: pd.Series) -> dict[str, Any]:
         stage_code = "deep_parse_prepare"
         node_code = "A100"
     elif rough_read_done == 1 and analysis_batch_synced == 0:
-        current_stage = "泛读批次汇总"
-        current_group = "泛读"
+        current_stage = "普通阅读链批次汇总"
+        current_group = "普通阅读链"
         current_status = "待处理"
         next_stage = "深度解析准备"
-        stage_code = "rough_batch_summary"
-        node_code = "A095"
+        stage_code = "a080_batch_summary"
+        node_code = "A080"
     elif in_rough_read == 1:
-        current_stage = "普通文献泛读"
-        current_group = "泛读"
+        current_stage = "普通阅读链粗读"
+        current_group = "普通阅读链"
         current_status = "处理中"
-        next_stage = "泛读批次汇总"
-        stage_code = "rough_read"
-        node_code = "A090"
+        next_stage = "深度解析准备"
+        stage_code = "a080_rough_read"
+        node_code = "A080"
     elif pending_rough_read == 1:
-        current_stage = "普通文献泛读"
-        current_group = "泛读"
+        current_stage = "普通阅读链粗读"
+        current_group = "普通阅读链"
         current_status = "待处理"
-        next_stage = "泛读批次汇总"
-        stage_code = "rough_read"
-        node_code = "A090"
+        next_stage = "深度解析准备"
+        stage_code = "a080_rough_read"
+        node_code = "A080"
     elif preprocessed == 1:
         current_stage = "普通文献预处理"
         current_group = "预处理"
@@ -918,7 +922,7 @@ def _sync_flow_state_for_uids(
 
     placeholders = ", ".join(["?"] * len(cleaned_uids))
     if source == "reading":
-        if _sqlite_object_type(conn, READING_STATE_TABLE_NAME) != "table":
+        if _sqlite_object_type(conn, READING_STATE_TABLE_NAME) not in {"table", "view"}:
             return
         uid_literature_column = resolve_content_physical_column(READING_STATE_TABLE_NAME, "uid_literature")
         state_df = _read_sql_logical_df(
@@ -960,7 +964,7 @@ def load_reading_state_df(
     init_db(db_path)
     conn = _connect(db_path)
     try:
-        if _sqlite_object_type(conn, READING_STATE_TABLE_NAME) == "table":
+        if _sqlite_object_type(conn, READING_STATE_TABLE_NAME) in {"table", "view"}:
             state_df = _read_sql_logical_df(conn, READING_STATE_TABLE_NAME, f"SELECT * FROM {READING_STATE_TABLE_NAME}")
         else:
             state_df = pd.DataFrame()
@@ -977,6 +981,31 @@ def load_reading_state_df(
             state_df = state_df[state_df[column].astype(str) == str(expected)]
     if state_df.empty:
         return _normalize_reading_state_frame(state_df)
+    if "uid_literature" in state_df.columns:
+        latest_priority_columns = [
+            column
+            for column in [
+                "updated_at",
+                "rough_read_done",
+                "analysis_batch_synced",
+                "deep_read_done",
+                "preprocessed",
+                "pending_preprocess",
+                "pending_rough_read",
+                "pending_deep_read",
+                "deep_read_count",
+            ]
+            if column in state_df.columns
+        ]
+        if latest_priority_columns:
+            latest_priority_ascending = []
+            for column in latest_priority_columns:
+                if column in {"pending_preprocess", "pending_rough_read", "pending_deep_read"}:
+                    latest_priority_ascending.append(True)
+                else:
+                    latest_priority_ascending.append(False)
+            state_df = state_df.sort_values(by=latest_priority_columns, ascending=latest_priority_ascending, na_position="last").reset_index(drop=True)
+        state_df = state_df.drop_duplicates(subset=["uid_literature"], keep="first").reset_index(drop=True)
     sort_columns = [column for column in ["pending_preprocess", "pending_rough_read", "pending_deep_read", "deep_read_count", "updated_at"] if column in state_df.columns]
     if sort_columns:
         ascending = [False, False, False, True, False][: len(sort_columns)]
@@ -1051,6 +1080,29 @@ def upsert_reading_state_rows(db_path: Path, rows: Sequence[dict[str, Any]] | pd
         return
 
     with _connect(db_path) as conn:
+        reading_state_target = _resolve_writable_table_name(conn, READING_STATE_TABLE_NAME)
+        if reading_state_target:
+            if _sqlite_object_type(conn, reading_state_target) != "table":
+                conn.execute(
+                    f"CREATE TABLE IF NOT EXISTS {_quote_identifier(reading_state_target)} ({_quote_identifier(resolve_content_physical_column(reading_state_target, 'uid_literature'))} TEXT PRIMARY KEY)"
+                )
+            _ensure_columns(conn, reading_state_target, {key: value for key, value in READING_STATE_COLUMNS.items() if key != "uid_literature"})
+
+            adapted_state_df = _adapt_frame_for_table(conn, reading_state_target, incoming_df)
+            physical_columns = _existing_table_columns(conn, reading_state_target)
+            key_column = resolve_content_physical_column(reading_state_target, "uid_literature")
+            if key_column not in physical_columns:
+                key_column = "uid_literature"
+            writable_columns = [column for column in adapted_state_df.columns if column in physical_columns]
+            for _, row in adapted_state_df.fillna("").iterrows():
+                _update_then_insert_by_key(
+                    conn,
+                    table_name=reading_state_target,
+                    writable_columns=writable_columns,
+                    key_column=key_column,
+                    row_dict=row.to_dict(),
+                )
+
         _update_runtime_summary_rows(
             conn,
             target_table=LITERATURE_TABLE_NAME,
@@ -2526,6 +2578,13 @@ def replace_reference_tables_only(
 
         if literatures_df is not None and literature_target:
             working_literatures = _normalize_literatures_df(literatures_df)
+            runtime_summary_columns = [
+                column
+                for column in LITERATURE_RUNTIME_SUMMARY_COLUMNS
+                if column in working_literatures.columns
+            ]
+            if runtime_summary_columns:
+                working_literatures = working_literatures.drop(columns=runtime_summary_columns)
             author_source_df = working_literatures.copy()
             _ensure_columns(conn, literature_target, {column: "TEXT" for column in working_literatures.columns})
             if not working_literatures.empty:
@@ -2565,6 +2624,13 @@ def replace_reference_tables_only(
 
         if attachments_df is not None:
             working_attachments = _normalize_attachments_df(attachments_df)
+            attachment_runtime_columns = [
+                column
+                for column in ATTACHMENT_RUNTIME_SUMMARY_COLUMNS
+                if column in working_attachments.columns
+            ]
+            if attachment_runtime_columns:
+                working_attachments = working_attachments.drop(columns=attachment_runtime_columns)
             _write_normalized_attachment_tables(conn, working_attachments, if_exists="replace")
 
         if tags_df is not None and tag_target:
