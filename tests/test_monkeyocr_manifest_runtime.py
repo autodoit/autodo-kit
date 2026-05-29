@@ -5,9 +5,12 @@ from __future__ import annotations
 import importlib
 import json
 from pathlib import Path
+import re
 import sqlite3
+import types
 
 import pandas as pd
+import pytest
 
 from autodokit.tools.bibliodb_sqlite import (
     init_db,
@@ -192,7 +195,7 @@ def test_run_parse_manifest_should_register_assets_without_gpu(monkeypatch, tmp_
         output_dir=output_dir,
         source_stage="A080",
         upstream_stage="A070",
-        downstream_stage="A090",
+        downstream_stage="A080",
         parse_level="non_review_rough",
         literature_scope="non_review",
         runtime_settings={
@@ -253,7 +256,7 @@ def test_run_parse_manifest_should_report_gpu_lock_conflict_without_running(monk
         ]),
         output_dir=output_dir,
         source_stage="A100",
-        upstream_stage="A095",
+        upstream_stage="A080",
         downstream_stage="A105",
         parse_level="non_review_deep",
         literature_scope="non_review",
@@ -293,7 +296,7 @@ def test_run_parse_manifest_should_cleanup_incomplete_asset_before_rerun(monkeyp
         output_dir=output_dir,
         source_stage="A055",
         upstream_stage="A050",
-        downstream_stage="A090",
+        downstream_stage="A080",
         parse_level="non_review_rough",
         literature_scope="non_review",
         runtime_settings={
@@ -328,7 +331,7 @@ def test_a080_affair_should_consume_manifest_runner(monkeypatch, tmp_path: Path)
                 "queue_status": "queued",
                 "priority": 80,
                 "source_affair": "A075",
-                "preferred_next_stage": "A090",
+                "preferred_next_stage": "A100",
                 "recommended_reason": "test",
                 "theme_relation": "demo",
                 "is_current": 1,
@@ -403,7 +406,7 @@ def test_a100_affair_should_promote_parse_ready_without_gpu(monkeypatch, tmp_pat
                 "stage": "A100",
                 "queue_status": "queued",
                 "priority": 80,
-                "source_affair": "A090",
+                "source_affair": "A080",
                 "preferred_next_stage": "A105",
                 "recommended_reason": "test",
                 "theme_relation": "demo",
@@ -465,80 +468,110 @@ def test_a100_affair_should_promote_parse_ready_without_gpu(monkeypatch, tmp_pat
     assert row["deep_read_decision"] == "parse_ready"
 
 
-def test_a060_affair_should_enqueue_a065_from_manifest_runner(monkeypatch, tmp_path: Path) -> None:
-    module = importlib.import_module("autodokit.affairs.综述预处理.affair")
-    workspace_root, content_db, pdf_path = _prepare_workspace(tmp_path)
+def test_a060_merged_followups_should_build_internal_phase_configs(monkeypatch, tmp_path: Path) -> None:
+    module = importlib.import_module("autodokit.affairs.候选文献视图构建.affair")
+    workspace_root, content_db, _ = _prepare_workspace(tmp_path)
     output_dir = tmp_path / "outputs_a060"
     output_dir.mkdir(parents=True, exist_ok=True)
 
-    upsert_review_state_rows(
-        content_db,
-        [
-            {
-                "uid_literature": "lit-001",
-                "cite_key": "demo-001",
-                "pending_review_parse": 1,
-                "review_parse_ready": 0,
-                "pending_reference_preprocess": 0,
-            }
-        ],
+    captured_payloads: dict[str, dict] = {}
+
+    def _fake_execute(module_path: str, config_path: Path) -> List[Path]:
+        payload = json.loads(Path(config_path).read_text(encoding="utf-8"))
+        captured_payloads[module_path] = payload
+        marker_path = Path(config_path).with_suffix(".done")
+        marker_path.write_text(module_path, encoding="utf-8")
+        return [marker_path]
+
+    monkeypatch.setattr(
+        module,
+        "import_module",
+        lambda module_path: types.SimpleNamespace(
+            execute=lambda config_path, module_path=module_path: _fake_execute(module_path, Path(config_path))
+        ),
     )
 
-    manifest_df = pd.DataFrame(
-        [
-            {
-                "uid_literature": "lit-001",
-                "cite_key": "demo-001",
-                "title": "Demo Paper",
-                "pdf_path": str(pdf_path),
-                "manifest_status": "succeeded",
-                "normalized_structured_path": str(workspace_root / "references" / "structured_monkeyocr_full" / "demo-001" / "normalized.structured.json"),
-                "reconstructed_markdown_path": str(workspace_root / "references" / "structured_monkeyocr_full" / "demo-001" / "reconstructed_content.md"),
-                "asset_dir": str(workspace_root / "references" / "structured_monkeyocr_full" / "demo-001"),
-                "postprocess_ok": 1,
-                "postprocess_llm_basic_cleanup_status": "ok",
-                "postprocess_llm_structure_status": "ok",
-                "postprocess_contamination_removed_block_count": 0,
-                "failure_reason": "",
-            }
-        ]
-    )
-    def _fake_runner(**kwargs):
-        artifacts = _write_runner_artifacts(Path(kwargs["output_dir"]), manifest_df)
-        return {
-            "manifest_df": manifest_df,
-            **artifacts,
-            "readable_manifest_path": artifacts["manifest_path"],
-            "failures": [],
-            "counts": {"total": 1, "succeeded": 1, "skipped": 0, "failed": 0},
-            "lock_error": "",
-        }
-
-    monkeypatch.setattr(module, "run_parse_manifest", _fake_runner)
-
-    config_path = tmp_path / "a060.json"
-    _write_json(
-        config_path,
-        {
+    outputs = module._run_merged_followup_affairs(
+        workspace_root=workspace_root,
+        raw_cfg={
             "workspace_root": str(workspace_root),
             "content_db": str(content_db),
-            "output_dir": str(output_dir),
-            "topic": "Demo Topic",
+            "research_topic": "Demo Topic",
+            "merged_phase_configs": {
+                "A065": {"api_key_file": "demo-key.txt"},
+                "A070": {"review_state_max_chars": 12345},
+                "A075": {
+                    "human_seed_contract": {
+                        "enabled": True,
+                        "seed_items": [{"cite_key": "seed-001", "recommended_reason": "demo"}],
+                    }
+                },
+            },
         },
+        output_dir=output_dir,
     )
 
-    outputs = module.execute(config_path)
-    assert any(path.name == "parse_asset_status.csv" for path in outputs)
+    merged_config_dir = output_dir / "merged_phase_configs"
+    assert (merged_config_dir / "A065.json").exists()
+    assert (merged_config_dir / "A070.json").exists()
+    assert (merged_config_dir / "A075.json").exists()
+    assert not (workspace_root / "config" / "affairs_config" / "A065.json").exists()
+    assert captured_payloads["autodokit.affairs.候选文献视图构建.phase_a065"]["api_key_file"] == "demo-key.txt"
+    assert captured_payloads["autodokit.affairs.候选文献视图构建.phase_a070"]["review_state_max_chars"] == 12345
+    assert captured_payloads["autodokit.affairs.候选文献视图构建.phase_a075"]["human_seed_contract"]["seed_items"][0]["cite_key"] == "seed-001"
+    assert any(path.name == "A065.json" for path in outputs)
+    assert any(path.name == "A070.json" for path in outputs)
+    assert any(path.name == "A075.json" for path in outputs)
 
-    review_state_df = load_review_state_df(content_db)
-    review_row = review_state_df[review_state_df["uid_literature"].astype(str) == "lit-001"].iloc[0]
-    assert int(review_row["pending_review_parse"]) == 0
-    assert int(review_row["review_parse_ready"]) == 1
-    assert int(review_row["pending_reference_preprocess"]) == 1
 
-    queue_df = load_reading_queue_df(content_db, stage="A065", only_current=True)
-    assert not queue_df.empty
-    assert "demo-001" in queue_df["cite_key"].astype(str).tolist()
+def test_a070_review_reading_followups_should_allow_selected_nodes(monkeypatch, tmp_path: Path) -> None:
+    module = importlib.import_module("autodokit.affairs.候选文献视图构建.affair")
+    workspace_root, content_db, _ = _prepare_workspace(tmp_path)
+    output_dir = tmp_path / "outputs_a070"
+    output_dir.mkdir(parents=True, exist_ok=True)
+
+    captured_payloads: dict[str, dict] = {}
+
+    def _fake_execute(module_path: str, config_path: Path) -> List[Path]:
+        payload = json.loads(Path(config_path).read_text(encoding="utf-8"))
+        captured_payloads[module_path] = payload
+        marker_path = Path(config_path).with_suffix(".done")
+        marker_path.write_text(module_path, encoding="utf-8")
+        return [marker_path]
+
+    monkeypatch.setattr(
+        module,
+        "import_module",
+        lambda module_path: types.SimpleNamespace(
+            execute=lambda config_path, module_path=module_path: _fake_execute(module_path, Path(config_path))
+        ),
+    )
+
+    outputs = module._run_merged_followup_affairs(
+        workspace_root=workspace_root,
+        raw_cfg={
+            "workspace_root": str(workspace_root),
+            "content_db": str(content_db),
+            "research_topic": "Demo Topic",
+            "merged_phase_configs": {
+                "A065": {"downstream_stage": "A075"},
+                "A070": {"review_state_max_chars": 12345},
+                "A075": {"human_seed_contract": {"enabled": True}},
+            },
+        },
+        output_dir=output_dir,
+        selected_nodes=("A065", "A070"),
+    )
+
+    merged_config_dir = output_dir / "merged_phase_configs"
+    assert (merged_config_dir / "A065.json").exists()
+    assert (merged_config_dir / "A070.json").exists()
+    assert not (merged_config_dir / "A075.json").exists()
+    assert captured_payloads["autodokit.affairs.候选文献视图构建.phase_a065"]["downstream_stage"] == "A075"
+    assert captured_payloads["autodokit.affairs.候选文献视图构建.phase_a070"]["review_state_max_chars"] == 12345
+    assert "autodokit.affairs.候选文献视图构建.phase_a075" not in captured_payloads
+    assert any(path.name == "A065.json" for path in outputs)
+    assert any(path.name == "A070.json" for path in outputs)
 
 
 def test_a050_affair_should_consume_flow_state_when_legacy_flags_missing(monkeypatch, tmp_path: Path) -> None:
@@ -832,7 +865,7 @@ def test_a055_should_consume_queue_in_ascending_priority_order(monkeypatch, tmp_
                 "queue_status": "queued",
                 "priority": 9,
                 "source_affair": "A050",
-                "preferred_next_stage": "A090",
+                "preferred_next_stage": "A080",
                 "recommended_reason": "later",
                 "theme_relation": "demo",
                 "is_current": 1,
@@ -844,7 +877,7 @@ def test_a055_should_consume_queue_in_ascending_priority_order(monkeypatch, tmp_
                 "queue_status": "queued",
                 "priority": 2,
                 "source_affair": "A050",
-                "preferred_next_stage": "A090",
+                "preferred_next_stage": "A080",
                 "recommended_reason": "earlier",
                 "theme_relation": "demo",
                 "is_current": 1,
@@ -998,7 +1031,7 @@ def test_a055_mixed_should_start_from_global_min_priority_batch(monkeypatch, tmp
                 "queue_status": "queued",
                 "priority": 1,
                 "source_affair": "A050",
-                "preferred_next_stage": "A090",
+                "preferred_next_stage": "A080",
                 "recommended_reason": "non-review first",
                 "theme_relation": "demo",
                 "is_current": 1,
@@ -1080,9 +1113,10 @@ def test_a055_takeover_should_stop_previous_local_and_remote(monkeypatch, tmp_pa
     guard_path = module._runtime_guard_path(workspace_root)
     guard_path.write_text(json.dumps({"pid": 4242, "task_uid": "old-run"}, ensure_ascii=False), encoding="utf-8")
 
-    monkeypatch.setattr(module, "_is_pid_alive", lambda pid: pid == 4242)
+    alive_pids = {4242}
+    monkeypatch.setattr(module, "_is_pid_alive", lambda pid: pid in alive_pids)
     killed: list[int] = []
-    monkeypatch.setattr(module, "_terminate_local_process", lambda pid: killed.append(pid) or True)
+    monkeypatch.setattr(module, "_terminate_local_process", lambda pid: killed.append(pid) or alive_pids.discard(pid) is None or True)
     monkeypatch.setattr(module, "stop_remote_monkeyocr_jobs", lambda runtime: {"enabled": True, "killed": True})
 
     actions = module._takeover_previous_a055_run(
@@ -1094,6 +1128,25 @@ def test_a055_takeover_should_stop_previous_local_and_remote(monkeypatch, tmp_pa
     assert killed == [4242]
     assert "local_killed:4242" in actions
     assert "remote_stopped" in actions
+
+
+def test_a055_takeover_should_refuse_parallel_start_when_previous_process_cannot_exit(monkeypatch, tmp_path: Path) -> None:
+    module = importlib.import_module("autodokit.affairs.统一文献预处理解析.affair")
+    workspace_root = (tmp_path / "workspace").resolve()
+    workspace_root.mkdir(parents=True, exist_ok=True)
+
+    guard_path = module._runtime_guard_path(workspace_root)
+    guard_path.write_text(json.dumps({"pid": 9898, "task_uid": "old-run"}, ensure_ascii=False), encoding="utf-8")
+
+    monkeypatch.setattr(module, "_is_pid_alive", lambda pid: pid == 9898)
+    monkeypatch.setattr(module, "_terminate_local_process", lambda pid: False)
+
+    with pytest.raises(RuntimeError, match="旧实例仍在运行"):
+        module._takeover_previous_a055_run(
+            workspace_root=workspace_root,
+            parse_runtime={"remote_processing": {"enabled": True, "mode": "ssh"}},
+            task_uid="new-run",
+        )
 
 
 def _ensure_complete_asset(asset_dir: Path) -> None:
@@ -1194,7 +1247,7 @@ def test_a055_record_parse_results_should_sync_from_done_marker(tmp_path: Path) 
                 "queue_status": "queued",
                 "priority": 80,
                 "source_affair": "A050",
-                "preferred_next_stage": "A090",
+                "preferred_next_stage": "A080",
                 "recommended_reason": "test",
                 "theme_relation": "demo",
                 "is_current": 1,
@@ -1231,8 +1284,8 @@ def test_a055_record_parse_results_should_sync_from_done_marker(tmp_path: Path) 
     queue_df = load_reading_queue_df(content_db, stage="A050_NON_REVIEW", only_current=True)
     assert queue_df.empty
 
-    a090_queue = load_reading_queue_df(content_db, stage="A090", only_current=True)
-    assert not a090_queue.empty
+    a080_queue = load_reading_queue_df(content_db, stage="A080", only_current=True)
+    assert not a080_queue.empty
 
     with sqlite3.connect(content_db) as conn:
         uid_column = resolve_content_physical_column(LITERATURE_TABLE_NAME, "uid_literature")
@@ -1280,6 +1333,20 @@ def test_a055_record_parse_results_should_resolve_attachment_stem_without_marker
     assert ready_df.iloc[0]["done_marker_path"] == ""
 
 
+def test_a055_should_pick_latest_timestamp_done_marker(tmp_path: Path) -> None:
+    module = importlib.import_module("autodokit.affairs.统一文献预处理解析.affair")
+    asset_dir = tmp_path / "lit-001"
+    asset_dir.mkdir(parents=True, exist_ok=True)
+    older = asset_dir / "done_20260528010101.txt"
+    newer = asset_dir / "done_20260529020202.txt"
+    older.write_text("", encoding="utf-8")
+    newer.write_text("", encoding="utf-8")
+
+    resolved = module._find_a055_done_marker(asset_dir, marker_name=module.A055_DONE_MARKER_DEFAULT)
+
+    assert resolved == newer
+
+
 def test_a055_local_only_should_disable_remote_and_write_done_marker(monkeypatch, tmp_path: Path) -> None:
     module = importlib.import_module("autodokit.affairs.统一文献预处理解析.affair")
     workspace_root, content_db, pdf_path = _prepare_workspace(tmp_path)
@@ -1296,7 +1363,7 @@ def test_a055_local_only_should_disable_remote_and_write_done_marker(monkeypatch
                 "queue_status": "queued",
                 "priority": 80,
                 "source_affair": "A050",
-                "preferred_next_stage": "A090",
+                "preferred_next_stage": "A080",
                 "recommended_reason": "test",
                 "theme_relation": "demo",
                 "is_current": 1,
@@ -1375,4 +1442,11 @@ def test_a055_local_only_should_disable_remote_and_write_done_marker(monkeypatch
     assert any(path.name == "a055_unified_preprocess_index.csv" for path in outputs)
     assert isinstance(runtime_captured.get("runtime"), dict)
     assert not bool((runtime_captured["runtime"].get("remote_processing") or {}).get("enabled"))
-    assert (asset_dir / "a055_parse_done.done.txt").exists()
+    done_markers = sorted(asset_dir.glob("done_*.txt"))
+    assert len(done_markers) == 1
+    marker_name = done_markers[0].name
+    assert marker_name.startswith("done_") and marker_name.endswith(".txt")
+    marker_stamp = marker_name[len("done_"):-len(".txt")]
+    assert re.fullmatch(r"\d{14}", marker_stamp)
+    marker_text = done_markers[0].read_text(encoding="utf-8").strip()
+    assert marker_text == marker_stamp

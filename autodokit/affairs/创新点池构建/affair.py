@@ -1,4 +1,4 @@
-"""创新点池构建事务。"""
+"""A140 创新点凝练事务。"""
 
 from __future__ import annotations
 
@@ -107,7 +107,7 @@ def execute(config_path: Path) -> List[Path]:
 
     gate_review = build_gate_review(
         node_uid="A140",
-        node_name="创新与交付链整合事务",
+        node_name="创新点凝练",
         summary=f"生成 {len(pool_table)} 条候选创新点，完成 {len(scored_table)} 条可行性评分，其中建议提升 {promotable_count} 条，并在同一节点内输出交付归档摘要。",
         checks=[
             {"name": "innovation_count", "value": len(pool_table)},

@@ -214,6 +214,22 @@ CHINESE_TO_LEGACY_VALUE_MAP_BY_KEY: dict[str, dict[str, str]] = {
     for key, mapping in LEGACY_TO_CHINESE_VALUE_MAP_BY_KEY.items()
 }
 
+# 命名治理白名单：这些英文键在 workspace/config 与事务配置中属于允许保留项，
+# 不应在中英契约转换时被自动改写。
+ENGLISH_KEY_EXACT_EXCEPTIONS: set[str] = {
+    "cite_key",
+}
+ENGLISH_KEY_PREFIX_EXCEPTIONS: tuple[str, ...] = (
+    "uid_",
+    "bib_",
+)
+
+
+def _is_english_key_exception(key_name: str) -> bool:
+    if key_name in ENGLISH_KEY_EXACT_EXCEPTIONS:
+        return True
+    return any(key_name.startswith(prefix) for prefix in ENGLISH_KEY_PREFIX_EXCEPTIONS)
+
 
 def _translate_scalar(value: Any, key_name: str, mapping_by_key: dict[str, dict[str, str]]) -> Any:
     if not isinstance(value, str):
@@ -243,7 +259,7 @@ def _translate_payload(
         translated: dict[str, Any] = {}
         for key, value in payload.items():
             source_key = str(key)
-            target_key = key_map.get(source_key, source_key)
+            target_key = source_key if _is_english_key_exception(source_key) else key_map.get(source_key, source_key)
             normalized_key = CHINESE_TO_LEGACY_KEY_MAP.get(target_key, target_key)
             translated[target_key] = _translate_payload(
                 value,
@@ -301,6 +317,8 @@ __all__ = [
     "LEGACY_TO_CHINESE_VALUE_MAP_BY_KEY",
     "CHINESE_TO_LEGACY_KEY_MAP",
     "CHINESE_TO_LEGACY_VALUE_MAP_BY_KEY",
+    "ENGLISH_KEY_EXACT_EXCEPTIONS",
+    "ENGLISH_KEY_PREFIX_EXCEPTIONS",
     "normalize_to_legacy_contract",
     "export_to_chinese_contract",
     "get_alias_value",

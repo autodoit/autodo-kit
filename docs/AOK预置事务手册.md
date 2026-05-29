@@ -9615,7 +9615,7 @@ print(outputs)
 
 本事务用于直接从统一内容主库生成综述候选视图、阅读池和阅读批次。
 
-在 AcademicResearch-auto-workflow 当前主链口径中，本事务对应 A060“综述候选文献视图构建”的官方 AOK 入口。
+在 AcademicResearch-auto-workflow 当前主链口径中，本事务对应 A060“综述文献研读”的官方 AOK 入口。
 
 - 输入
 
@@ -10640,7 +10640,7 @@ print(outputs)
 
 #### 模块说明
 
-A100 文献精解析资产化事务。
+A100 文献批判性研读事务。
 
 #### 事务 Markdown 说明摘录
 
@@ -13182,7 +13182,7 @@ print(outputs)
 
 #### 模块说明
 
-A080 非综述文献预处理事务。
+A080 普通文献泛读事务。
 
 A080 优先消费正式 `A080` 阶段队列，并结合 `文献主表.current_parse_*`
 与结构化摘要字段完成统一预处理；旧 reading_state 仅保留兼容回写。

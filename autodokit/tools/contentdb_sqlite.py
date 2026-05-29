@@ -63,24 +63,51 @@ FLOW_STAGE_LIST_VIEWS: tuple[tuple[str, str], ...] = (
     ("待预处理文献清单", "IFNULL(当前阶段, '') = '普通文献预处理' AND IFNULL(当前状态, '') IN ('待处理', '阻塞')"),
     ("补件待办文献清单", "IFNULL(当前阶段, '') = '普通文献预处理' AND IFNULL(当前状态, '') = '阻塞'"),
     ("待泛读文献清单", "IFNULL(当前阶段, '') = '普通文献泛读' AND IFNULL(当前状态, '') = '待处理'"),
+    ("待研读候选构建文献清单", "IFNULL(当前阶段, '') = '普通文献研读候选视图构建' AND IFNULL(当前状态, '') = '待处理'"),
     ("待批判性研读文献清单", "IFNULL(当前阶段, '') = '批判性研读' AND IFNULL(当前状态, '') = '待处理'"),
 )
-TRANSACTION_RELATION_OVERVIEW_VIEW_NAME = "事务编号关联总视图"
+TRANSACTION_RELATION_OVERVIEW_VIEW_NAME = "事务关联总视图"
 TRANSACTION_RELATION_NODE_LABELS: tuple[tuple[str, str], ...] = (
-    ("A040", "文献检索与入库"),
-    ("A050", "预处理优先级生成"),
-    ("A055", "统一文献预处理执行"),
-    ("A060", "综述候选文献视图构建"),
-    ("A065", "综述参考文献预处理与笔记骨架"),
-    ("A070", "综述研读与研究脉络"),
-    ("A075", "非综述候选种子生成"),
-    ("A080", "非综述文献预处理"),
-    ("A100", "文献精解析资产化"),
-    ("A105", "文献批判性研读与标准笔记"),
+    ("A060", "综述文献候选视图构建"),
+    ("A070", "综述文献研读"),
+    ("A075", "普通文献候选视图构建"),
+    ("A080", "普通文献泛读"),
+    ("A095", "普通文献研读候选视图构建"),
+    ("A100", "文献批判性研读"),
+    ("A110", "研究脉络梳理"),
+    ("A140", "创新点凝练"),
 )
 TRANSACTION_RELATION_FILTER_VIEWS: tuple[tuple[str, str], ...] = tuple(
-    (f"{node_code}事务编号关联视图", node_code)
+    (f"{node_code}事务关联视图", node_code)
     for node_code, _ in TRANSACTION_RELATION_NODE_LABELS
+)
+LEGACY_TRANSACTION_RELATION_VIEW_NAMES: tuple[str, ...] = tuple(
+    dict.fromkeys(
+        [
+            "事务编号关联总视图",
+            "A040事务关联视图",
+            "A050事务关联视图",
+            "A055事务关联视图",
+            "A040事务编号关联视图",
+            "A050事务编号关联视图",
+            "A055事务编号关联视图",
+            "A065事务编号关联视图",
+            "A065事务关联视图",
+            "A090事务编号关联视图",
+            "A090事务关联视图",
+            "A105事务编号关联视图",
+            "A105事务关联视图",
+            "A120事务编号关联视图",
+            "A120事务关联视图",
+            "A130事务编号关联视图",
+            "A130事务关联视图",
+            "A150事务编号关联视图",
+            "A150事务关联视图",
+            "A160事务编号关联视图",
+            "A160事务关联视图",
+            *[f"{node_code}事务编号关联视图" for node_code, _ in TRANSACTION_RELATION_NODE_LABELS],
+        ]
+    )
 )
 LITERATURE_PARSE_STATE_PENDING = "未完成"
 LITERATURE_PARSE_STATE_RUNNING = "在运行"
@@ -1183,7 +1210,7 @@ CONTENTDB_PHYSICAL_COLUMN_ALIASES: dict[str, dict[str, str]] = {
     LITERATURE_TABLE_NAME: {
         "id": "内部编号",
         "uid_literature": "uid_文献",
-        "cite_key": "题录键",
+        "cite_key": "cite_key",
         "doi": "bib_doi",
         "isbn": "bib_isbn",
         "issn": "bib_issn",
@@ -1336,7 +1363,7 @@ CONTENTDB_PHYSICAL_COLUMN_ALIASES: dict[str, dict[str, str]] = {
     LITERATURE_TAG_TABLE_NAME: {
         "id": "内部编号",
         "uid_literature": "uid_文献",
-        "cite_key": "题录键",
+        "cite_key": "cite_key",
         "tag": "标签",
         "tag_norm": "标签规范名",
         "source_type": "来源类型",
@@ -1347,7 +1374,7 @@ CONTENTDB_PHYSICAL_COLUMN_ALIASES: dict[str, dict[str, str]] = {
         "id": "内部编号",
         "asset_uid": "uid_资产",
         "uid_literature": "uid_文献",
-        "cite_key": "题录键",
+        "cite_key": "cite_key",
         "uid_attachment": "uid_附件",
         "parse_level": "解析层级",
         "backend": "解析后端",
@@ -1374,7 +1401,7 @@ CONTENTDB_PHYSICAL_COLUMN_ALIASES: dict[str, dict[str, str]] = {
         "id": "内部编号",
         "translation_uid": "uid_翻译资产",
         "uid_literature": "uid_文献",
-        "cite_key": "题录键",
+        "cite_key": "cite_key",
         "source_asset_uid": "uid_来源资产",
         "source_kind": "来源类型",
         "target_lang": "目标语种",
@@ -1466,7 +1493,7 @@ CONTENTDB_PHYSICAL_COLUMN_ALIASES: dict[str, dict[str, str]] = {
     },
     FLOW_STATE_TABLE_NAME: {
         "uid_literature": "uid_文献",
-        "cite_key": "题录键",
+        "cite_key": "cite_key",
         "parse_asset_uid": "uid_解析资产",
         "note_uid": "uid_笔记",
         "source_uid_literature": "uid_来源文献",
@@ -1496,10 +1523,10 @@ CONTENTDB_PHYSICAL_COLUMN_ALIASES: dict[str, dict[str, str]] = {
     },
     READING_STATE_TABLE_NAME: {
         "uid_literature": "uid_文献",
-        "cite_key": "题录键",
+        "cite_key": "cite_key",
         "source_stage": "来源阶段",
         "source_uid_literature": "uid_来源文献",
-        "source_cite_key": "来源题录键",
+        "source_cite_key": "source_cite_key",
         "recommended_reason": "推荐原因",
         "theme_relation": "主题关系",
         "source_origin": "来源口径",
@@ -1561,7 +1588,7 @@ CONTENTDB_PHYSICAL_COLUMN_ALIASES: dict[str, dict[str, str]] = {
     READING_QUEUE_TABLE_NAME: {
         "id": "内部编号",
         "uid_literature": "uid_文献",
-        "cite_key": "题录键",
+        "cite_key": "cite_key",
         "queue_uid": "预处理队列UID",
         "stage": "阶段",
         "source_affair": "来源事务",
@@ -1598,6 +1625,39 @@ CONTENTDB_PHYSICAL_COLUMN_ALIASES.setdefault(
     dict(CONTENTDB_PHYSICAL_COLUMN_ALIASES.get(TRANSLATION_ASSET_TABLE_NAME, {})),
 )
 
+# 命名治理英文例外：历史库若曾把这些列名中文化，初始化时应回迁到英文列名。
+CONTENTDB_LEGACY_EXCEPTION_COLUMN_RENAMES: dict[str, dict[str, str]] = {
+    LITERATURE_TABLE_NAME: {
+        "题录键": "cite_key",
+    },
+    LITERATURE_TAG_TABLE_NAME: {
+        "题录键": "cite_key",
+    },
+    PARSE_ASSET_TABLE_NAME: {
+        "题录键": "cite_key",
+    },
+    TRANSLATION_ASSET_TABLE_NAME: {
+        "题录键": "cite_key",
+    },
+    TRANSLATION_ASSET_STORAGE_TABLE_NAME: {
+        "题录键": "cite_key",
+    },
+    FLOW_STATE_TABLE_NAME: {
+        "题录键": "cite_key",
+    },
+    READING_STATE_TABLE_NAME: {
+        "题录键": "cite_key",
+        "来源题录键": "source_cite_key",
+        "阅读来源题录键": "source_cite_key",
+    },
+    READING_QUEUE_TABLE_NAME: {
+        "题录键": "cite_key",
+    },
+    KNOWLEDGE_NOTES_TABLE_NAME: {
+        "题录键": "cite_key",
+    },
+}
+
 
 def resolve_content_physical_column(table_name: str, column_name: str) -> str:
     aliases = CONTENTDB_PHYSICAL_COLUMN_ALIASES.get(table_name, {})
@@ -1608,9 +1668,25 @@ def _resolve_physical_column(table_name: str, column_name: str) -> str:
     return resolve_content_physical_column(table_name, column_name)
 
 
+def _migrate_legacy_exception_columns(conn: sqlite3.Connection, table_name: str) -> None:
+    if _sqlite_object_type(conn, table_name) != "table":
+        return
+    existing_columns = _physical_table_columns(conn, table_name)
+    rename_mapping = CONTENTDB_LEGACY_EXCEPTION_COLUMN_RENAMES.get(table_name, {})
+    for legacy_column, target_column in rename_mapping.items():
+        if legacy_column not in existing_columns or target_column in existing_columns:
+            continue
+        conn.execute(
+            f"ALTER TABLE {_quote_identifier(table_name)} RENAME COLUMN {_quote_identifier(legacy_column)} TO {_quote_identifier(target_column)}"
+        )
+        existing_columns.remove(legacy_column)
+        existing_columns.add(target_column)
+
+
 def _rename_table_columns_to_physical_aliases(conn: sqlite3.Connection, table_name: str) -> None:
     if _sqlite_object_type(conn, table_name) != "table":
         return
+    _migrate_legacy_exception_columns(conn, table_name)
     existing_columns = _physical_table_columns(conn, table_name)
     aliases = CONTENTDB_PHYSICAL_COLUMN_ALIASES.get(table_name, {})
     for logical_name, physical_name in aliases.items():
@@ -1966,6 +2042,9 @@ def _runtime_projection_alias(table_name: str, logical_name: str) -> str:
 
 
 def _refresh_runtime_projection_views(conn: sqlite3.Connection) -> None:
+    for view_name in LEGACY_TRANSACTION_RELATION_VIEW_NAMES:
+        conn.execute(f"DROP VIEW IF EXISTS {_quote_identifier(view_name)}")
+
     literature_uid = _qualified_physical_column(LITERATURE_TABLE_NAME, "uid_literature", "lit")
     literature_cite = _qualified_physical_column(LITERATURE_TABLE_NAME, "cite_key", "lit")
     literature_columns = _physical_table_columns(conn, LITERATURE_TABLE_NAME)
@@ -2347,7 +2426,7 @@ def _refresh_reading_state_views(conn: sqlite3.Connection) -> None:
             '' AS 文献角色,
             CASE
                 WHEN COALESCE(q.{_quote_identifier(_resolve_physical_column(READING_QUEUE_TABLE_NAME, 'stage'))}, '') IN ('A050', 'A055', 'A060', 'A065', 'A070') THEN '综述主链'
-                WHEN COALESCE(q.{_quote_identifier(_resolve_physical_column(READING_QUEUE_TABLE_NAME, 'stage'))}, '') IN ('A075', 'A080', 'A100', 'A105') THEN '普通主链'
+                WHEN COALESCE(q.{_quote_identifier(_resolve_physical_column(READING_QUEUE_TABLE_NAME, 'stage'))}, '') IN ('A075', 'A080', 'A095', 'A100', 'A105') THEN '普通主链'
                 ELSE ''
             END AS 流程轨道,
             COALESCE(lit.{_quote_identifier(_resolve_physical_column(LITERATURE_TABLE_NAME, 'primary_attachment_name'))}, '') AS 主附件名称,
@@ -2418,26 +2497,27 @@ def _refresh_reading_state_views(conn: sqlite3.Connection) -> None:
       )
     ORDER BY 事务编号, 更新时间 DESC, 年份 DESC, 引文键, 文献标识
     """
-    _create_or_replace_view(conn, TRANSACTION_RELATION_OVERVIEW_VIEW_NAME, transaction_overview_sql)
-    quoted_transaction_name = _quote_identifier(TRANSACTION_RELATION_OVERVIEW_VIEW_NAME)
     legacy_stage_name_case = """
     CASE 当前阶段
         WHEN 'A040' THEN '文献检索与入库事务'
         WHEN 'A050' THEN '预处理优先级生成事务'
         WHEN 'A055' THEN '统一文献预处理执行事务'
-        WHEN 'A060' THEN '综述候选文献视图构建事务'
+        WHEN 'A060' THEN '综述文献候选视图构建事务'
         WHEN 'A065' THEN '综述参考文献预处理与笔记骨架事务'
-        WHEN 'A070' THEN '综述研读与研究脉络事务'
-        WHEN 'A075' THEN '非综述候选种子生成事务'
-        WHEN 'A080' THEN '普通文献预处理事务'
-        WHEN 'A100' THEN '文献精解析资产化事务'
+        WHEN 'A070' THEN '综述文献研读事务'
+        WHEN 'A075' THEN '普通文献候选视图构建事务'
+        WHEN 'A080' THEN '普通文献泛读事务'
+        WHEN 'A095' THEN '普通文献研读候选视图构建事务'
+        WHEN 'A100' THEN '文献批判性研读事务'
+        WHEN 'A110' THEN '研究脉络梳理事务'
+        WHEN 'A140' THEN '创新点凝练事务'
         WHEN 'A105' THEN '文献批判性研读与标准笔记事务'
         ELSE 当前阶段
     END
     """
     _create_or_replace_view(
         conn,
-        "事务关联总视图",
+        TRANSACTION_RELATION_OVERVIEW_VIEW_NAME,
         f"""
         SELECT
             事务编号 AS 事务编码,
@@ -2466,9 +2546,12 @@ def _refresh_reading_state_views(conn: sqlite3.Connection) -> None:
             是否可执行,
             最近任务标识,
             更新时间
-        FROM {quoted_transaction_name}
+        FROM (
+            {transaction_overview_sql}
+        ) AS tx
         """,
     )
+    quoted_transaction_name = _quote_identifier(TRANSACTION_RELATION_OVERVIEW_VIEW_NAME)
     for view_name, node_code in TRANSACTION_RELATION_FILTER_VIEWS:
         view_sql = f"""
         SELECT *
@@ -2477,7 +2560,6 @@ def _refresh_reading_state_views(conn: sqlite3.Connection) -> None:
         ORDER BY 更新时间 DESC, 年份 DESC, 引文键, 文献标识
         """
         _create_or_replace_view(conn, view_name, view_sql)
-        _create_or_replace_view(conn, view_name.replace("事务编号关联视图", "事务关联视图"), view_sql)
 
     workflow_overview_sql = f"""
     SELECT *
@@ -2496,8 +2578,8 @@ def _refresh_reading_state_views(conn: sqlite3.Connection) -> None:
                                 WHEN COALESCE({_quote_identifier(_resolve_physical_column(FLOW_STATE_TABLE_NAME, 'current_stage'))}, '') = '综述综合研读' THEN CASE WHEN COALESCE({_quote_identifier(_resolve_physical_column(FLOW_STATE_TABLE_NAME, 'current_status'))}, '') = '处理中' THEN '阅读中' ELSE '待阅读' END
                                 WHEN COALESCE({_quote_identifier(_resolve_physical_column(FLOW_STATE_TABLE_NAME, 'current_stage'))}, '') = '普通文献预处理' THEN CASE WHEN COALESCE({_quote_identifier(_resolve_physical_column(FLOW_STATE_TABLE_NAME, 'current_status'))}, '') = '阻塞' THEN '补件待办' ELSE '待预处理' END
                                 WHEN COALESCE({_quote_identifier(_resolve_physical_column(FLOW_STATE_TABLE_NAME, 'current_stage'))}, '') = '普通文献泛读' THEN CASE WHEN COALESCE({_quote_identifier(_resolve_physical_column(FLOW_STATE_TABLE_NAME, 'current_status'))}, '') = '处理中' THEN '泛读中' ELSE '待泛读' END
-                                WHEN COALESCE({_quote_identifier(_resolve_physical_column(FLOW_STATE_TABLE_NAME, 'current_stage'))}, '') = '泛读批次汇总' THEN '待批次汇总'
-                                WHEN COALESCE({_quote_identifier(_resolve_physical_column(FLOW_STATE_TABLE_NAME, 'current_stage'))}, '') = '深度解析准备' THEN '待研读'
+                                WHEN COALESCE({_quote_identifier(_resolve_physical_column(FLOW_STATE_TABLE_NAME, 'current_stage'))}, '') = '普通文献研读候选视图构建' THEN '待研读候选构建'
+                                WHEN COALESCE({_quote_identifier(_resolve_physical_column(FLOW_STATE_TABLE_NAME, 'current_stage'))}, '') = '批判性研读' THEN '待研读'
                                 WHEN COALESCE({_quote_identifier(_resolve_physical_column(FLOW_STATE_TABLE_NAME, 'current_stage'))}, '') = '批判性研读' THEN CASE WHEN COALESCE({_quote_identifier(_resolve_physical_column(FLOW_STATE_TABLE_NAME, 'current_status'))}, '') = '处理中' THEN '研读中' ELSE '待批判性研读' END
                                 ELSE COALESCE({_quote_identifier(_resolve_physical_column(FLOW_STATE_TABLE_NAME, 'current_status'))}, '未归类')
             END AS 状态

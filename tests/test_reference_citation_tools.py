@@ -162,6 +162,173 @@ def test_process_reference_citation_should_insert_placeholder_when_parse_fails(m
     assert result["matched_cite_key"]
 
 
+def test_process_reference_citation_should_fallback_when_llm_returns_empty_fields(monkeypatch, tmp_path: Path) -> None:
+    workspace_root = tmp_path / "workspace"
+    workspace_root.mkdir(parents=True, exist_ok=True)
+    config_path = workspace_root / "config" / "config.json"
+    _write_config(config_path, workspace_root)
+
+    literature_table = pd.DataFrame(
+        [
+            {
+                "uid_literature": "lit-001",
+                "cite_key": "elliott-2014-financial_networks_and_contagion",
+                "title": "Financial Networks and Contagion",
+                "first_author": "Elliott",
+                "year": "2014",
+                "clean_title": "financial_networks_and_contagion",
+                "title_norm": "financial networks and contagion",
+            }
+        ]
+    )
+
+    def _fake_generate_text(self, **kwargs):
+        _ = kwargs
+        return json.dumps(
+            {
+                "first_author": "",
+                "year": "",
+                "title_raw": "",
+                "confidence": "0.05",
+                "failure_reason": "empty_record",
+            },
+            ensure_ascii=False,
+        )
+
+    def _fake_load_config(**kwargs):
+        from autodokit.tools.llm_clients import AliyunLLMConfig
+
+        return AliyunLLMConfig(
+            api_key="fake",
+            model="qwen3.5-flash",
+            base_url="https://example.com",
+            sdk_backend="dashscope",
+            region="cn-beijing",
+            routing_info={},
+        )
+
+    monkeypatch.setattr("autodokit.tools.reference_citation_tools.load_aliyun_llm_config", _fake_load_config)
+    monkeypatch.setattr("autodokit.tools.reference_citation_tools.AliyunLLMClient.generate_text", _fake_generate_text)
+
+    updated_table, result = process_reference_citation(
+        literature_table,
+        "Elliott M, Golub B, Jackson M O. Financial Networks and Contagion [J]. The American Economic Review, 2014, 104(10): 3115-3153.",
+        workspace_root=workspace_root,
+        global_config_path=config_path,
+        print_to_stdout=False,
+    )
+
+    assert len(updated_table) == 1
+    assert result["action"] == "exists"
+    assert result["parse_method"] == "local_reference_text_parser"
+    assert result["llm_invoked"] == 0
+    assert result["parse_failed"] == 0
+    assert result["matched_cite_key"] == "elliott-2014-financial_networks_and_contagion"
+
+
+def test_process_reference_citation_should_fallback_for_chinese_journal_reference(monkeypatch, tmp_path: Path) -> None:
+    workspace_root = tmp_path / "workspace"
+    workspace_root.mkdir(parents=True, exist_ok=True)
+    config_path = workspace_root / "config" / "config.json"
+    _write_config(config_path, workspace_root)
+
+    literature_table = pd.DataFrame(
+        [
+            {
+                "uid_literature": "lit-001",
+                "cite_key": "陆蓉-2021-机构投资者概念股偏好与股市泡沫骑乘",
+                "title": "机构投资者概念股偏好与股市泡沫骑乘",
+                "first_author": "陆蓉",
+                "year": "2021",
+                "clean_title": "机构投资者概念股偏好与股市泡沫骑乘",
+                "title_norm": "机构投资者概念股偏好与股市泡沫骑乘",
+            }
+        ]
+    )
+
+    def _fake_generate_text(self, **kwargs):
+        _ = kwargs
+        return json.dumps(
+            {
+                "first_author": "",
+                "year": "",
+                "title_raw": "",
+                "confidence": "0.02",
+                "failure_reason": "empty_record",
+            },
+            ensure_ascii=False,
+        )
+
+    def _fake_load_config(**kwargs):
+        from autodokit.tools.llm_clients import AliyunLLMConfig
+
+        return AliyunLLMConfig(
+            api_key="fake",
+            model="qwen3.5-flash",
+            base_url="https://example.com",
+            sdk_backend="dashscope",
+            region="cn-beijing",
+            routing_info={},
+        )
+
+    monkeypatch.setattr("autodokit.tools.reference_citation_tools.load_aliyun_llm_config", _fake_load_config)
+    monkeypatch.setattr("autodokit.tools.reference_citation_tools.AliyunLLMClient.generate_text", _fake_generate_text)
+
+    updated_table, result = process_reference_citation(
+        literature_table,
+        "陆蓉，孙欣钰．机构投资者概念股偏好与股市泡沫骑乘［J］．中国工业经济，2021(3):174－192．",
+        workspace_root=workspace_root,
+        global_config_path=config_path,
+        print_to_stdout=False,
+    )
+
+    assert len(updated_table) == 1
+    assert result["action"] == "exists"
+    assert result["parse_method"] == "local_reference_text_parser"
+    assert result["llm_invoked"] == 0
+    assert result["parse_failed"] == 0
+    assert result["recognized_fields"]["title_raw"] == "机构投资者概念股偏好与股市泡沫骑乘"
+    assert result["matched_cite_key"] == "陆蓉-2021-机构投资者概念股偏好与股市泡沫骑乘"
+
+
+def test_process_reference_citation_should_use_local_parser_for_well_formed_english_reference(tmp_path: Path) -> None:
+    workspace_root = tmp_path / "workspace"
+    workspace_root.mkdir(parents=True, exist_ok=True)
+    config_path = workspace_root / "config" / "config.json"
+    _write_config(config_path, workspace_root)
+
+    literature_table = pd.DataFrame(
+        [
+            {
+                "uid_literature": "lit-001",
+                "cite_key": "buston-2016-active_risk_management_and_banking_stability",
+                "title": "Active risk management and banking stability",
+                "first_author": "Buston",
+                "year": "2016",
+                "clean_title": "active_risk_management_and_banking_stability",
+                "title_norm": "active risk management and banking stability",
+            }
+        ]
+    )
+
+    updated_table, result = process_reference_citation(
+        literature_table,
+        "Buston C. Active risk management and banking stability [J]. Journal of Banking & Finance, 2016, 72: S203-S215.",
+        workspace_root=workspace_root,
+        global_config_path=config_path,
+        enable_reference_line_repair=False,
+        print_to_stdout=False,
+    )
+
+    assert len(updated_table) == 1
+    assert result["action"] == "exists"
+    assert result["parse_method"] == "local_reference_text_parser"
+    assert result["llm_invoked"] == 0
+    assert result["parse_failed"] == 0
+    assert result["recognized_fields"]["title_raw"] == "Active risk management and banking stability"
+    assert result["matched_cite_key"] == "buston-2016-active_risk_management_and_banking_stability"
+
+
 def test_process_reference_citation_should_accept_integer_typed_history_columns(monkeypatch, tmp_path: Path) -> None:
     workspace_root = tmp_path / "workspace"
     workspace_root.mkdir(parents=True, exist_ok=True)

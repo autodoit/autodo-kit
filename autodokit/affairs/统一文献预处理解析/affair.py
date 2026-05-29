@@ -51,6 +51,7 @@ from autodokit.tools.contentdb_sqlite import (
     resolve_content_db_config,
     resolve_content_physical_column,
 )
+from autodokit.tools.time_utils import now_compact
 from autodokit.tools.ocr.runtime.monkeyocr_manifest_runtime import (
     _is_parse_asset_complete,
     _safe_stem,
@@ -64,7 +65,7 @@ from autodokit.tools.storage_backend import load_reference_main_table
 
 
 OUTPUT_GATE = "gate_review.json"
-A055_DONE_MARKER_DEFAULT = "a055_parse_done.done.txt"
+A055_DONE_MARKER_DEFAULT = "done_{timestamp}.txt"
 A055_RUN_MODE_LOCAL_ONLY = "local_only"
 A055_RUN_MODE_LOCAL_DISPATCH_REMOTE = "local_dispatch_remote"
 A055_RUN_MODE_REMOTE_ONLY_TMUX = "remote_only_tmux"
@@ -89,6 +90,7 @@ DEFAULT_PRIORITY_POLICY: Dict[str, Any] = {
 COMPLETED_STATUS_TOKENS = {"completed", "done", "success", "succeeded", "successful", "已完成", "已处理", "成功"}
 IN_PROGRESS_STATUS_TOKENS = {"in_progress", "running", "processing", "处理中", "执行中", "进行中"}
 BLOCKED_STATUS_TOKENS = {"blocked", "阻塞", "missing_attachment", "需补件", "waiting_attachment"}
+_A055_TIMESTAMP_DONE_MARKER_PATTERN = re.compile(r"^done_\d{14}\.txt$")
 
 
 def _normalize_enum_value(key: str, value: Any, default: str = "") -> str:
@@ -184,10 +186,42 @@ def _resolve_a055_asset_dir(
 
 
 def _write_a055_done_marker(asset_dir: Path, *, marker_name: str) -> str:
-    marker = asset_dir / marker_name
+    marker_timestamp_text = now_compact()
+    marker = asset_dir / _resolve_a055_done_marker_name(marker_name, marker_timestamp_text=marker_timestamp_text)
     marker.parent.mkdir(parents=True, exist_ok=True)
-    marker.touch(exist_ok=True)
+    marker.write_text(f"{marker_timestamp_text}\n", encoding="utf-8")
     return str(marker)
+
+
+def _resolve_a055_done_marker_name(marker_name: str, *, marker_timestamp_text: str = "") -> str:
+    resolved_name = _stringify(marker_name) or A055_DONE_MARKER_DEFAULT
+    if "{timestamp}" in resolved_name:
+        resolved_name = resolved_name.replace("{timestamp}", marker_timestamp_text or now_compact())
+    return resolved_name
+
+
+def _find_a055_done_marker(asset_dir: Path, *, marker_name: str) -> Path | None:
+    if not asset_dir.exists() or not asset_dir.is_dir():
+        return None
+
+    explicit_name = _stringify(marker_name)
+    if explicit_name and "{timestamp}" not in explicit_name:
+        explicit_path = asset_dir / explicit_name
+        if explicit_path.exists() and explicit_path.is_file():
+            return explicit_path
+
+    candidates = sorted(
+        [
+            path
+            for path in asset_dir.iterdir()
+            if path.is_file() and _A055_TIMESTAMP_DONE_MARKER_PATTERN.fullmatch(path.name)
+        ],
+        key=lambda item: item.name,
+        reverse=True,
+    )
+    if candidates:
+        return candidates[0]
+    return None
 
 
 def _collect_record_ready_rows(source_df: pd.DataFrame, *, workspace_root: Path, marker_name: str) -> pd.DataFrame:
@@ -209,13 +243,13 @@ def _collect_record_ready_rows(source_df: pd.DataFrame, *, workspace_root: Path,
             pdf_path=_stringify(row_dict.get("pdf_path")) or _stringify(row_dict.get("PDF路径")),
             current_parse_path=_stringify(row_dict.get("current_parse_path")) or _stringify(row_dict.get("当前解析路径")),
         )
-        marker_path = asset_dir / marker_name
+        marker_path = _find_a055_done_marker(asset_dir, marker_name=marker_name)
         is_complete, _ = _is_parse_asset_complete(_build_asset_probe_row(asset_dir))
         if not is_complete:
             continue
 
         row_dict["asset_dir"] = str(asset_dir)
-        row_dict["done_marker_path"] = str(marker_path) if marker_path.exists() and marker_path.is_file() else ""
+        row_dict["done_marker_path"] = str(marker_path) if marker_path else ""
         rows.append(row_dict)
 
     return pd.DataFrame(rows)
@@ -382,6 +416,9 @@ def _inspect_structured_output(workspace_root: Path, *, uid_literature: str, cit
             "quality_report_path": str(asset_dir / "quality_report.json"),
         }
     )
+    done_marker = _find_a055_done_marker(asset_dir, marker_name=A055_DONE_MARKER_DEFAULT)
+    if done_marker and is_complete:
+        return "已处理", str(asset_dir)
     if is_complete:
         return "已处理", str(asset_dir)
     return "未处理", ""
@@ -442,7 +479,11 @@ def _takeover_previous_a055_run(*, workspace_root: Path, parse_runtime: Dict[str
             previous = {}
 
     previous_pid = int(previous.get("pid") or 0)
-    if previous_pid and previous_pid != current_pid and _terminate_local_process(previous_pid):
+    if previous_pid and previous_pid != current_pid and _is_pid_alive(previous_pid):
+        if not _terminate_local_process(previous_pid):
+            raise RuntimeError(f"A055 旧实例仍在运行，且本次接管未能终止该进程：pid={previous_pid}")
+        if _is_pid_alive(previous_pid):
+            raise RuntimeError(f"A055 旧实例终止后仍存活，拒绝并发启动：pid={previous_pid}")
         actions.append(f"local_killed:{previous_pid}")
 
     actions.extend(_stop_remote_a055_instances(parse_runtime))
@@ -1407,7 +1448,7 @@ def _update_flow_state_after_preprocess(
                     "下一阶段": "综述参考扩展",
                     "来源阶段": source_stage,
                     "来源类型": "A055_unified_preprocess",
-                    "推荐原因": "A055 统一预处理完成，进入 A060 综述候选文献视图构建",
+                    "推荐原因": "A055 统一预处理完成，进入 A060 综述文献研读",
                     "主题关系": _stringify(row.get("theme_relation")) or "A055_review",
                     "是否当前有效": 1,
                     "是否可执行": 1,
@@ -1428,7 +1469,7 @@ def _update_flow_state_after_preprocess(
                     "下一阶段": "深度解析准备",
                     "来源阶段": source_stage,
                     "来源类型": "A055_unified_preprocess",
-                    "推荐原因": "A055 统一预处理完成，进入 A080 普通阅读链整合事务",
+                    "推荐原因": "A055 统一预处理完成，进入 A080 普通文献泛读",
                     "主题关系": _stringify(row.get("theme_relation")) or "A055_non_review",
                     "是否当前有效": 1,
                     "是否可执行": 1,

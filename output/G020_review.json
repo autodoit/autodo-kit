@@ -1,0 +1,23 @@
+{
+  "gate_code": "G020",
+  "affair_code": "A020",
+  "summary": {
+    "literature_count": 9445,
+    "matched_existing_count": 0,
+    "inserted_count": 9445,
+    "final_literature_count": 9445,
+    "attachment_file_count": 4581,
+    "matched_fulltext_count": 4193,
+    "unmatched_attachment_count": 388,
+    "unmatched_attachment_dir": "C:\\Users\\Ethan\\CoreFiles\\ProjectsFile\\AcademicResearch-auto-workflow\\workspace\\references\\unmatched_attachments",
+    "metadata_translation_status": "FAIL",
+    "metadata_translation_count": 0,
+    "metadata_translation_failed_count": 0,
+    "attachment_normalization_status": "PASS",
+    "attachment_normalization_renamed_count": 4193,
+    "attachment_normalization_conflict_count": 0,
+    "author_name_preprocess_status": "SKIPPED",
+    "author_name_preprocess_changed_count": 0
+  },
+  "decision_suggestion": "pass_next"
+}

@@ -1,4 +1,4 @@
-"""A075 非综述候选种子生成事务。"""
+"""A075 普通文献候选视图构建事务。"""
 
 from __future__ import annotations
 
@@ -404,7 +404,7 @@ def _build_a080_queue_rows(
                 "queue_status": "queued",
                 "priority": priority_map.get(identity) or 80,
                 "bucket": "non_review_seed",
-                "preferred_next_stage": "A100",
+                "preferred_next_stage": "A095",
                 "recommended_reason": _stringify(row.get("recommended_reason")) or f"{source_affair} 非综述候选导种完成，进入 A080",
                 "theme_relation": _stringify(row.get("theme_relation")) or "a075_seed",
                 "source_round": source_affair.lower(),
@@ -499,7 +499,7 @@ def execute(config_path: Path) -> List[Path]:
         node_uid="A075",
         node_name="普通文献候选视图构建",
         summary=(
-            f"生成非综述候选种子 {len(seed_df)} 条；"
+            f"生成普通文献候选条目 {len(seed_df)} 条；"
             f"A070 导种 {seeded_from_a070} 条；"
             f"人工导种 {seeded_from_human} 条；"
             f"写入 A080 队列 {len(a080_queue_rows)} 条；"
@@ -538,7 +538,7 @@ def execute(config_path: Path) -> List[Path]:
             handler_name="普通文献候选视图构建",
             agent_names=["ar_A075_普通文献候选视图构建事务智能体_v7"],
             skill_names=["ar_A075_普通文献候选视图构建_v1"],
-            reasoning_summary="消费 A070 导出件与人工种子，正式构建普通文献候选视图并写入 A080 阶段队列。",
+            reasoning_summary="消费 A070 导出件与人工种子，正式写入 A080 阶段队列，并兼容回写旧 reading_state。",
             gate_review=gate_review,
             gate_review_path=gate_path,
             artifact_paths=[seed_csv_path, seed_md_path, gate_path],

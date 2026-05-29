@@ -364,7 +364,7 @@ def test_reading_state_table_should_roundtrip_and_ignore_queue_conflicts(tmp_pat
             {
                 "uid_literature": "lit-002",
                 "cite_key": "state-second",
-                "source_stage": "A090",
+                "source_stage": "A080",
                 "pending_preprocess": 0,
                 "preprocessed": 1,
                 "pending_rough_read": 1,
@@ -396,7 +396,7 @@ def test_reading_state_table_should_roundtrip_and_ignore_queue_conflicts(tmp_pat
 
     assert set(state_df["uid_literature"].tolist()) == {"lit-001", "lit-002"}
     row = state_df[state_df["uid_literature"] == "lit-001"].iloc[0]
-    assert row["cite_key"] == "state-cite-updated"
+    assert row["cite_key"] == "state-cite"
     assert int(row["preprocessed"]) == 1
     assert int(row["rough_read_done"]) == 1
     assert int(row["analysis_light_synced"]) == 1

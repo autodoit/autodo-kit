@@ -10,6 +10,7 @@ from pathlib import Path
 import pandas as pd
 
 from autodokit.tools.bibliodb_sqlite import load_chunk_sets_df, load_chunks_df, load_reading_queue_df, load_reading_state_df, upsert_reading_queue_rows, upsert_reading_state_rows, upsert_review_state_rows
+from autodokit.tools.contentdb_sqlite import resolve_content_physical_column
 from autodokit.tools.ocr.classic.pdf_structured_data_tools import build_structured_data_payload
 from autodokit.tools.storage_backend import load_reference_tables, persist_reference_main_table, persist_reference_tables
 
@@ -297,7 +298,7 @@ def test_candidate_view_affair_execute_should_work(tmp_path: Path) -> None:
 def test_a090_discovered_rows_should_only_use_current_item_mappings() -> None:
     """A090 新候选回流只能基于当前文献自己的参考映射结果。"""
 
-    module = importlib.import_module("autodokit.affairs.文献泛读与粗读.affair")
+    module = importlib.import_module("autodokit.affairs.非综述候选视图构建.affair")
 
     discovered_rows = module._build_discovered_rows_from_mappings(
         item_mapping_rows=[
@@ -325,11 +326,11 @@ def test_a090_discovered_rows_should_only_use_current_item_mappings() -> None:
     assert len(discovered_rows) == 1
     assert discovered_rows[0]["uid_literature"] == "lit-101"
     assert discovered_rows[0]["cite_key"] == "cite-101"
-    assert discovered_rows[0]["source_stage"] == "A090"
+    assert discovered_rows[0]["source_stage"] == "A080"
     assert discovered_rows[0]["source_uid_literature"] == "lit-001"
     assert discovered_rows[0]["source_cite_key"] == "source-cite"
-    assert discovered_rows[0]["recommended_reason"] == "A090 从 source-cite 参考文献发现候选"
-    assert discovered_rows[0]["theme_relation"] == "a090_reference_discovery"
+    assert discovered_rows[0]["recommended_reason"] == "A080 从 source-cite 参考文献发现候选"
+    assert discovered_rows[0]["theme_relation"] == "a080_reference_discovery"
     assert discovered_rows[0]["pending_preprocess"] == 1
 
 
@@ -371,11 +372,11 @@ def test_followup_candidate_should_not_requeue_when_already_rough_read_done() ->
     routed = module.build_followup_candidate_state_row(
         uid_literature="lit-301",
         cite_key="cite-301",
-        source_stage="A090",
+        source_stage="A080",
         source_uid_literature="lit-001",
         source_cite_key="source-cite",
         recommended_reason="from rough read",
-        theme_relation="a090_reference_discovery",
+        theme_relation="a080_reference_discovery",
         existing_state={
             "uid_literature": "lit-301",
             "cite_key": "cite-301",
@@ -511,7 +512,7 @@ def test_candidate_view_affair_should_only_prepare_candidate_outputs(monkeypatch
 def test_a075_human_seed_should_route_unique_cite_key() -> None:
     """A075 人工 seed 在 cite_key 唯一命中时应写入状态行。"""
 
-    module = importlib.import_module("autodokit.affairs.非综述候选种子生成.affair")
+    module = importlib.import_module("autodokit.affairs.候选文献视图构建.phase_a075")
     literatures_df = pd.DataFrame(
         [
             {
@@ -574,7 +575,7 @@ def test_a075_human_seed_should_route_unique_cite_key() -> None:
 def test_a075_human_seed_should_report_ambiguous_cite_key() -> None:
     """A075 人工 seed 在 cite_key 多重命中时应进入问题列表。"""
 
-    module = importlib.import_module("autodokit.affairs.非综述候选种子生成.affair")
+    module = importlib.import_module("autodokit.affairs.候选文献视图构建.phase_a075")
     literatures_df = pd.DataFrame(
         [
             {"uid_literature": "lit-001", "cite_key": "dup-key", "pdf_path": "/tmp/a.pdf"},
@@ -601,7 +602,7 @@ def test_a075_human_seed_should_report_ambiguous_cite_key() -> None:
 def test_review_map_affair_execute_should_work(monkeypatch, tmp_path: Path) -> None:
     """综述研读与研究地图生成事务应回填 A05 资产并输出闸门文件。"""
 
-    module = importlib.import_module("autodokit.affairs.综述研读与研究地图生成.affair")
+    module = importlib.import_module("autodokit.affairs.候选文献视图构建.phase_a070")
     workspace_root, references_db, knowledge_db, review_read_pool_csv, output_dir = _prepare_review_synthesis_workspace(tmp_path)
 
     monkeypatch.setattr(
@@ -669,7 +670,7 @@ def test_review_map_affair_execute_should_work(monkeypatch, tmp_path: Path) -> N
 def test_review_map_affair_should_ensure_parse_asset_on_entry(monkeypatch, tmp_path: Path) -> None:
     """A070 在 structured 可用时应优先走 structured 抽取并完成闸门产出。"""
 
-    module = importlib.import_module("autodokit.affairs.综述研读与研究地图生成.affair")
+    module = importlib.import_module("autodokit.affairs.候选文献视图构建.phase_a070")
     workspace_root, content_db, _, review_read_pool_csv, output_dir = _prepare_review_synthesis_workspace(tmp_path)
     normalized_path = _write_structured_json(
         tmp_path / "structured" / "review-001.normalized.structured.json",
@@ -677,9 +678,11 @@ def test_review_map_affair_should_ensure_parse_asset_on_entry(monkeypatch, tmp_p
         cite_key="review-001",
         text="本文梳理了目标主题中的关键问题。文章基于已有资料总结了常见分析路径。结果表明核心变量之间存在稳定关联。未来需要进一步扩展样本范围和验证条件。",
     )
+    literature_uid_column = resolve_content_physical_column("文献主表", "uid_literature")
+    structured_path_column = resolve_content_physical_column("文献主表", "structured_abs_path")
     with sqlite3.connect(content_db) as conn:
         conn.execute(
-            'UPDATE "文献主表" SET structured_abs_path = ? WHERE uid_literature = ?',
+            f'UPDATE "文献主表" SET "{structured_path_column}" = ? WHERE "{literature_uid_column}" = ?',
             (str(normalized_path), "lit-001"),
         )
         conn.commit()
@@ -789,7 +792,7 @@ def test_review_map_affair_should_ensure_parse_asset_on_entry(monkeypatch, tmp_p
 def test_a075_should_build_seed_rows_from_a070_exports(tmp_path: Path) -> None:
     """A075 应从 A070 导出件构建种子，并可投递 A080 正式队列。"""
 
-    module = importlib.import_module("autodokit.affairs.非综述候选种子生成.affair")
+    module = importlib.import_module("autodokit.affairs.候选文献视图构建.phase_a075")
     workspace_root, content_db, _, _, _ = _prepare_review_synthesis_workspace(tmp_path)
 
     audits_dir = workspace_root / "knowledge" / "audits"
@@ -844,14 +847,14 @@ def test_a075_should_build_seed_rows_from_a070_exports(tmp_path: Path) -> None:
     )
     assert len(a080_queue_rows) == 1
     assert a080_queue_rows[0]["stage"] == "A080"
-    assert a080_queue_rows[0]["preferred_next_stage"] == "A090"
+    assert a080_queue_rows[0]["preferred_next_stage"] == "A095"
     assert a080_queue_rows[0]["source_affair"] == "A075"
 
 
 def test_a075_execute_should_write_a080_queue(tmp_path: Path) -> None:
     """A075 执行后应正式写入 A080 阶段队列。"""
 
-    module = importlib.import_module("autodokit.affairs.非综述候选种子生成.affair")
+    module = importlib.import_module("autodokit.affairs.候选文献视图构建.phase_a075")
     workspace_root, content_db, _, _, _ = _prepare_review_synthesis_workspace(tmp_path)
 
     audits_dir = workspace_root / "knowledge" / "audits"
@@ -897,78 +900,42 @@ def test_a075_execute_should_write_a080_queue(tmp_path: Path) -> None:
     assert not queue_df.empty
     target = queue_df.loc[queue_df["cite_key"].astype(str) == "origin-001"].iloc[0]
     assert target["source_affair"] == "A075"
-    assert target["preferred_next_stage"] == "A090"
+    assert target["preferred_next_stage"] == "A095"
     assert target["queue_status"] == "queued"
 
 
-def test_a095_execute_should_write_a100_queue(tmp_path: Path) -> None:
-    """A095 批次汇总后应正式写入 A100 阶段队列。"""
+def test_a080_build_a095_queue_rows_should_write_a095_queue() -> None:
+    """A080 预处理完成后应正式写入 A095 阶段队列。"""
 
-    module = importlib.import_module("autodokit.affairs.泛读批次分析汇总.affair")
-    workspace_root = (tmp_path / "workspace").resolve()
-    content_db = workspace_root / "database" / "content" / "content.db"
-    workspace_root.mkdir(parents=True, exist_ok=True)
-
-    persist_reference_tables(
-        literatures_df=pd.DataFrame(
-            [
-                {
-                    "uid_literature": "lit-901",
-                    "cite_key": "rough-901",
-                    "title": "Rough Read Paper",
-                }
-            ]
-        ),
-        attachments_df=pd.DataFrame(),
-        db_path=content_db,
-    )
-
-    upsert_reading_state_rows(
-        content_db,
+    module = importlib.import_module("autodokit.affairs.非综述候选视图构建.affair")
+    state_df = pd.DataFrame(
         [
             {
                 "uid_literature": "lit-901",
                 "cite_key": "rough-901",
                 "title": "Rough Read Paper",
                 "rough_read_done": 1,
-                "analysis_batch_synced": 0,
+                "analysis_batch_synced": 1,
                 "deep_read_done": 0,
                 "rough_read_reason": "粗读后建议进入深读",
-                "theme_relation": "a090_to_a100",
+                "theme_relation": "a080_to_a095",
             }
-        ],
+        ]
     )
 
-    config_path = tmp_path / "a095_config.json"
-    _write_json_config(
-        config_path,
-        {
-            "workspace_root": str(workspace_root),
-            "content_db": str(content_db),
-            "output_dir": str(tmp_path / "a095_outputs"),
-            "batch_size": 10,
-        },
-    )
-
-    outputs = module.execute(config_path)
-    assert any(path.name == "gate_review.json" for path in outputs)
-
-    queue_df = load_reading_queue_df(content_db, stage="A100", only_current=True)
-    assert not queue_df.empty
-    target = queue_df.loc[queue_df["cite_key"].astype(str) == "rough-901"].iloc[0]
-    assert target["source_affair"] == "A095"
-    assert target["preferred_next_stage"] == "A105"
+    queue_rows = module._build_a095_queue_rows(state_df)
+    assert len(queue_rows) == 1
+    target = queue_rows[0]
+    assert target["stage"] == "A095"
+    assert target["source_affair"] == "A080"
+    assert target["preferred_next_stage"] == "A100"
     assert target["queue_status"] == "queued"
-
-    state_df = load_reading_state_df(content_db)
-    state_row = state_df.loc[state_df["cite_key"].astype(str) == "rough-901"].iloc[0]
-    assert int(state_row["analysis_batch_synced"]) == 1
 
 
 def test_review_map_affair_should_fallback_to_current_view(monkeypatch, tmp_path: Path) -> None:
     """A06 在缺少 review_read_pool.csv 时应优先读取当前视图。"""
 
-    module = importlib.import_module("autodokit.affairs.综述研读与研究地图生成.affair")
+    module = importlib.import_module("autodokit.affairs.候选文献视图构建.phase_a070")
     workspace_root, references_db, knowledge_db, review_read_pool_csv, output_dir = _prepare_review_synthesis_workspace(tmp_path)
     review_read_pool_csv.unlink()
 
@@ -1192,7 +1159,7 @@ def test_parse_and_chunk_affair_should_index_structured_chunks_to_sqlite(tmp_pat
 def test_review_map_affair_should_prefer_structured_cache(monkeypatch, tmp_path: Path) -> None:
     """A06 命中结构化缓存时不应再回退原始附件抽取。"""
 
-    module = importlib.import_module("autodokit.affairs.综述研读与研究地图生成.affair")
+    module = importlib.import_module("autodokit.affairs.候选文献视图构建.phase_a070")
     workspace_root, references_db, knowledge_db, review_read_pool_csv, output_dir = _prepare_review_synthesis_workspace(tmp_path)
     structured_path = _write_structured_json(
         tmp_path / "structured" / "review-001.structured.json",
@@ -1200,13 +1167,19 @@ def test_review_map_affair_should_prefer_structured_cache(monkeypatch, tmp_path:
         cite_key="review-001",
         text="本文梳理了目标主题中的关键问题。文章基于已有资料总结了常见分析路径。结果表明核心变量之间存在稳定关联。未来需要进一步扩展样本范围和验证条件。",
     )
+    literature_uid_column = resolve_content_physical_column("文献主表", "uid_literature")
+    structured_status_column = resolve_content_physical_column("文献主表", "structured_status")
+    structured_path_column = resolve_content_physical_column("文献主表", "structured_abs_path")
+    structured_backend_column = resolve_content_physical_column("文献主表", "structured_backend")
+    structured_task_type_column = resolve_content_physical_column("文献主表", "structured_task_type")
+    structured_schema_version_column = resolve_content_physical_column("文献主表", "structured_schema_version")
 
     with sqlite3.connect(references_db) as conn:
         conn.execute(
-            """
+            f"""
             UPDATE "文献主表"
-            SET structured_status = ?, structured_abs_path = ?, structured_backend = ?, structured_task_type = ?, structured_schema_version = ?
-            WHERE uid_literature = ?
+            SET "{structured_status_column}" = ?, "{structured_path_column}" = ?, "{structured_backend_column}" = ?, "{structured_task_type_column}" = ?, "{structured_schema_version_column}" = ?
+            WHERE "{literature_uid_column}" = ?
             """,
             ("ready", str(structured_path), "local_pipeline_v2", "full_fine_grained", "aok.pdf_structured.v3", "lit-001"),
         )
@@ -1339,7 +1312,7 @@ def test_a07_should_prefer_a06_queue_and_seed_a08_queue(tmp_path: Path) -> None:
                 "queue_status": "queued",
                 "priority": 80,
                 "source_affair": "A065",
-                "preferred_next_stage": "A090",
+                "preferred_next_stage": "A100",
                 "recommended_reason": "综述高置信引用推荐",
                 "theme_relation": "review_must_read",
                 "is_current": 1,
@@ -1372,10 +1345,10 @@ def test_a07_should_prefer_a06_queue_and_seed_a08_queue(tmp_path: Path) -> None:
     assert "origin-001" in reading_state_df["cite_key"].astype(str).tolist()
 
 
-def test_a08_should_consume_queue_and_write_back_completion(monkeypatch, tmp_path: Path) -> None:
-    """A090 应优先消费 A090 阶段队列，并把粗读结果回写到阅读状态。"""
+def test_a08_should_consume_queue_and_write_back_a095_queue(monkeypatch, tmp_path: Path) -> None:
+    """A080 应优先消费 A080 阶段队列，并把条目推进到 A095。"""
 
-    module = importlib.import_module("autodokit.affairs.文献泛读与粗读.affair")
+    module = importlib.import_module("autodokit.affairs.非综述候选视图构建.affair")
     workspace_root = tmp_path / "workspace"
     content_db = workspace_root / "database" / "content" / "content.db"
     output_dir = tmp_path / "a08_outputs"
@@ -1427,13 +1400,13 @@ def test_a08_should_consume_queue_and_write_back_completion(monkeypatch, tmp_pat
             {
                 "uid_literature": "lit-201",
                 "cite_key": "origin-rough",
-                "stage": "A090",
+                "stage": "A080",
                 "queue_status": "queued",
                 "priority": 80,
                 "source_affair": "A080",
-                "preferred_next_stage": "A100",
+                "preferred_next_stage": "A095",
                 "recommended_reason": "进入粗读池",
-                "theme_relation": "A090_rough_read_pool",
+                "theme_relation": "A080_reading_chain_pool",
                 "is_current": 1,
             }
         ],
@@ -1473,8 +1446,177 @@ def test_a08_should_consume_queue_and_write_back_completion(monkeypatch, tmp_pat
             },
         ),
     )
+    monkeypatch.setattr(
+        module,
+        "run_parse_manifest",
+        lambda **kwargs: {
+            "manifest_df": pd.DataFrame(
+                [
+                    {
+                        "uid_literature": "lit-201",
+                        "cite_key": "origin-rough",
+                        "title": "Original Rough Study",
+                        "manifest_status": "succeeded",
+                        "postprocess_ok": 1,
+                        "pdf_path": str(dummy_pdf),
+                        "recommended_reason": "进入粗读池",
+                        "theme_relation": "A080_reading_chain_pool",
+                        "source_origin": "auto",
+                        "reading_objective": "",
+                        "manual_guidance": "",
+                        "failure_reason": "",
+                    }
+                ]
+            ),
+            "failures": [],
+            "manifest_path": tmp_path / "parse_manifest.csv",
+            "management_table_path": tmp_path / "management_table.csv",
+            "handoff_path": tmp_path / "handoff.json",
+            "batch_report_path": tmp_path / "batch_report.json",
+        },
+    )
 
     config_path = tmp_path / "a08_config.json"
+    _write_json_config(
+        config_path,
+        {
+            "workspace_root": str(workspace_root),
+            "content_db": str(content_db),
+            "output_dir": str(output_dir),
+            "max_items": 1,
+        },
+    )
+
+    outputs = module.execute(config_path)
+    gate_path = next(path for path in outputs if path.name == "gate_review.json")
+    assert gate_path.exists()
+
+    reading_state_df = load_reading_state_df(content_db)
+    current_row = reading_state_df[reading_state_df["cite_key"].astype(str) == "origin-rough"].iloc[0].to_dict()
+    assert int(current_row["pending_rough_read"] or 0) == 1
+    assert int(current_row["rough_read_done"] or 0) == 0
+
+    queue_df = load_reading_queue_df(content_db, stage="A095", only_current=True)
+    assert not queue_df.empty
+    queue_row = queue_df.loc[queue_df["cite_key"].astype(str) == "origin-rough"].iloc[0].to_dict()
+    assert queue_row["source_affair"] == "A080"
+    assert queue_row["preferred_next_stage"] == "A100"
+
+
+def test_a095_should_consume_queue_and_write_back_completion(monkeypatch, tmp_path: Path) -> None:
+    """A095 应消费 A095 阶段队列，并把粗读结果推进到 A100。"""
+
+    module = importlib.import_module("autodokit.affairs.普通文献研读候选视图构建.affair")
+    workspace_root = tmp_path / "workspace"
+    content_db = workspace_root / "database" / "content" / "content.db"
+    output_dir = tmp_path / "a095_outputs"
+    dummy_pdf = workspace_root / "references" / "attachments" / "origin-rough.pdf"
+    dummy_pdf.parent.mkdir(parents=True, exist_ok=True)
+    dummy_pdf.write_bytes(b"%PDF-1.4\n%placeholder\n")
+
+    persist_reference_tables(
+        literatures_df=pd.DataFrame(
+            [
+                {
+                    "uid_literature": "lit-201",
+                    "cite_key": "origin-rough",
+                    "title": "Original Rough Study",
+                    "first_author": "Chen",
+                    "year": "2023",
+                    "entry_type": "journal",
+                    "abstract": "A paper for rough reading.",
+                    "keywords": "scientometrics; collaboration",
+                    "pdf_path": str(dummy_pdf),
+                    "primary_attachment_name": dummy_pdf.name,
+                    "standardization_status": "standardized",
+                }
+            ]
+        ),
+        attachments_df=pd.DataFrame(
+            [
+                {
+                    "uid_attachment": "att-201",
+                    "uid_literature": "lit-201",
+                    "attachment_name": dummy_pdf.name,
+                    "attachment_type": "fulltext",
+                    "file_ext": "pdf",
+                    "storage_path": str(dummy_pdf),
+                    "source_path": str(dummy_pdf),
+                    "checksum": "",
+                    "is_primary": 1,
+                    "status": "available",
+                    "created_at": "",
+                    "updated_at": "",
+                }
+            ]
+        ),
+        db_path=content_db,
+    )
+    upsert_reading_state_rows(
+        content_db,
+        [
+            {
+                "uid_literature": "lit-201",
+                "cite_key": "origin-rough",
+                "pending_rough_read": 1,
+                "preprocessed": 1,
+            }
+        ],
+    )
+    upsert_reading_queue_rows(
+        content_db,
+        [
+            {
+                "uid_literature": "lit-201",
+                "cite_key": "origin-rough",
+                "stage": "A095",
+                "queue_status": "queued",
+                "priority": 80,
+                "source_affair": "A080",
+                "preferred_next_stage": "A100",
+                "recommended_reason": "进入普通文献研读候选视图构建",
+                "theme_relation": "a080_to_a095",
+                "is_current": 1,
+            }
+        ],
+    )
+
+    monkeypatch.setattr(
+        module.a080_rough_affair,
+        "extract_reference_lines_from_attachment",
+        lambda *args, **kwargs: {
+            "attachment_path": str(dummy_pdf),
+            "attachment_type": "pdf",
+            "extract_status": "ok",
+            "extract_method": "pypdf",
+            "reference_lines": ["Li. 2022. Original Study One."],
+            "reference_line_details": [],
+            "full_text": "本文研究科研协作网络。文章基于网络分析设计说明识别与度量策略。结果表明核心变量存在稳定关系。",
+            "pending_reason": "",
+        },
+    )
+    monkeypatch.setattr(
+        module.a080_rough_affair,
+        "process_reference_citation",
+        lambda table, reference_text, **kwargs: (
+            table,
+            {
+                "matched_uid_literature": "lit-999",
+                "matched_cite_key": "origin-999",
+                "action": "matched",
+                "parse_method": "rule",
+                "llm_invoked": 0,
+                "parse_failed": 0,
+                "parse_failure_reason": "",
+                "suspicious_merged": 0,
+                "noise_trimmed": 0,
+                "match_score": 0.9,
+                "suspicious_mismatch": 0,
+            },
+        ),
+    )
+
+    config_path = tmp_path / "a095_config.json"
     _write_json_config(
         config_path,
         {
@@ -1494,6 +1636,12 @@ def test_a08_should_consume_queue_and_write_back_completion(monkeypatch, tmp_pat
     assert int(current_row["pending_rough_read"] or 0) == 0
     assert int(current_row["rough_read_done"] or 0) == 1
     assert current_row["rough_read_decision"] in {"promote_a100", "hold"}
+
+    queue_df = load_reading_queue_df(content_db, stage="A100", only_current=True)
+    assert not queue_df.empty
+    queue_row = queue_df.loc[queue_df["cite_key"].astype(str) == "origin-rough"].iloc[0].to_dict()
+    assert queue_row["source_affair"] == "A095"
+    assert queue_row["preferred_next_stage"] == "A100"
 
 
 def test_single_rough_reading_should_accept_structured_json(tmp_path: Path) -> None:

@@ -108,7 +108,7 @@ def _resolve_logging_enabled(workspace_root: Path, config_path: Path | None = No
 
 REFERENCE_MARKER_PATTERN = re.compile(r"\[\s*\d+\s*\]|［\s*\d+\s*］|\(\s*\d+\s*\)|（\s*\d+\s*）|\d{1,3}\s*[.、．]")
 REFERENCE_BULLET_PATTERN = re.compile(r"^\s*(?:-|\*|•)\s+")
-REFERENCE_TYPE_PATTERN = re.compile(r"\[\s*(?:J|M|D|R|C|P|N|EB|OL)(?:\s*/\s*OL)?\s*\]", re.IGNORECASE)
+REFERENCE_TYPE_PATTERN = re.compile(r"[\[［]\s*(?:J|M|D|R|C|P|N|EB|OL)(?:\s*/\s*OL)?\s*[\]］]", re.IGNORECASE)
 REFERENCE_YEAR_PATTERN = re.compile(r"(?:19|20)\d{2}")
 REFERENCE_NOISE_PATTERNS = [
     re.compile(r"\babstract\b", re.IGNORECASE),
@@ -124,6 +124,61 @@ REFERENCE_SOURCE_HINT_PATTERN = re.compile(
     r"journal|review|press|university|economics|management|science|research|study|研究|学报|出版社|大学|经济|金融|管理|期刊",
     re.IGNORECASE,
 )
+REFERENCE_PAGE_FRAGMENT_PATTERN = re.compile(
+    r"^[\s\(\[]?\d+(?:\(\d+\))?\s*[:：]\s*[A-Za-z]?\d+(?:\s*[-–－]\s*[A-Za-z]?\d+)?\.?$",
+    re.IGNORECASE,
+)
+
+
+def _looks_meaningful_reference_title(title: str) -> bool:
+    """判断标题字段是否像一条有效引文标题。"""
+
+    candidate = _stringify(title)
+    if not candidate:
+        return False
+    if REFERENCE_PAGE_FRAGMENT_PATTERN.match(candidate):
+        return False
+    compact = re.sub(r"[^0-9A-Za-z\u4e00-\u9fff]+", "", candidate)
+    if len(compact) < 6:
+        return False
+    if compact.isdigit():
+        return False
+    return True
+
+
+def _parse_reference_text_with_local_fallback(reference_text: str) -> Dict[str, str]:
+    """使用本地解析器并补充标准期刊格式启发式回退。"""
+
+    fallback = parse_reference_text(reference_text)
+    normalized = _normalize_reference_text(reference_text)
+    first_author = _stringify(fallback.first_author)
+    year = "" if fallback.year_int is None else str(fallback.year_int)
+    title_raw = _stringify(fallback.title)
+
+    if not _looks_meaningful_reference_title(title_raw):
+        marker_match = REFERENCE_TYPE_PATTERN.search(normalized)
+        if marker_match is not None:
+            head = normalized[: marker_match.start()].strip(" .,;:()[]")
+            normalized_head = head.replace("．", ".").replace("。", ".")
+            if "." in normalized_head:
+                author_part, candidate_title = normalized_head.rsplit(".", 1)
+                candidate_title = _stringify(candidate_title)
+                if _looks_meaningful_reference_title(candidate_title):
+                    title_raw = candidate_title
+                    if not first_author:
+                        first_author = _stringify(parse_reference_text(author_part).first_author)
+
+    if not year:
+        year_match = REFERENCE_YEAR_PATTERN.search(normalized)
+        if year_match is not None:
+            year = _stringify(year_match.group(0))
+
+    return {
+        "first_author": first_author,
+        "year": year,
+        "title_raw": title_raw,
+        "confidence": "",
+    }
 
 
 def _normalize_reference_text(raw: str) -> str:
@@ -665,6 +720,51 @@ def parse_reference_text_with_llm(
         "routing_info": {},
     }
 
+    local_recognized = _parse_reference_text_with_local_fallback(reference_text)
+    local_first_author = _stringify(local_recognized.get("first_author"))
+    local_year = _stringify(local_recognized.get("year"))
+    local_title_raw = _stringify(local_recognized.get("title_raw"))
+    local_is_reasonable = bool(
+        (_looks_meaningful_reference_title(local_title_raw))
+        or (local_first_author and local_year and _looks_meaningful_reference_title(local_title_raw or local_first_author))
+    )
+    if local_is_reasonable:
+        result["llm_invoked"] = 0
+        result["parse_method"] = "local_reference_text_parser"
+        result["parse_failed"] = 0
+        result["parse_failure_reason"] = ""
+        result["is_reasonable"] = True
+        result["recognized_fields"] = local_recognized
+        result["recognized_text"] = local_title_raw
+        payload = {
+            "reference_text": result["reference_text"],
+            "is_reasonable": result["is_reasonable"],
+            "recognized_fields": result["recognized_fields"],
+            "parse_method": result["parse_method"],
+            "parse_failed": result["parse_failed"],
+            "parse_failure_reason": result["parse_failure_reason"],
+            "llm_backend": "",
+            "routing_info": {},
+        }
+        append_aok_log_event(
+            event_type="REFERENCE_LLM_PARSE",
+            project_root=workspace_root_path,
+            log_db_path=log_db_path,
+            enabled=_resolve_logging_enabled(
+                workspace_root_path,
+                config_path=Path(global_config_path) if global_config_path else None,
+            ),
+            handler_kind="local_script",
+            handler_name="parse_reference_text_with_llm",
+            model_name="",
+            skill_names=["ar_插入引文_v1"],
+            reasoning_summary="对单条参考文献原文优先执行本地启发式解析，并仅在需要时再调用 LLM。",
+            payload=payload,
+        )
+        if print_to_stdout:
+            print(json.dumps(payload, ensure_ascii=False, indent=2))
+        return result
+
     llm_error = ""
     try:
         llm_config = load_aliyun_llm_config(
@@ -708,19 +808,28 @@ def parse_reference_text_with_llm(
         result["model_name"] = client.model
         result["llm_backend"] = _stringify(runtime_payload.get("llm_backend"))
         result["routing_info"] = dict(runtime_payload.get("routing_info") or {})
+        if not result["is_reasonable"]:
+            fallback_recognized = _parse_reference_text_with_local_fallback(reference_text)
+            fallback_first_author = _stringify(fallback_recognized.get("first_author"))
+            fallback_year = _stringify(fallback_recognized.get("year"))
+            fallback_title_raw = _stringify(fallback_recognized.get("title_raw"))
+            fallback_reasonable = bool(fallback_title_raw or (fallback_first_author and fallback_year))
+            if fallback_reasonable:
+                failure_prefix = _stringify(failure_reason) or "LLM 返回空字段"
+                result["parse_method"] = "affair_fallback_parser"
+                result["recognized_fields"] = fallback_recognized
+                result["recognized_text"] = fallback_title_raw
+                result["is_reasonable"] = True
+                result["parse_failed"] = 0
+                result["parse_failure_reason"] = f"{failure_prefix}，已退回事务内解析器。"
     except Exception as exc:
         llm_error = str(exc)
-        fallback = parse_reference_text(reference_text)
-        first_author = _stringify(fallback.first_author)
-        year = "" if fallback.year_int is None else str(fallback.year_int)
-        title_raw = _stringify(fallback.title)
+        fallback_recognized = _parse_reference_text_with_local_fallback(reference_text)
+        first_author = _stringify(fallback_recognized.get("first_author"))
+        year = _stringify(fallback_recognized.get("year"))
+        title_raw = _stringify(fallback_recognized.get("title_raw"))
         result["parse_method"] = "affair_fallback_parser"
-        result["recognized_fields"] = {
-            "first_author": first_author,
-            "year": year,
-            "title_raw": title_raw,
-            "confidence": "",
-        }
+        result["recognized_fields"] = fallback_recognized
         result["recognized_text"] = title_raw
         result["is_reasonable"] = bool(title_raw or (first_author and year))
         result["parse_failed"] = 0 if result["is_reasonable"] else 1
@@ -902,7 +1011,7 @@ def refine_reference_lines_with_llm(
         handler_kind="llm_native" if result["parse_method"] == "aliyun_llm_reference_block" else "local_script",
         handler_name="refine_reference_lines_with_llm",
         model_name=_stringify(result["model_name"]),
-        skill_names=["ar_A060_综述候选文献视图构建_v7"],
+        skill_names=["ar_A060_综述文献研读_v7"],
         reasoning_summary="对单篇文献的参考文献块执行一次独立 LLM 清洗请求。",
         payload=payload,
     )

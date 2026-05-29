@@ -442,9 +442,8 @@ def test_init_content_db_should_auto_migrate_legacy_schema(tmp_path: Path) -> No
     assert migrated_row == ("lit-legacy-001", "legacy_001", "Legacy Paper")
     assert "工作区节点状态" in table_names
     assert "事务关联总视图" in view_names
-    assert "A050事务关联视图" in view_names
-    assert "A055事务关联视图" in view_names
-    assert "A160事务关联视图" in view_names
+    assert "A060事务关联视图" in view_names
+    assert "A080事务关联视图" in view_names
 
 
 def test_init_content_db_should_convert_runtime_public_tables_to_views(tmp_path: Path) -> None:
@@ -548,7 +547,7 @@ def test_init_content_db_should_convert_runtime_public_tables_to_views(tmp_path:
     with sqlite3.connect(content_db) as conn:
         object_types = dict(
             conn.execute(
-                "SELECT name, type FROM sqlite_master WHERE name IN (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                "SELECT name, type FROM sqlite_master WHERE name IN (?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 (
                     "文献阅读状态",
                     "文献预处理",
@@ -557,9 +556,8 @@ def test_init_content_db_should_convert_runtime_public_tables_to_views(tmp_path:
                     "文献翻译资产",
                     "content_translation_assets_storage",
                     "事务关联总视图",
-                    "A050事务关联视图",
-                    "A055事务关联视图",
-                    "A160事务关联视图",
+                    "A060事务关联视图",
+                    "A080事务关联视图",
                 ),
             ).fetchall()
         )
@@ -573,15 +571,14 @@ def test_init_content_db_should_convert_runtime_public_tables_to_views(tmp_path:
     assert object_types["文献翻译资产"] == "view"
     assert object_types["content_translation_assets_storage"] == "table"
     assert object_types["事务关联总视图"] == "view"
-    assert object_types["A050事务关联视图"] == "view"
-    assert object_types["A055事务关联视图"] == "view"
-    assert object_types["A160事务关联视图"] == "view"
+    assert object_types["A060事务关联视图"] == "view"
+    assert object_types["A080事务关联视图"] == "view"
     assert translation_count == 1
     assert storage_count == 1
 
 
 def test_transaction_relation_view_should_support_queue_only_rows(tmp_path: Path) -> None:
-    """事务关联视图应显示仅存在于预处理队列中的 A075/A080 条目。"""
+    """事务编号关联视图应显示仅存在于预处理队列中的 A075/A080 条目。"""
 
     content_db = (tmp_path / "transaction_relation.db").resolve()
     init_content_db(content_db)
@@ -624,7 +621,7 @@ def test_transaction_relation_view_should_support_queue_only_rows(tmp_path: Path
                 "queue_status": "queued",
                 "priority": 80,
                 "recommended_reason": "human seed",
-                "preferred_next_stage": "A090",
+                "preferred_next_stage": "A080",
                 "is_current": 1,
                 "updated_at": "2026-05-27T00:00:00+00:00",
             }
@@ -645,6 +642,29 @@ def test_transaction_relation_view_should_support_queue_only_rows(tmp_path: Path
             "SELECT type FROM sqlite_master WHERE name = ?",
             ("A080事务关联视图",),
         ).fetchone()
+        transaction_view_names = {
+            row[0]
+            for row in conn.execute(
+                "SELECT name FROM sqlite_master WHERE type = 'view' AND name IN (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                (
+                    "A065事务关联视图",
+                    "A070事务关联视图",
+                    "A075事务关联视图",
+                    "A090事务关联视图",
+                    "A095事务关联视图",
+                    "A105事务关联视图",
+                    "A120事务关联视图",
+                    "A130事务关联视图",
+                    "A150事务关联视图",
+                    "A160事务关联视图",
+                ),
+            ).fetchall()
+        }
 
-    assert rows == [("A075", "queue_001", "普通文献预处理事务", "待处理")]
+    assert rows == [("A075", "queue_001", "普通文献泛读事务", "待处理")]
     assert a080_view_type == ("view",)
+    assert transaction_view_names == {
+        "A070事务关联视图",
+        "A075事务关联视图",
+        "A095事务关联视图",
+    }

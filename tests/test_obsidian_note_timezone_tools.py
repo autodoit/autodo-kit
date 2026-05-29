@@ -5,6 +5,8 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+import pytest
+
 from autodokit.tools import (
     batch_rewrite_obsidian_note_timestamps,
     knowledge_note_register,
@@ -12,6 +14,7 @@ from autodokit.tools import (
     write_mainline_affair_entry_registry,
 )
 from autodokit.tools.task_docs import build_front_matter
+from autodokit.api import import_affair_module
 
 
 def test_batch_rewrite_obsidian_note_timestamps_should_convert_utc_to_beijing(tmp_path: Path) -> None:
@@ -55,25 +58,68 @@ def test_knowledge_note_register_should_default_to_beijing_time(tmp_path: Path) 
     assert "+08:00" in text
 
 
-def test_write_mainline_affair_entry_registry_should_include_a065_a105_and_a130(tmp_path: Path) -> None:
-    """主链入口注册表应写出已实现节点、A105 与设计占位节点。"""
+def test_write_mainline_affair_entry_registry_should_include_current_review_and_non_review_chain_entries(tmp_path: Path) -> None:
+    """主链入口注册表应写出恢复后的 A060/A070/A075/A080 四节点入口。"""
 
     output_path = tmp_path / "affair_entry_registry.json"
-    write_mainline_affair_entry_registry(
-        output_path,
-        workspace_root=tmp_path,
-        node_inputs={"A065": str(tmp_path / "A065.json")},
-    )
+    write_mainline_affair_entry_registry(output_path, workspace_root=tmp_path)
 
     payload = json.loads(output_path.read_text(encoding="utf-8"))
-    a065 = resolve_mainline_affair_entry("A065", payload)
-    a105 = resolve_mainline_affair_entry("A105", payload)
-    a130 = resolve_mainline_affair_entry("A130", payload)
-    assert a065["module"] == "autodokit.affairs.综述参考文献预处理与笔记骨架.affair"
-    assert a065["config_path"].endswith("A065.json")
-    assert a105["module"] == "autodokit.affairs.文献批判性研读与标准笔记.affair"
-    assert a105["config_path"].endswith("A105.json")
-    assert a130["implemented"] is False
+    a060 = resolve_mainline_affair_entry("A060", payload)
+    a070 = resolve_mainline_affair_entry("A070", payload)
+    a075 = resolve_mainline_affair_entry("A075", payload)
+    a080 = resolve_mainline_affair_entry("A080", payload)
+    a100 = resolve_mainline_affair_entry("A100", payload)
+    a110 = resolve_mainline_affair_entry("A110", payload)
+    a140 = resolve_mainline_affair_entry("A140", payload)
+    assert a060["node_name"] == "综述文献候选视图构建"
+    assert a060["affair_uid"] == "ar_A060_综述文献候选视图构建"
+    assert a060["module"] == "autodokit.affairs.候选文献视图构建.affair"
+    assert a060["config_path"].endswith("A060.json")
+    assert a070["node_name"] == "综述文献研读"
+    assert a070["affair_uid"] == "ar_A070_综述文献研读"
+    assert a070["module"] == "autodokit.affairs.候选文献视图构建.affair"
+    assert a070["config_path"].endswith("A070.json")
+    assert a075["node_name"] == "普通文献候选视图构建"
+    assert a075["affair_uid"] == "ar_A075_普通文献候选视图构建"
+    assert a075["module"] == "autodokit.affairs.非综述候选种子生成.affair"
+    assert a075["config_path"].endswith("A075.json")
+    assert a080["node_name"] == "普通文献泛读"
+    assert a080["affair_uid"] == "ar_A080_普通文献泛读"
+    assert a080["module"] == "autodokit.affairs.非综述候选视图构建.affair"
+    assert a080["config_path"].endswith("A080.json")
+    assert a100["node_name"] == "文献批判性研读"
+    assert a100["affair_uid"] == "ar_A100_文献批判性研读"
+    assert a100["module"] == "autodokit.affairs.文献研读与正式知识回写.affair"
+    assert a100["config_path"].endswith("A100.json")
+    assert a110["node_name"] == "研究脉络梳理"
+    assert a110["affair_uid"] == "ar_A110_研究脉络梳理"
+    assert a110["implemented"] is True
+    assert a110["module"] == "autodokit.affairs.文献矩阵.affair"
+    assert a140["node_name"] == "创新点凝练"
+    assert a140["affair_uid"] == "ar_A140_创新点凝练"
+    with pytest.raises(KeyError):
+        resolve_mainline_affair_entry("A065", payload)
+
+
+def test_import_affair_module_should_resolve_new_merged_affair_uid() -> None:
+    """恢复后的 A060/A070/A075/A080 affair_uid 应可直接解析到官方模块。"""
+
+    a060_module = import_affair_module(affair_uid="ar_A060_综述文献候选视图构建")
+    a070_module = import_affair_module(affair_uid="ar_A070_综述文献研读")
+    a075_module = import_affair_module(affair_uid="ar_A075_普通文献候选视图构建")
+    a080_module = import_affair_module(affair_uid="ar_A080_普通文献泛读")
+    a100_module = import_affair_module(affair_uid="ar_A100_文献批判性研读")
+    a110_module = import_affair_module(affair_uid="ar_A110_研究脉络梳理")
+    a140_module = import_affair_module(affair_uid="ar_A140_创新点凝练")
+
+    assert a060_module.__name__ == "autodokit.affairs.候选文献视图构建.affair"
+    assert a070_module.__name__ == "autodokit.affairs.候选文献视图构建.affair"
+    assert a075_module.__name__ == "autodokit.affairs.非综述候选种子生成.affair"
+    assert a080_module.__name__ == "autodokit.affairs.非综述候选视图构建.affair"
+    assert a100_module.__name__ == "autodokit.affairs.文献研读与正式知识回写.affair"
+    assert a110_module.__name__ == "autodokit.affairs.文献矩阵.affair"
+    assert a140_module.__name__ == "autodokit.affairs.创新点池构建.affair"
 
 
 def test_build_front_matter_should_use_beijing_time() -> None:

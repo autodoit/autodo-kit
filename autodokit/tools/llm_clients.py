@@ -27,6 +27,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Dict, List, Literal, Optional
 
+from autodokit.tools.config_contract_utils import normalize_to_legacy_contract
+
 def get_global_config_path() -> Optional[Path]:
     """读取全局配置路径。
 
@@ -69,6 +71,8 @@ def load_api_key_from_config(
         payload = json.loads(path.read_text(encoding="utf-8-sig"))
     except Exception:
         return ""
+
+    payload = normalize_to_legacy_contract(payload)
 
     if not isinstance(payload, dict):
         return ""

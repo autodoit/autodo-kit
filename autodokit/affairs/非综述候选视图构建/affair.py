@@ -1,7 +1,8 @@
-﻿"""A080 非综述文献预处理事务。
+﻿"""A080 普通文献泛读事务。
 
 A080 优先消费正式 `A080` 阶段队列，并结合 `文献主表.current_parse_*`
-与结构化摘要字段完成统一预处理；旧 reading_state 仅保留兼容回写。
+与结构化摘要字段完成统一预处理；粗读候选筛选与批次汇总已剥离到 A095。
+旧 reading_state 仅保留兼容回写。
 """
 
 from __future__ import annotations
@@ -208,13 +209,23 @@ def _sentence_line(cite_key: str, sentence_obj: Dict[str, Any]) -> str:
     return f"- {sentence}（cite_key: {cite_key}；句序: {index}；原文: {sentence}）"
 
 
-def _register_note(knowledge_index: pd.DataFrame, note_path: Path, title: str, body: str, workspace_root: Path, *, uid_literature: str = "", cite_key: str = "") -> Tuple[pd.DataFrame, Dict[str, Any]]:
+def _register_note(
+    knowledge_index: pd.DataFrame,
+    note_path: Path,
+    title: str,
+    body: str,
+    workspace_root: Path,
+    *,
+    stage_code: str,
+    uid_literature: str = "",
+    cite_key: str = "",
+) -> Tuple[pd.DataFrame, Dict[str, Any]]:
     note_info = knowledge_note_register(
         note_path=note_path,
         title=title,
         note_type="knowledge_note",
         status="draft",
-        tags=["aok/rough_read", "a080", "a080_merged"],
+        tags=["aok/rough_read", stage_code.lower()],
         aliases=[title],
         evidence_uids=[title],
         uid_literature=uid_literature,
@@ -237,7 +248,14 @@ def _light_patch_analysis_notes(note_paths: Dict[str, Path], *, cite_key: str, t
         append_markdown_section(note_paths[key], spec["title"], lines_map.get(key, []))
 
 
-def _build_discovered_rows_from_mappings(*, item_mapping_rows: Sequence[Dict[str, Any]], uid_literature: str, cite_key: str, existing_state_by_uid: Dict[str, Dict[str, Any]] | None = None) -> List[Dict[str, Any]]:
+def _build_discovered_rows_from_mappings(
+    *,
+    item_mapping_rows: Sequence[Dict[str, Any]],
+    uid_literature: str,
+    cite_key: str,
+    source_stage: str,
+    existing_state_by_uid: Dict[str, Dict[str, Any]] | None = None,
+) -> List[Dict[str, Any]]:
     if existing_state_by_uid is None:
         existing_state_by_uid = {}
     discovered_rows: List[Dict[str, Any]] = []
@@ -254,11 +272,11 @@ def _build_discovered_rows_from_mappings(*, item_mapping_rows: Sequence[Dict[str
         candidate_row = build_followup_candidate_state_row(
             uid_literature=target_uid,
             cite_key=target_cite_key,
-            source_stage="A080",
+            source_stage=source_stage,
             source_uid_literature=uid_literature,
             source_cite_key=cite_key,
-            recommended_reason=f"A080 从 {cite_key} 参考文献发现候选",
-            theme_relation="a080_reference_discovery",
+            recommended_reason=f"{source_stage} 从 {cite_key} 参考文献发现候选",
+            theme_relation=f"{source_stage.lower()}_reference_discovery",
             existing_state=existing_state_by_uid.get(target_uid),
         )
         if candidate_row is None:
@@ -268,7 +286,17 @@ def _build_discovered_rows_from_mappings(*, item_mapping_rows: Sequence[Dict[str
     return discovered_rows
 
 
-def _build_a100_queue_rows(state_df: pd.DataFrame) -> List[Dict[str, Any]]:
+def _build_followup_queue_rows(
+    state_df: pd.DataFrame,
+    *,
+    stage: str,
+    source_affair: str,
+    preferred_next_stage: str,
+    reason_fallback: str,
+    theme_relation_fallback: str,
+    bucket: str,
+    scope_key: str,
+) -> List[Dict[str, Any]]:
     queue_rows: List[Dict[str, Any]] = []
     seen: set[tuple[str, str]] = set()
     for _, row in state_df.fillna("").iterrows():
@@ -284,20 +312,46 @@ def _build_a100_queue_rows(state_df: pd.DataFrame) -> List[Dict[str, Any]]:
             {
                 "uid_literature": uid_literature,
                 "cite_key": cite_key,
-                "stage": "A100",
-                "source_affair": "A080",
+                "stage": stage,
+                "source_affair": source_affair,
                 "queue_status": "queued",
                 "priority": row.get("priority") or 80,
-                "bucket": "non_review_batch_summary",
-                "preferred_next_stage": "A100",
-                "recommended_reason": _stringify(row.get("rough_read_reason")) or "A080 合并链完成粗读与批次汇总，进入 A100 深度解析准备",
-                "theme_relation": _stringify(row.get("theme_relation")) or "a080_to_a100",
-                "source_round": "a080",
-                "scope_key": "a080_to_a100",
+                "bucket": bucket,
+                "preferred_next_stage": preferred_next_stage,
+                "recommended_reason": _stringify(row.get("rough_read_reason")) or reason_fallback,
+                "theme_relation": _stringify(row.get("theme_relation")) or theme_relation_fallback,
+                "source_round": source_affair.lower(),
+                "scope_key": scope_key,
                 "is_current": 1,
             }
         )
     return queue_rows
+
+
+def _build_a095_queue_rows(state_df: pd.DataFrame) -> List[Dict[str, Any]]:
+    return _build_followup_queue_rows(
+        state_df,
+        stage="A095",
+        source_affair="A080",
+        preferred_next_stage="A100",
+        reason_fallback="A080 普通文献泛读完成预处理，进入 A095 普通文献研读候选视图构建",
+        theme_relation_fallback="a080_to_a095",
+        bucket="non_review_rough_read",
+        scope_key="a080_to_a095",
+    )
+
+
+def _build_a100_queue_rows(state_df: pd.DataFrame, *, source_affair: str = "A095") -> List[Dict[str, Any]]:
+    return _build_followup_queue_rows(
+        state_df,
+        stage="A100",
+        source_affair=source_affair,
+        preferred_next_stage="A100",
+        reason_fallback=f"{source_affair} 完成普通文献研读候选筛选与批次汇总，进入 A100 文献批判性研读",
+        theme_relation_fallback=f"{source_affair.lower()}_to_a100",
+        bucket="non_review_batch_summary",
+        scope_key=f"{source_affair.lower()}_to_a100",
+    )
 
 
 def _run_rough_read_and_batch_summary(
@@ -309,8 +363,10 @@ def _run_rough_read_and_batch_summary(
     literature_table: pd.DataFrame,
     attachment_table: pd.DataFrame,
     ready_df: pd.DataFrame,
+    source_stage: str,
+    output_prefix: str,
 ) -> tuple[List[Path], Dict[str, Any]]:
-    """在 A080 内联执行普通阅读链的粗读与批次汇总逻辑。"""
+    """执行普通阅读链的粗读与批次汇总逻辑。"""
 
     auto_dispatch_feedback_requests = bool(raw_cfg.get("auto_dispatch_feedback_requests_to_a040", True))
     knowledge_index, knowledge_attachments, _ = load_knowledge_tables(db_path=content_db)
@@ -435,6 +491,7 @@ def _run_rough_read_and_batch_summary(
             title,
             note_body,
             workspace_root,
+            stage_code=source_stage,
             uid_literature=uid_literature,
             cite_key=cite_key,
         )
@@ -492,7 +549,7 @@ def _run_rough_read_and_batch_summary(
                 if decision.get("route_to_a040"):
                     retrieval_feedback_requests.append(
                         build_retrieval_feedback_request(
-                            source_stage="A080",
+                            source_stage=source_stage,
                             source_task_uid=output_dir.name,
                             source_note_path=str(note_path),
                             source_uid_literature=uid_literature,
@@ -509,6 +566,7 @@ def _run_rough_read_and_batch_summary(
             item_mapping_rows=item_mapping_rows,
             uid_literature=uid_literature,
             cite_key=cite_key,
+            source_stage=source_stage,
             existing_state_by_uid=existing_state_by_uid,
         )
         processed_count = len(item_mapping_rows)
@@ -528,8 +586,8 @@ def _run_rough_read_and_batch_summary(
             "analysis_batch_synced": 1,
             "pending_deep_read": 1 if should_promote else 0,
             "last_batch_id": output_dir.name,
-            "rough_read_reason": f"A080 合并链已完成轻量粗读与批次汇总。阅读目标={reading_objective or '未指定'}；提示语={manual_guidance or '未指定'}",
-            "theme_relation": _stringify(row.get("theme_relation")) or "a080_rough_read_complete",
+            "rough_read_reason": f"{source_stage} 已完成轻量粗读与批次汇总。阅读目标={reading_objective or '未指定'}；提示语={manual_guidance or '未指定'}",
+            "theme_relation": _stringify(row.get("theme_relation")) or f"{source_stage.lower()}_rough_read_complete",
         })
         state_rows.extend(discovered_rows)
         index_rows.append({
@@ -553,30 +611,30 @@ def _run_rough_read_and_batch_summary(
     persist_knowledge_tables(index_df=knowledge_index, attachments_df=knowledge_attachments, db_path=content_db)
 
     index_df = pd.DataFrame(index_rows)
-    index_path = output_dir / "a080_rough_reading_index.csv"
+    index_path = output_dir / f"{output_prefix}_rough_reading_index.csv"
     index_df.to_csv(index_path, index=False, encoding="utf-8-sig")
     mapping_df = pd.DataFrame(mapping_rows)
-    mapping_path = output_dir / "a080_reference_citation_mapping.csv"
+    mapping_path = output_dir / f"{output_prefix}_reference_citation_mapping.csv"
     mapping_df.to_csv(mapping_path, index=False, encoding="utf-8-sig")
     quality_summary = build_reference_quality_summary(mapping_df.to_dict(orient="records"))
-    quality_path = output_dir / "a080_reference_citation_quality_summary.json"
+    quality_path = output_dir / f"{output_prefix}_reference_citation_quality_summary.json"
     quality_path.write_text(json.dumps(quality_summary, ensure_ascii=False, indent=2), encoding="utf-8")
     related_item_paths = _write_related_literature_items(output_dir, index_df)
 
-    summary_lines: List[str] = ["# A080 合并链泛读批次分析汇总", ""]
+    summary_lines: List[str] = [f"# {source_stage} 普通文献研读候选汇总", ""]
     for _, row in index_df.fillna("").iterrows():
         cite_key = _stringify(row.get("cite_key"))
         title = _stringify(row.get("title")) or cite_key
-        reason = _stringify(row.get("reading_objective")) or "已完成 A080 合并链粗读"
+        reason = _stringify(row.get("reading_objective")) or f"已完成 {source_stage} 粗读"
         summary_lines.append(f"- {cite_key}《{title}》：{reason}")
-    summary_path = output_dir / "a080_batch_summary.md"
+    summary_path = output_dir / f"{output_prefix}_batch_summary.md"
     summary_path.write_text("\n".join(summary_lines) + "\n", encoding="utf-8")
 
     refreshed_state_df = load_reading_state_df(content_db, flag_filters={"rough_read_done": 1, "analysis_batch_synced": 1})
     if not refreshed_state_df.empty and not index_df.empty:
         target_uids = set(index_df["uid_literature"].astype(str).tolist())
         refreshed_state_df = refreshed_state_df[refreshed_state_df["uid_literature"].astype(str).isin(target_uids)].reset_index(drop=True)
-    a100_queue_rows = _build_a100_queue_rows(refreshed_state_df)
+    a100_queue_rows = _build_a100_queue_rows(refreshed_state_df, source_affair=source_stage)
     if a100_queue_rows:
         upsert_reading_queue_rows(content_db, a100_queue_rows)
 
@@ -589,12 +647,12 @@ def _run_rough_read_and_batch_summary(
         registered_feedback_requests = register_a040_requests_from_feedback(
             workspace_root=workspace_root,
             feedback_requests=merged_feedback_requests,
-            source_node="A080",
+            source_node=source_stage,
             priority="高" if need_download_feedback else "中",
             creator_type="affair",
-            creator_id="A080_非综述候选视图构建",
+            creator_id=f"{source_stage}_普通文献研读候选视图构建",
             attribute_vector={
-                "source_stage": "A080",
+                "source_stage": source_stage,
                 "need_download_feedback": need_download_feedback,
                 "request_count": len(merged_feedback_requests),
             },
@@ -615,12 +673,12 @@ def _run_rough_read_and_batch_summary(
                 except Exception as exc:
                     dispatch_failures.append(f"{request_uid}: {exc}")
 
-    feedback_path = output_dir / "retrieval_feedback_requests_A080.json"
-    feedback_summary_path = output_dir / "retrieval_feedback_summary_A080.json"
-    affair_request_result_path = output_dir / "affair_request_dispatch_A080.json"
+    feedback_path = output_dir / f"retrieval_feedback_requests_{source_stage}.json"
+    feedback_summary_path = output_dir / f"retrieval_feedback_summary_{source_stage}.json"
+    affair_request_result_path = output_dir / f"affair_request_dispatch_{source_stage}.json"
     feedback_summary = {
         "task_uid": output_dir.name,
-        "source_stage": "A080",
+        "source_stage": source_stage,
         "request_count": len(merged_feedback_requests),
         "rough_read_count": len(index_df),
         "need_download_feedback": need_download_feedback,
@@ -845,6 +903,7 @@ def _write_related_literature_items(output_dir: Path, frame: pd.DataFrame) -> li
 
 @affair_auto_git_commit("A080")
 def execute(config_path: Path) -> List[Path]:
+    config_path = Path(config_path)
     raw_cfg = load_json_or_py(config_path)
     if not isinstance(raw_cfg, dict):
         raise ValueError("A080 配置必须是字典")
@@ -1050,18 +1109,9 @@ def execute(config_path: Path) -> List[Path]:
         if "uid_literature" in merge_columns:
             rough_ready_df = rough_ready_df.merge(state_lookup_df[merge_columns].drop_duplicates(subset=["uid_literature"]), on="uid_literature", how="left", suffixes=("", "_state")).fillna("")
 
-    merged_artifact_paths: List[Path] = []
-    merged_summary: Dict[str, Any] = {"rough_read_count": 0, "a100_queue_count": 0, "rough_read_failures": []}
-    if not rough_ready_df.empty:
-        merged_artifact_paths, merged_summary = _run_rough_read_and_batch_summary(
-            raw_cfg=raw_cfg,
-            workspace_root=workspace_root,
-            output_dir=output_dir,
-            content_db=content_db,
-            literature_table=literatures_df,
-            attachment_table=attachments_df,
-            ready_df=rough_ready_df,
-        )
+    a095_queue_rows = _build_a095_queue_rows(rough_ready_df) if not rough_ready_df.empty else []
+    if a095_queue_rows:
+        upsert_reading_queue_rows(content_db, a095_queue_rows)
 
     consumed_a080_queue_count = _consume_current_stage_queue_rows(content_db, stage="A080", ready_df=ready_df)
 
@@ -1072,13 +1122,12 @@ def execute(config_path: Path) -> List[Path]:
 
     gate_review = build_gate_review(
         node_uid="A080",
-        node_name="非综述文献预处理",
+        node_name="普通文献泛读",
         summary=(
             f"消费 A080 输入池 {len(state_df)} 条（mode={input_mode}）；"
             f"legacy queue 补种 {legacy_seeded_count} 条；"
             f"解析就绪 {ready_count} 条；"
-            f"粗读完成 {merged_summary.get('rough_read_count', 0)} 条；"
-            f"写入 A100 队列 {merged_summary.get('a100_queue_count', 0)} 条；"
+            f"写入 A095 队列 {len(a095_queue_rows)} 条；"
             f"失败 {failed_count} 条；"
             f"后处理成功 {postprocess_success_count} 条；"
             f"消费 A080 兼容队列 {consumed_a080_queue_count} 条。"
@@ -1088,8 +1137,7 @@ def execute(config_path: Path) -> List[Path]:
             {"name": "a080_input_mode", "value": input_mode},
             {"name": "legacy_queue_seeded_count", "value": legacy_seeded_count},
             {"name": "preprocess_ready_count", "value": ready_count},
-            {"name": "rough_read_count", "value": merged_summary.get("rough_read_count", 0)},
-            {"name": "a100_queue_count", "value": merged_summary.get("a100_queue_count", 0)},
+            {"name": "a095_queue_count", "value": len(a095_queue_rows)},
             {"name": "preprocess_failed_count", "value": failed_count},
             {"name": "postprocess_success_count", "value": postprocess_success_count},
             {"name": "consumed_a080_queue_count", "value": consumed_a080_queue_count},
@@ -1101,11 +1149,10 @@ def execute(config_path: Path) -> List[Path]:
             str(manifest_result["management_table_path"]),
             str(manifest_result["handoff_path"]),
             str(manifest_result["batch_report_path"]),
-            *[str(path) for path in merged_artifact_paths],
         ],
         recommendation="pass_next" if ready_count > 0 else "retry_current",
         score=max(50.0, 94.0 - len(failures) * 4.0),
-        issues=[*failures, *list(merged_summary.get("rough_read_failures") or [])],
+        issues=failures,
         metadata={
             "workspace_root": str(workspace_root),
             "content_db": str(content_db),
@@ -1117,11 +1164,10 @@ def execute(config_path: Path) -> List[Path]:
             "postprocess_enabled": bool(postprocess_settings.get("enabled", False)),
             "input_mode": input_mode,
             "upstream_stage": "A075",
-            "downstream_stage": "A100",
+            "downstream_stage": "A095",
             "allow_unparsed_read_bypass": allow_unparsed_read_bypass,
             "auto_enable_unparsed_for_failed_items": auto_enable_unparsed_for_failed_items,
-            "rough_read_count": merged_summary.get("rough_read_count", 0),
-            "a100_queue_count": merged_summary.get("a100_queue_count", 0),
+            "a095_queue_count": len(a095_queue_rows),
         },
     )
     gate_path = output_dir / OUTPUT_GATE
@@ -1135,7 +1181,6 @@ def execute(config_path: Path) -> List[Path]:
         Path(manifest_result["management_table_path"]),
         Path(manifest_result["handoff_path"]),
         Path(manifest_result["batch_report_path"]),
-        *merged_artifact_paths,
     ]
     mirror_artifacts_to_legacy(artifact_paths, legacy_output_dir, output_dir)
 
@@ -1144,10 +1189,10 @@ def execute(config_path: Path) -> List[Path]:
             event_type="A080_NON_REVIEW_PREPROCESS_READY",
             project_root=workspace_root,
             affair_code="A080",
-            handler_name="非综述文献预处理",
-            agent_names=["ar_A080_非综述文献预处理事务智能体_v7"],
+            handler_name="普通文献泛读",
+            agent_names=["ar_A080_普通文献泛读事务智能体_v7"],
             skill_names=["a080-nonreview-preprocess-v6"],
-            reasoning_summary="优先消费 A080 正式阶段队列，并按文献主表 current_parse/结构化摘要执行统一预处理与粗读推进。",
+            reasoning_summary="完成普通文献预处理，并把可泛读条目推进到 A095 普通文献研读候选视图构建。",
             gate_review=gate_review,
             gate_review_path=gate_path,
             artifact_paths=artifact_paths,
@@ -1157,8 +1202,7 @@ def execute(config_path: Path) -> List[Path]:
                 "legacy_queue_seeded_count": legacy_seeded_count,
                 "ready_count": ready_count,
                 "failed_count": failed_count,
-                "rough_read_count": merged_summary.get("rough_read_count", 0),
-                "a100_queue_count": merged_summary.get("a100_queue_count", 0),
+                "a095_queue_count": len(a095_queue_rows),
                 "postprocess_success_count": postprocess_success_count,
                 "consumed_a080_queue_count": consumed_a080_queue_count,
             },

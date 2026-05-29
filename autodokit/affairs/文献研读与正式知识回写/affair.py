@@ -1,4 +1,4 @@
-﻿"""A100 文献精解析资产化事务。"""
+﻿"""A100 文献批判性研读事务。"""
 
 from __future__ import annotations
 
@@ -968,7 +968,7 @@ def execute(config_path: Path) -> List[Path]:
 
     gate_review = build_gate_review(
         node_uid="A100",
-        node_name="文献精解析资产化",
+        node_name="文献批判性研读",
         summary=(
             f"完成 deep parse 准备 {len(result_rows)} 篇（mode={input_mode}）；"
             f"后处理成功 {postprocess_success_count} 篇；失败 {len(failures)} 篇；"
@@ -1029,10 +1029,10 @@ def execute(config_path: Path) -> List[Path]:
             event_type="A100_DEEP_READING_COMPLETED",
             project_root=workspace_root,
             affair_code="A100",
-            handler_name="文献精解析资产化",
-            agent_names=["ar_A100_文献精解析资产化事务智能体_v7"],
+            handler_name="文献批判性研读",
+            agent_names=["ar_A100_文献批判性研读事务智能体_v7"],
             skill_names=[],
-            reasoning_summary="优先消费 A100 正式阶段队列，并按文献主表 current_parse/结构化摘要决定深度解析与旁路准备。",
+            reasoning_summary="在同一存活节点内完成深读准备、批判性研读与正式知识回写，并向 A110 推进。",
             gate_review=gate_review,
             gate_review_path=gate_path,
             artifact_paths=[str(index_path), *[str(path) for path in related_item_paths], str(manifest_result["manifest_path"]), str(manifest_result["management_table_path"]), str(manifest_result["handoff_path"])],

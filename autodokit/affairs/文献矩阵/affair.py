@@ -1,4 +1,4 @@
-﻿"""批量文献矩阵（P1，占位可运行版）。
+﻿"""A110 研究脉络梳理事务（P1，占位可运行版）。
 
 本脚本用于生成“文献矩阵”表格：对每篇文献抽取同一组字段（研究问题/方法/数据/结论/贡献/局限）。
 
@@ -31,7 +31,7 @@ try:
 except ModuleNotFoundError:  # pragma: no cover - 联调环境兼容回退
     from autodoengine.core.template_affair import TemplateAffairBase
 from autodokit.tools import build_gate_review, build_research_trajectory, load_json_or_py
-from autodokit.tools.contentdb_sqlite import resolve_content_db_config
+from autodokit.tools.contentdb_sqlite import CONTENT_DB_DIRECTORY_NAME, DEFAULT_CONTENT_DB_NAME, resolve_content_db_config
 from autodokit.tools.llm_clients import AliyunDashScopeClient, load_aliyun_llm_config
 from autodokit.tools.ocr.classic.pdf_structured_data_tools import load_document_records_from_structured_source
 from autodokit.tools.atomic.task_aok.post_affair_git_commit import affair_auto_git_commit
@@ -316,7 +316,7 @@ def _run_literature_matrix(*, merged: Dict[str, Any]) -> List[Path]:
 
     gate_review = build_gate_review(
         node_uid="A110",
-        node_name="文献矩阵与知识收束链整合事务",
+        node_name="研究脉络梳理",
         summary=f"生成文献矩阵 {len(rows)} 条，研究脉络覆盖 {trajectory.get('item_count', 0)} 条，并在同一节点内收口 A120/A130。",
         checks=[
             {"name": "matrix_item_count", "value": len(rows)},
@@ -372,9 +372,21 @@ def execute(config_path: Path, workspace_root: Path | None = None) -> List[Path]
     resolved_workspace_root = Path(str(raw_cfg.get("workspace_root") or workspace_root or config_path.parents[2]))
     if not resolved_workspace_root.is_absolute():
         raise ValueError(f"workspace_root 必须为绝对路径: {resolved_workspace_root}")
+
+    content_db_path, _ = resolve_content_db_config(
+        raw_cfg,
+        default_path=resolved_workspace_root / "database" / CONTENT_DB_DIRECTORY_NAME / DEFAULT_CONTENT_DB_NAME,
+        required=True,
+    )
+    assert content_db_path is not None
+
     legacy_output_dir = resolve_legacy_output_dir(raw_cfg, config_path)
     task_output_dir = create_task_instance_dir(resolved_workspace_root, "A110")
     merged = dict(raw_cfg)
+    global_config_path = resolved_workspace_root / "config" / "config.json"
+    merged["content_db"] = str(content_db_path)
+    if global_config_path.exists():
+        merged["global_config_path"] = str(global_config_path)
     merged["output_dir"] = str(task_output_dir)
     written_files = _run_literature_matrix(merged=merged)
     mirror_artifacts_to_legacy(written_files, legacy_output_dir, task_output_dir)

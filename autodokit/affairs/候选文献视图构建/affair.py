@@ -1,4 +1,4 @@
-﻿"""候选文献视图构建事务。"""
+﻿"""A060/A070 综述候选与综述研读事务。"""
 
 from __future__ import annotations
 
@@ -108,9 +108,9 @@ MERGED_FOLLOWUP_AFFAIRS: Tuple[Tuple[str, str], ...] = (
 )
 
 MERGED_PHASE_OUTPUT_DIRS: Dict[str, str] = {
-    "A065": "A060_phase_a065_review_reference_preprocessing",
-    "A070": "A060_phase_a070_review_synthesis",
-    "A075": "A060_phase_a075_non_review_seed_views",
+    "A065": "A070_phase_a065_review_reference_preprocessing",
+    "A070": "A070_phase_a070_review_synthesis",
+    "A075": "A075_non_review_candidate_views",
 }
 
 MERGED_PHASE_DEFAULT_CONFIGS: Dict[str, Dict[str, Any]] = {
@@ -250,14 +250,22 @@ def _run_merged_followup_affairs(
     workspace_root: Path,
     raw_cfg: Dict[str, Any],
     output_dir: Path,
+    selected_nodes: Iterable[str] | None = None,
 ) -> List[Path]:
     """顺序执行已迁入 A060 目录下的本地 phase。"""
 
     merged_config_dir = output_dir / "merged_phase_configs"
     merged_config_dir.mkdir(parents=True, exist_ok=True)
 
+    selected_node_codes = {
+        _stringify(node_code)
+        for node_code in (selected_nodes or [])
+        if _stringify(node_code)
+    }
     artifact_paths: List[Path] = []
     for node_code, module_path in MERGED_FOLLOWUP_AFFAIRS:
+        if selected_node_codes and node_code not in selected_node_codes:
+            continue
         nested_config_path = merged_config_dir / f"{node_code}.json"
         nested_config = _build_merged_phase_config(
             node_code=node_code,
@@ -1506,6 +1514,63 @@ def execute(config_path: Path) -> List[Path]:
     config_path = Path(config_path)
     raw_cfg = load_json_or_py(config_path)
     workspace_root = _resolve_workspace_root(config_path, raw_cfg)
+    execution_mode = _stringify(raw_cfg.get("execution_mode") or raw_cfg.get("执行模式") or "candidate_only").lower()
+
+    if execution_mode in {"review_reading", "review_reading_only", "a070_review_reading"}:
+        legacy_output_dir = resolve_legacy_output_dir(raw_cfg, config_path)
+        output_dir = create_task_instance_dir(workspace_root, "A070")
+        global_config_path = workspace_root / "config" / "config.json"
+        if not global_config_path.exists():
+            global_config_path = None
+        global_cfg = _load_global_config(global_config_path)
+        logging_enabled = _resolve_logging_enabled(global_cfg)
+        merged_outputs = _run_merged_followup_affairs(
+            workspace_root=workspace_root,
+            raw_cfg=raw_cfg,
+            output_dir=output_dir,
+            selected_nodes=("A065", "A070"),
+        )
+        gate_review = build_gate_review(
+            node_uid="A070",
+            node_name="综述文献研读",
+            summary=f"承接 A060 候选视图后完成 A065/A070 内部阶段，共输出产物 {len(merged_outputs)} 项。",
+            checks=[
+                {"name": "execution_mode", "value": execution_mode},
+                {"name": "executed_followup_count", "value": 2},
+                {"name": "artifact_count", "value": len(merged_outputs)},
+            ],
+            artifacts=[str(path) for path in merged_outputs],
+            recommendation="pass_next" if merged_outputs else "retry_current",
+            score=92.0 if merged_outputs else 40.0,
+            issues=[] if merged_outputs else ["A070 未生成任何内部阶段产物。"],
+            metadata={
+                "workspace_root": str(workspace_root),
+                "execution_mode": execution_mode,
+                "internal_followups": ["A065", "A070"],
+            },
+        )
+        gate_path = output_dir / "gate_review.json"
+        gate_path.write_text(json.dumps(gate_review, ensure_ascii=False, indent=2), encoding="utf-8")
+        append_aok_log_event(
+            event_type="A070_REVIEW_READING_COMPLETED",
+            project_root=workspace_root,
+            enabled=logging_enabled,
+            affair_code="A070",
+            handler_name="综述文献研读",
+            agent_names=["ar_A070_综述文献研读事务智能体_v7"],
+            skill_names=["ar_A070_综述文献研读_v7", "m_ObsidianMarkdown_v1"],
+            reasoning_summary="承接 A060 候选视图，顺序执行 A065 参考文献预处理与 A070 综述综合研读。",
+            gate_review=gate_review,
+            gate_review_path=gate_path,
+            artifact_paths=[gate_path, *merged_outputs],
+            payload={
+                "execution_mode": execution_mode,
+                "artifact_count": len(merged_outputs),
+            },
+        )
+        mirror_artifacts_to_legacy([gate_path, *merged_outputs], legacy_output_dir, output_dir)
+        return [gate_path, *merged_outputs]
+
     global_config_path = workspace_root / "config" / "config.json"
     if not global_config_path.exists():
         global_config_path = None
@@ -1675,9 +1740,9 @@ def execute(config_path: Path) -> List[Path]:
         "mapped_reference_count": 0,
         "validation_errors": [],
     }
-    queue_stage = "A065"
+    queue_stage = "A070"
     if not direct_structured_matches.empty and bool(raw_cfg.get("skip_a060_when_structured_ready", False)):
-        queue_stage = _stringify(raw_cfg.get("direct_review_queue_stage")) or "A065"
+        queue_stage = _stringify(raw_cfg.get("direct_review_queue_stage")) or "A070"
     next_stage_queue_count = 0
     review_state_count = 0
     if content_db is not None:
@@ -1697,8 +1762,8 @@ def execute(config_path: Path) -> List[Path]:
                     "queue_status": "queued",
                     "priority": _stringify(row.get("score")) or _stringify(row.get("priority")) or 68.0,
                     "bucket": "review_reference_preprocess",
-                    "preferred_next_stage": "A070" if queue_stage == "A065" else queue_stage,
-                    "recommended_reason": "A060 综述候选视图构建完成，进入 A065 参考文献处理与标准笔记骨架阶段",
+                    "preferred_next_stage": "A070",
+                    "recommended_reason": "A060 综述候选视图构建完成，进入 A070 综述文献研读阶段",
                     "theme_relation": _stringify(raw_cfg.get("research_topic") or raw_cfg.get("topic") or "A060_topic"),
                     "source_round": "a060",
                     "run_uid": run_uid,
@@ -1728,7 +1793,7 @@ def execute(config_path: Path) -> List[Path]:
 
     gate_review = build_gate_review(
         node_uid="A060",
-        node_name="综述候选文献视图构建",
+        node_name="综述文献候选视图构建",
         summary=f"基于文献总库生成综述候选 {len(review_candidate_pool_index)} 条，可读视图 {len(review_candidate_pool_readable)} 条，阅读批次 {review_reading_batches['batch_id'].nunique() if not review_reading_batches.empty else 0} 个，并写入 {queue_stage} 当前态队列 {next_stage_queue_count} 条。",
         checks=[
             {"name": "review_candidate_count", "value": len(review_candidate_pool_index)},
@@ -1803,10 +1868,10 @@ def execute(config_path: Path) -> List[Path]:
         project_root=workspace_root,
         enabled=logging_enabled,
         affair_code="A060",
-        handler_name="候选文献视图构建",
-        agent_names=["ar_A060_综述候选文献视图构建事务智能体_v7"],
-        skill_names=["ar_A060_综述候选文献视图构建_v7", "m_ObsidianMarkdown_v1"],
-        reasoning_summary="生成综述候选视图，并在结构化资产就绪后推进到 A065。",
+        handler_name="综述文献候选视图构建",
+        agent_names=["ar_A060_综述文献候选视图构建事务智能体_v7"],
+        skill_names=["ar_A060_综述文献候选视图构建_v7", "m_ObsidianMarkdown_v1"],
+        reasoning_summary="生成综述候选池、阅读池与批次，并把当前态推进到 A070 综述文献研读。",
         gate_review=gate_review,
         gate_review_path=gate_path,
         artifact_paths=[
@@ -1834,11 +1899,6 @@ def execute(config_path: Path) -> List[Path]:
         legacy_output_dir,
         output_dir,
     )
-    merged_outputs = _run_merged_followup_affairs(
-        workspace_root=workspace_root,
-        raw_cfg=raw_cfg,
-        output_dir=output_dir,
-    )
 
     return [
         index_path,
@@ -1854,7 +1914,6 @@ def execute(config_path: Path) -> List[Path]:
         canonical_read_pool_path,
         canonical_batch_path,
         gate_path,
-        *merged_outputs,
     ]
 
 
