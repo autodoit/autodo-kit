@@ -1,4 +1,4 @@
-﻿"""A110 研究脉络梳理事务（P1，占位可运行版）。
+﻿"""A180 研究脉络梳理事务（P1，占位可运行版）。
 
 本脚本用于生成“文献矩阵”表格：对每篇文献抽取同一组字段（研究问题/方法/数据/结论/贡献/局限）。
 
@@ -120,7 +120,7 @@ def _write_related_literature_items(output_dir: Path, docs: List[Dict[str, Any]]
         writer.writeheader()
         writer.writerows(rows)
 
-    lines = ["# A110 相关文献条目", "", f"共 {len(rows)} 条。", ""]
+    lines = ["# A180 相关文献条目", "", f"共 {len(rows)} 条。", ""]
     if not rows:
         lines.append("当前任务没有可记录的相关文献条目。")
     else:
@@ -305,17 +305,17 @@ def _run_literature_matrix(*, merged: Dict[str, Any]) -> List[Path]:
     trajectory_path.write_text(json.dumps(trajectory, ensure_ascii=False, indent=2), encoding="utf-8")
 
     placeholder_status = {
-        "node_code": "A110",
+        "node_code": "A180",
         "merged_nodes": ["A120", "A130"],
         "knowledge_framework_placeholder": True,
-        "message": "A110 已物理合并 A120/A130；研究脉络已生成，领域知识框架暂沿用占位实现并在 A110 内收口。",
+        "message": "A180 已物理合并 A120/A130；研究脉络已生成，领域知识框架暂沿用占位实现并在 A180 内收口。",
         "next_action": "pass_next",
     }
     placeholder_path = out_dir / "knowledge_framework_placeholder_status.json"
     placeholder_path.write_text(json.dumps(placeholder_status, ensure_ascii=False, indent=2), encoding="utf-8")
 
     gate_review = build_gate_review(
-        node_uid="A110",
+        node_uid="A180",
         node_name="研究脉络梳理",
         summary=f"生成文献矩阵 {len(rows)} 条，研究脉络覆盖 {trajectory.get('item_count', 0)} 条，并在同一节点内收口 A120/A130。",
         checks=[
@@ -356,7 +356,7 @@ class LiteratureMatrixTemplateAffair(TemplateAffairBase):
         return _run_literature_matrix(merged=dict(config))
 
 
-@affair_auto_git_commit("A110")
+@affair_auto_git_commit("A180")
 def execute(config_path: Path, workspace_root: Path | None = None) -> List[Path]:
     """事务入口：执行文献矩阵。
 
@@ -381,7 +381,7 @@ def execute(config_path: Path, workspace_root: Path | None = None) -> List[Path]
     assert content_db_path is not None
 
     legacy_output_dir = resolve_legacy_output_dir(raw_cfg, config_path)
-    task_output_dir = create_task_instance_dir(resolved_workspace_root, "A110")
+    task_output_dir = create_task_instance_dir(resolved_workspace_root, "A180")
     merged = dict(raw_cfg)
     global_config_path = resolved_workspace_root / "config" / "config.json"
     merged["content_db"] = str(content_db_path)

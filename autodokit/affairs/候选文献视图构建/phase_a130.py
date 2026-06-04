@@ -10,7 +10,7 @@
 设计边界：
 1. 标准文献笔记必须保持无课题化，只忠实回写原文证据与结构。
 2. 综述分析笔记允许弱主题引导，用于跨文献整合、脉络归纳与收敛。
-3. 研究主题是否参与分析笔记生成，仅由 A070 配置显式控制，不应在标准笔记回写链路中强行注入。
+3. 研究主题是否参与分析笔记生成，仅由 A130 配置显式控制，不应在标准笔记回写链路中强行注入。
 """
 
 from __future__ import annotations
@@ -126,7 +126,7 @@ DEFAULT_EVIDENCE_CONSTRAINED_LINE_TARGETS: Dict[str, int] = {
 }
 
 PLACEHOLDER_HINTS: Tuple[str, ...] = (
-    "待 A070",
+    "待 A130",
     "待补充",
     "待根据",
     "待回填",
@@ -245,14 +245,14 @@ def _load_review_read_pool(raw_cfg: Dict[str, Any], workspace_root: Path, conten
     if allow_legacy_queue_fallback:
         queue_df = load_reading_queue_df(
             content_db,
-            stage="A065",
+            stage="A120",
             only_current=True,
             queue_statuses=["queued", "candidate", "in_progress"],
         )
         if queue_df.empty:
             queue_df = load_reading_queue_df(
                 content_db,
-                stage="A060",
+                stage="A110",
                 only_current=True,
                 queue_statuses=["queued", "candidate", "in_progress"],
             )
@@ -272,7 +272,7 @@ def _load_review_read_pool(raw_cfg: Dict[str, Any], workspace_root: Path, conten
             except Exception as view_exc:
                 if allow_legacy_queue_fallback:
                     raise FileNotFoundError(
-                        "未找到可用的综述阅读池（review_state、A065/A060 队列、review_read_pool 表或 review_read_pool_current_view 视图）。"
+                        "未找到可用的综述阅读池（review_state、A120/A110 队列、review_read_pool 表或 review_read_pool_current_view 视图）。"
                     ) from view_exc
                 raise FileNotFoundError(
                     "未找到可用的综述阅读池（review_state 或 review_read_pool/review_read_pool_current_view）。当前已禁用 legacy queue fallback。"
@@ -872,7 +872,7 @@ def _build_downstream_candidates(
                 "title_or_hint": title or cite_key,
                 "class": bucket,
                 "recommended_reason": reason,
-                "target_stage": "A080",
+                "target_stage": "A150",
                 "candidate_source": "must_read_originals",
                 "theme_relation": "review_must_read",
                 "priority": 90.0 if bucket == "classical_core" else 84.0,
@@ -882,8 +882,8 @@ def _build_downstream_candidates(
             {
                 "uid_literature": uid_literature,
                 "cite_key": cite_key,
-                "stage": "A080",
-                "source_affair": "A070",
+                "stage": "A150",
+                "source_affair": "A130",
                 "queue_status": "queued",
                 "priority": 90.0 if bucket == "classical_core" else 84.0,
                 "bucket": bucket,
@@ -907,7 +907,7 @@ def _build_downstream_candidates(
                 "title_or_hint": title or cite_key,
                 "class": bucket,
                 "recommended_reason": reason,
-                "target_stage": "A080",
+                "target_stage": "A150",
                 "candidate_source": "review_general_reading_list",
                 "theme_relation": "review_reference_candidate",
                 "priority": 68.0 if bucket in {"method_transfer", "counterexample"} else 60.0,
@@ -917,8 +917,8 @@ def _build_downstream_candidates(
             {
                 "uid_literature": uid_literature,
                 "cite_key": cite_key,
-                "stage": "A080",
-                "source_affair": "A070",
+                "stage": "A150",
+                "source_affair": "A130",
                 "queue_status": "queued",
                 "priority": 68.0 if bucket in {"method_transfer", "counterexample"} else 60.0,
                 "bucket": bucket,
@@ -1461,12 +1461,12 @@ def _update_standard_note(
     return updated_index, note_uid, True
 
 
-@affair_auto_git_commit("A070")
+@affair_auto_git_commit("A130")
 def execute(config_path: Path) -> List[Path]:
     raw_cfg = load_json_or_py(config_path)
     workspace_root = _resolve_workspace_root(config_path, raw_cfg)
     legacy_output_dir = resolve_legacy_output_dir(raw_cfg, config_path)
-    output_dir = create_task_instance_dir(workspace_root, "A070")
+    output_dir = create_task_instance_dir(workspace_root, "A130")
     asset_paths = _a05_asset_paths(workspace_root)
     content_db_path, db_input_key = resolve_content_db_config(raw_cfg)
 
@@ -1980,16 +1980,16 @@ def execute(config_path: Path) -> List[Path]:
         upsert_reading_queue_rows(content_db_path, queue_df)
         a080_tag_rows = [
             {"uid_literature": _stringify(row.get("uid_literature")), "cite_key": _stringify(row.get("cite_key")), "tag": f"queued/{_stringify(row.get('queue_status'))}"}
-            for _, row in queue_df[queue_df["stage"].astype(str) == "A080"].iterrows()
+            for _, row in queue_df[queue_df["stage"].astype(str) == "A150"].iterrows()
             if _stringify(row.get("uid_literature")) or _stringify(row.get("cite_key"))
         ]
         a080_bucket_rows = [
             {"uid_literature": _stringify(row.get("uid_literature")), "cite_key": _stringify(row.get("cite_key")), "tag": _stringify(row.get("bucket")) or "frontier"}
-            for _, row in queue_df[queue_df["stage"].astype(str) == "A080"].iterrows()
+            for _, row in queue_df[queue_df["stage"].astype(str) == "A150"].iterrows()
             if _stringify(row.get("uid_literature")) or _stringify(row.get("cite_key"))
         ]
         if a080_tag_rows:
-            replace_tags_for_namespace(content_db_path, namespace="queue/a080", tag_rows=a080_tag_rows, source_type="a070_downstream")
+            replace_tags_for_namespace(content_db_path, namespace="queue/a150", tag_rows=a080_tag_rows, source_type="a070_downstream")
         if a080_bucket_rows:
             replace_tags_for_namespace(content_db_path, namespace="bucket", tag_rows=a080_bucket_rows, source_type="a070_downstream")
 
@@ -2003,7 +2003,7 @@ def execute(config_path: Path) -> List[Path]:
             {
                 "uid_literature": uid_literature,
                 "cite_key": cite_key,
-                "source_stage": "A070",
+                "source_stage": "A130",
                 "pending_review_read": 0,
                 "in_review_read": 0,
                 "review_read_done": 1,
@@ -2024,10 +2024,10 @@ def execute(config_path: Path) -> List[Path]:
     analysis_layer_ready = bool(review_states) and (llm_generated_note_count > 0 or bool(evidence_writing_enabled))
     score = max(40.0, 95.0 - len(issues) * 6.0)
     gate_review = build_gate_review(
-        node_uid="A070",
+        node_uid="A130",
         node_name="综述研读与研究脉络",
         summary=(
-            f"已基于 A050/A065 资产回填 {len(review_states)} 篇综述标准笔记，并更新共识 {len(consensus_df)} 条、"
+            f"已基于 A060/A120 资产回填 {len(review_states)} 篇综述标准笔记，并更新共识 {len(consensus_df)} 条、"
             f"争议 {len(controversy_df)} 条、未来方向 {len(future_df)} 条。"
         ),
         checks=[
@@ -2068,11 +2068,11 @@ def execute(config_path: Path) -> List[Path]:
         append_aok_log_event(
             event_type="A070_REVIEW_SYNTHESIS_BUILT",
             project_root=workspace_root,
-            affair_code="A070",
+            affair_code="A130",
             handler_name="综述文献研读",
             agent_names=["ar_A070_综述文献研读事务智能体_v7"],
             skill_names=["ar_A070_综述文献研读_v7"],
-            reasoning_summary="严格复用 A050/A060 综述资产执行局部回填，并更新 G070 审计。",
+            reasoning_summary="严格复用 A060/A110 综述资产执行局部回填，并更新 G070 审计。",
             gate_review=gate_review,
             gate_review_path=gate_path,
             artifact_paths=[*artifacts, gate_path],

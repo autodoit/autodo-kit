@@ -100,7 +100,7 @@ def test_incremental_import_tool_should_merge_records_and_preserve_runtime_table
             {
                 "uid_literature": "lit-old-001",
                 "cite_key": "sciinfo-2024-scientometrics",
-                "source_stage": "A080",
+                "source_stage": "A150",
                 "pending_preprocess": 1,
                 "preprocessed": 0,
                 "pending_rough_read": 0,
@@ -342,7 +342,7 @@ def test_reading_state_table_should_roundtrip_and_ignore_queue_conflicts(tmp_pat
             {
                 "uid_literature": "lit-001",
                 "cite_key": "legacy-queue",
-                "stage": "A100",
+                "stage": "A170",
                 "queue_status": "pending",
                 "is_current": 1,
             }
@@ -354,7 +354,7 @@ def test_reading_state_table_should_roundtrip_and_ignore_queue_conflicts(tmp_pat
             {
                 "uid_literature": "lit-001",
                 "cite_key": "state-cite",
-                "source_stage": "A080",
+                "source_stage": "A150",
                 "pending_preprocess": 1,
                 "preprocessed": 0,
                 "pending_rough_read": 0,
@@ -364,7 +364,7 @@ def test_reading_state_table_should_roundtrip_and_ignore_queue_conflicts(tmp_pat
             {
                 "uid_literature": "lit-002",
                 "cite_key": "state-second",
-                "source_stage": "A080",
+                "source_stage": "A150",
                 "pending_preprocess": 0,
                 "preprocessed": 1,
                 "pending_rough_read": 1,
@@ -379,7 +379,7 @@ def test_reading_state_table_should_roundtrip_and_ignore_queue_conflicts(tmp_pat
             {
                 "uid_literature": "lit-001",
                 "cite_key": "state-cite-updated",
-                "source_stage": "A080",
+                "source_stage": "A150",
                 "pending_preprocess": 0,
                 "preprocessed": 1,
                 "pending_rough_read": 1,
@@ -840,7 +840,7 @@ def test_flow_state_should_sync_from_legacy_reading_and_review_states(tmp_path: 
                 "cite_key": "review-001",
                 "pending_reference_preprocess": 1,
                 "reference_preprocessed": 0,
-                "source_stage": "A050",
+                "source_stage": "A060",
                 "source_origin": "review_pool",
                 "recommended_reason": "综述核心",
                 "reading_objective": "梳理研究脉络",
@@ -855,7 +855,7 @@ def test_flow_state_should_sync_from_legacy_reading_and_review_states(tmp_path: 
                 "cite_key": "read-001",
                 "pending_rough_read": 1,
                 "preprocessed": 1,
-                "source_stage": "A075",
+                "source_stage": "A140",
                 "source_origin": "review_export",
                 "recommended_reason": "机制相关",
                 "theme_relation": "核心机制",

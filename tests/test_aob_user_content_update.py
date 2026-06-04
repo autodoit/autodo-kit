@@ -286,16 +286,17 @@ def test_sync_decision_should_choose_newer_side_without_vendor_suffix_duplicates
     assert all("-qwen" not in key and "-claude" not in key for key in final_entries)
 
 
-def test_prepare_sync_sandbox_should_copy_libs_and_targets_without_touching_original_targets(
+def test_prepare_sync_sandbox_should_mirror_real_paths_without_touching_original_targets(
     tmp_path: Path,
 ) -> None:
-    """沙盒准备阶段应复制 libs canonical 和目标目录，但不改原文件。"""
+    """沙盒准备阶段应按真实路径镜像复制目标目录，但不改原文件。"""
 
     repo_root = tmp_path / "repo"
     paths = _build_paths(repo_root)
     _write_canonical(paths)
 
-    target_root = tmp_path / ".claude"
+    home_dir = tmp_path / "home"
+    target_root = home_dir / ".claude"
     (target_root / "agents").mkdir(parents=True, exist_ok=True)
     (target_root / "agents" / "demo.md").write_text("old target\n", encoding="utf-8")
 
@@ -312,14 +313,23 @@ def test_prepare_sync_sandbox_should_copy_libs_and_targets_without_touching_orig
                 scope="user",
             )
         ],
+        home_dir=str(home_dir),
         sandbox_dir=str(sandbox_root),
     )
 
     assert sandbox_summary["enabled"] is True
+    assert sandbox_summary["layout_mode"] == "mirror_real_paths"
     assert Path(str(sandbox_summary["sandbox_root"])) == sandbox_root
     assert sandbox_paths.libs_root == sandbox_root / "libs"
     assert len(sandbox_targets) == 1
-    assert (sandbox_root / "targets" / "claude__structured_root" / "agents").exists()
+    # 真实 ~/.claude/agents 应被镜像到 <sandbox>/.claude/agents。
+    assert (sandbox_root / ".claude" / "agents" / "demo.md").exists()
+    assert sandbox_targets[0].target_path == (sandbox_root / ".claude").resolve()
+    # 映射表应记录真实路径 -> 沙盒路径。
+    mappings = sandbox_summary["path_mappings"]
+    assert len(mappings) == 1
+    assert Path(mappings[0]["real_path"]) == target_root
+    assert Path(mappings[0]["sandbox_path"]) == (sandbox_root / ".claude").resolve()
     assert (sandbox_root / "libs" / "aol" / "canonical.aol.json").exists()
     assert (target_root / "agents" / "demo.md").read_text(encoding="utf-8") == "old target\n"
 
@@ -365,7 +375,8 @@ def test_prepare_sync_sandbox_should_copy_project_root_and_point_to_carrier(
     paths = _build_paths(repo_root)
     _write_canonical(paths)
 
-    project_root = tmp_path / "demo-project"
+    home_dir = tmp_path / "home"
+    project_root = home_dir / "projects" / "demo-project"
     (project_root / ".claude" / "rules").mkdir(parents=True, exist_ok=True)
     (project_root / "CLAUDE.md").write_text("# project claude\n", encoding="utf-8")
     (project_root / ".claude" / "rules" / "policy.md").write_text("# policy\n", encoding="utf-8")
@@ -383,16 +394,20 @@ def test_prepare_sync_sandbox_should_copy_project_root_and_point_to_carrier(
                 scope="project",
             )
         ],
+        home_dir=str(home_dir),
         sandbox_dir=str(sandbox_root),
     )
 
+    mirror_project_root = (sandbox_root / "projects" / "demo-project").resolve()
     assert sandbox_summary["enabled"] is True
+    assert sandbox_summary["layout_mode"] == "mirror_real_paths"
     assert Path(str(sandbox_summary["sandbox_root"])) == sandbox_root
     assert sandbox_paths.libs_root == sandbox_root / "libs"
     assert len(sandbox_targets) == 1
-    assert sandbox_targets[0].target_path == sandbox_root / "targets" / "claude-project__structured_root" / ".claude"
-    assert (sandbox_root / "targets" / "claude-project__structured_root" / "CLAUDE.md").exists()
-    assert (sandbox_root / "targets" / "claude-project__structured_root" / ".claude" / "rules" / "policy.md").exists()
+    # 整个项目根被镜像复刻，carrier 指向镜像项目根下的 .claude。
+    assert sandbox_targets[0].target_path == (mirror_project_root / ".claude").resolve()
+    assert (mirror_project_root / "CLAUDE.md").exists()
+    assert (mirror_project_root / ".claude" / "rules" / "policy.md").exists()
     assert sandbox_summary["targets"][0]["container_root"] == str(project_root)
 
 
@@ -426,3 +441,62 @@ def test_backup_user_content_should_record_project_scope_sources(
     assert len(project_sources) == 1
     assert project_sources[0]["scope"] == "project"
     assert Path(project_sources[0]["source_path"]) == project_root
+
+
+def test_update_should_record_undo_journal_and_be_reversible(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """一次真实同步应产出撤销账本，且撤销脚本能精确、幂等地回滚发布结果。"""
+
+    from autodokit.tools.atomic.aob_runtime.aob_sync_undo import 撤销同步
+
+    repo_root = tmp_path / "repo"
+    paths = _build_paths(repo_root)
+    home_dir = _prepare_fake_home(tmp_path, monkeypatch)
+
+    source_root = home_dir / ".claude"
+    (source_root / "agents").mkdir(parents=True, exist_ok=True)
+    (source_root / "agents" / "demo.agent.md").write_text("demo agent\n", encoding="utf-8")
+
+    target_root = tmp_path / ".copilot"
+
+    stats = 更新用户级内容(
+        paths,
+        target_paths=[str(source_root), str(target_root)],
+        home_dir=str(home_dir),
+        engine_vendors=[],
+        ide_vendors=[],
+        include_missing=False,
+        dry_run=False,
+        sync_items_after=False,
+        undo_journal_dir=str(tmp_path / "undo"),
+    )
+
+    # 同步应产出撤销账本。
+    undo_summary = stats.get("undo_journal") or {}
+    assert undo_summary.get("enabled") is True
+    journal_path = Path(str(undo_summary.get("journal_path")))
+    assert journal_path.exists()
+    assert undo_summary.get("operation_count", 0) >= 1
+
+    # 同步应该在 .copilot 目标里产生了文件。
+    published = list(target_root.rglob("*"))
+    published_files = [item for item in published if item.is_file()]
+    assert published_files, "同步未在目标目录产生任何文件"
+
+    # 撤销应能精确回滚。
+    result = 撤销同步(journal_file=journal_path, dry_run=False)
+    assert result["status"] == "ok"
+    assert result["errors"] == []
+
+    # 撤销后，目标里这次同步新增的文件应被移除。
+    remaining_files = [item for item in target_root.rglob("*") if item.is_file()]
+    assert not remaining_files, f"撤销后仍残留同步文件：{remaining_files}"
+
+    # 撤销应幂等：再次执行不再有破坏性动作。
+    second = 撤销同步(journal_file=journal_path, dry_run=False)
+    assert second["status"] == "ok"
+    assert second["removed_create"] == 0
+    assert second["restored_overwrite"] == 0
+    assert second["restored_delete"] == 0

@@ -233,7 +233,7 @@ def persist_review_candidate_views(
     run_uid: str = "",
     drop_legacy_tables: bool = True,
 ) -> Path:
-    """把 A050 视图与 gate 审查结果写入 content.db。"""
+    """把 A060 视图与 gate 审查结果写入 content.db。"""
 
     if db_path.suffix.lower() != ".db":
         raise ValueError(f"review views 只能写入 sqlite 数据库: {db_path}")

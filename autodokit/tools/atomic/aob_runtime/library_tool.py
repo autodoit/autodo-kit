@@ -26,6 +26,14 @@ from pathlib import Path
 from typing import Any
 
 try:
+    from .aob_sync_undo import 创建撤销账本
+except Exception:  # pragma: no cover
+    try:
+        from aob_sync_undo import 创建撤销账本
+    except Exception:  # pragma: no cover
+        创建撤销账本 = None
+
+try:
     from .aoc_tool import (
         AOL定义,
         从libs构建_aol,
@@ -278,6 +286,10 @@ def 序列化标签单元格(tags: list[str]) -> str:
 用户内容同步注册表缺失哈希 = "__ABSENT__"
 用户内容同步注册表表名 = "user_content_sync_registry"
 用户内容同步目标文件表名 = "user_content_sync_target_files"
+
+同步撤销会话表名 = "sync_undo_sessions"
+同步撤销变更表名 = "sync_undo_file_changes"
+同步撤销数据库文件名 = "sync_undo.sqlite3"
 
 默认AOC支持引擎 = {"opencode", "claude", "copilot", "gemini", "codex"}
 
@@ -544,6 +556,43 @@ def 解析唯一沙盒根目录(*, home_dir: str = "", sandbox_dir: str) -> Path
             index += 1
         sandbox_root = candidate
     return sandbox_root
+
+
+def 计算沙盒镜像相对路径(*, real_path: Path, home_dir: str = "") -> Path:
+    """把真实内容路径映射为沙盒内的镜像相对路径。
+
+    映射目标：让沙盒目录结构尽量复刻真实结构，便于“假装是各个同步文件夹”。
+    例如：
+    - 用户级 `C:/Users/Ethan/.copilot/agents` -> `.copilot/agents`
+    - 用户 prompts `~/AppData/Roaming/Code/User/prompts` -> `AppData/Roaming/Code/User/prompts`
+    - 主目录之外的绝对路径，按盘符或根做去敏后的镜像，避免不同来源相互覆盖。
+
+    Args:
+        real_path: 真实内容路径（目标或来源容器根）。
+        home_dir: 可选用户主目录，用于解析用户级镜像基准。
+
+    Returns:
+        Path: 相对沙盒根目录的镜像相对路径。
+    """
+
+    resolved = real_path.expanduser().resolve()
+    home = 用户主目录(home_dir)
+
+    if resolved == home:
+        return Path(".")
+    if 路径在目录内(resolved, home):
+        return Path(resolved.relative_to(home))
+
+    # 主目录之外：按盘符/根做去敏镜像，保留原始目录层级。
+    drive = resolved.drive  # 形如 "C:"
+    if drive:
+        drive_token = f"_drive_{drive.rstrip(':').lower()}"
+        tail = resolved.relative_to(Path(drive + "\\")) if resolved.is_absolute() else Path(resolved.name)
+        return Path(drive_token) / tail
+
+    anchor = resolved.anchor or "/"
+    tail = resolved.relative_to(anchor) if resolved.is_absolute() else Path(resolved.name)
+    return Path("_root") / tail
 
 
 def 构建沙盒路径配置(*, sandbox_root: Path) -> 路径配置:
@@ -2089,6 +2138,360 @@ def 写入用户内容同步数据库(
     }
 
 
+def 同步撤销数据库路径(paths: 路径配置) -> Path:
+    """获取同步撤销数据库路径。"""
+
+    return paths.db_root / 同步撤销数据库文件名
+
+
+def 初始化同步撤销数据库(db_path: Path) -> sqlite3.Connection:
+    """初始化同步撤销数据库并确保表结构存在。
+
+    Args:
+        db_path: 数据库文件路径。
+
+    Returns:
+        sqlite3.Connection: 已就绪的数据库连接。
+    """
+
+    db_path.parent.mkdir(parents=True, exist_ok=True)
+    conn = sqlite3.connect(str(db_path))
+    conn.executescript(
+        f"""
+        CREATE TABLE IF NOT EXISTS {同步撤销会话表名} (
+            session_id TEXT PRIMARY KEY,
+            started_at REAL NOT NULL,
+            completed_at REAL,
+            sync_type TEXT NOT NULL,
+            dry_run INTEGER NOT NULL DEFAULT 0,
+            status TEXT NOT NULL DEFAULT 'pending',
+            metadata_json TEXT
+        );
+
+        CREATE TABLE IF NOT EXISTS {同步撤销变更表名} (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            session_id TEXT NOT NULL REFERENCES {同步撤销会话表名}(session_id),
+            change_type TEXT NOT NULL,
+            file_path TEXT NOT NULL,
+            target_label TEXT NOT NULL DEFAULT '',
+            backup_content BLOB,
+            post_content_hash TEXT NOT NULL DEFAULT '',
+            rolled_back INTEGER NOT NULL DEFAULT 0,
+            created_at REAL NOT NULL
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_undo_session
+            ON {同步撤销变更表名}(session_id, rolled_back);
+        """
+    )
+    conn.commit()
+    return conn
+
+
+def 记录同步撤销会话开始(
+    conn: sqlite3.Connection,
+    *,
+    session_id: str,
+    sync_type: str,
+    dry_run: bool,
+    metadata: dict[str, Any] | None = None,
+) -> None:
+    """记录同步撤销会话开始。"""
+
+    now_ts = float(time.time())
+    conn.execute(
+        f"""
+        INSERT OR REPLACE INTO {同步撤销会话表名}
+        (session_id, started_at, sync_type, dry_run, status, metadata_json)
+        VALUES (?, ?, ?, ?, 'pending', ?)
+        """,
+        (session_id, now_ts, sync_type, 1 if dry_run else 0, json.dumps(metadata or {}, ensure_ascii=False)),
+    )
+    conn.commit()
+
+
+def 记录撤销文件变更(
+    conn: sqlite3.Connection,
+    *,
+    session_id: str,
+    change_type: str,
+    file_path: str,
+    target_label: str,
+    backup_content: bytes | None = None,
+    post_content_hash: str = "",
+) -> None:
+    """记录单条文件变更用于撤销。
+
+    Args:
+        conn: 数据库连接。
+        session_id: 会话 ID。
+        change_type: 变更类型（added/modified/deleted）。
+        file_path: 文件绝对路径。
+        target_label: 目标标签。
+        backup_content: 修改或删除前的原始文件内容。
+        post_content_hash: 操作后内容的 SHA256。
+    """
+
+    now_ts = float(time.time())
+    conn.execute(
+        f"""
+        INSERT INTO {同步撤销变更表名}
+        (session_id, change_type, file_path, target_label, backup_content, post_content_hash, rolled_back, created_at)
+        VALUES (?, ?, ?, ?, ?, ?, 0, ?)
+        """,
+        (session_id, change_type, file_path, target_label, backup_content, post_content_hash, now_ts),
+    )
+
+
+def 记录同步撤销会话完成(conn: sqlite3.Connection, *, session_id: str, status: str = "completed") -> None:
+    """标记同步撤销会话完成。"""
+
+    now_ts = float(time.time())
+    conn.execute(
+        f"UPDATE {同步撤销会话表名} SET completed_at=?, status=? WHERE session_id=?",
+        (now_ts, status, session_id),
+    )
+    conn.commit()
+
+
+def 计算文件_sha256(file_path: Path) -> str:
+    """计算文件 SHA256 摘要。"""
+
+    if not file_path.exists() or not file_path.is_file():
+        return ""
+    h = hashlib.sha256()
+    with open(file_path, "rb") as f:
+        for chunk in iter(lambda: f.read(65536), b""):
+            h.update(chunk)
+    return h.hexdigest()
+
+
+def 读取文件原始内容(file_path: Path) -> bytes | None:
+    """读取文件原始字节内容。"""
+
+    if not file_path.exists() or not file_path.is_file():
+        return None
+    return file_path.read_bytes()
+
+
+def 执行同步撤销(
+    db_path: Path,
+    *,
+    session_id: str,
+    dry_run: bool = True,
+) -> dict[str, Any]:
+    """执行指定会话的同步撤销（幂等）。
+
+    撤销逻辑：
+    - added 文件 -> 删除（仅当内容 hash 匹配时）
+    - modified 文件 -> 用 backup_content 恢复
+    - deleted 文件 -> 用 backup_content 重建
+
+    Args:
+        db_path: 撤销数据库路径。
+        session_id: 要撤销的会话 ID。
+        dry_run: 是否仅预览不执行。
+
+    Returns:
+        dict[str, Any]: 撤销结果摘要。
+    """
+
+    if not db_path.exists():
+        return {"status": "FAIL", "error": f"撤销数据库不存在：{db_path}"}
+
+    with sqlite3.connect(str(db_path)) as conn:
+        session_row = conn.execute(
+            f"SELECT session_id, status, dry_run, sync_type FROM {同步撤销会话表名} WHERE session_id=?",
+            (session_id,),
+        ).fetchone()
+        if session_row is None:
+            return {"status": "FAIL", "error": f"会话不存在：{session_id}"}
+
+        session_status = str(session_row[1])
+        if session_status == "rolled_back":
+            return {"status": "PASS", "message": f"会话 {session_id} 已经撤销过，幂等跳过", "idempotent": True}
+
+        changes = conn.execute(
+            f"""SELECT id, change_type, file_path, target_label, backup_content, post_content_hash, rolled_back
+            FROM {同步撤销变更表名}
+            WHERE session_id=? AND rolled_back=0
+            ORDER BY id DESC""",
+            (session_id,),
+        ).fetchall()
+
+        result_summary = {
+            "session_id": session_id,
+            "dry_run": dry_run,
+            "total_pending": len(changes),
+            "restored": 0,
+            "deleted": 0,
+            "skipped": 0,
+            "errors": [],
+            "changes": [],
+        }
+
+        for row in changes:
+            row_id, change_type, file_path, target_label, backup_content, post_hash, rolled_back = row
+            file_obj = Path(file_path)
+            change_record = {
+                "id": row_id,
+                "change_type": change_type,
+                "file_path": file_path,
+                "target_label": target_label,
+                "action": "",
+            }
+
+            if change_type == "added":
+                if file_obj.exists() and file_obj.is_file():
+                    current_hash = 计算文件_sha256(file_obj)
+                    if post_hash and current_hash != post_hash:
+                        change_record["action"] = "skipped_hash_mismatch"
+                        result_summary["skipped"] += 1
+                        result_summary["errors"].append(f"文件内容已变更，跳过删除：{file_path}")
+                    else:
+                        if not dry_run:
+                            file_obj.unlink()
+                        change_record["action"] = "deleted" if not dry_run else "would_delete"
+                        result_summary["deleted"] += 1
+                else:
+                    change_record["action"] = "skipped_not_found"
+                    result_summary["skipped"] += 1
+
+            elif change_type == "modified":
+                if backup_content is not None:
+                    if not dry_run:
+                        file_obj.parent.mkdir(parents=True, exist_ok=True)
+                        file_obj.write_bytes(backup_content)
+                    change_record["action"] = "restored" if not dry_run else "would_restore"
+                    result_summary["restored"] += 1
+                else:
+                    change_record["action"] = "skipped_no_backup"
+                    result_summary["errors"].append(f"缺少备份内容，无法恢复：{file_path}")
+                    result_summary["skipped"] += 1
+
+            elif change_type == "deleted":
+                if backup_content is not None:
+                    if not dry_run:
+                        file_obj.parent.mkdir(parents=True, exist_ok=True)
+                        file_obj.write_bytes(backup_content)
+                    change_record["action"] = "restored" if not dry_run else "would_restore"
+                    result_summary["restored"] += 1
+                else:
+                    change_record["action"] = "skipped_no_backup"
+                    result_summary["errors"].append(f"缺少备份内容，无法重建：{file_path}")
+                    result_summary["skipped"] += 1
+
+            result_summary["changes"].append(change_record)
+            if not dry_run:
+                conn.execute(
+                    f"UPDATE {同步撤销变更表名} SET rolled_back=1 WHERE id=?",
+                    (row_id,),
+                )
+
+        if not dry_run:
+            记录同步撤销会话完成(conn, session_id=session_id, status="rolled_back")
+            result_summary["status"] = "PASS"
+        else:
+            result_summary["status"] = "DRY_RUN"
+
+    return result_summary
+
+
+# 旧同步 bug 污染产生的 vendor 后缀模式（不应出现在 logical key 中）
+_旧同步污染后缀: tuple[str, ...] = (
+    "-claude", "-codex", "-copilot", "-cursor",
+    "-gemini", "-lingma", "-qoder", "-qwen",
+    "-opencode",
+)
+
+_旧同步数字后缀重复 = re.compile(r"^(.+)-(\d+)$")
+
+
+def 是否旧同步污染key(
+    logical_key: str,
+    *,
+    all_known_keys: set[str] | None = None,
+    all_entries: dict[str, dict[str, Any]] | None = None,
+) -> bool:
+    """判断 logical key 是否为旧同步 bug 产生的污染 key。
+
+    污染类型：
+    1. vendor 后缀：agents::agent-xxx-claude
+    2. 数字后缀重复：agents::agent-xxx-2（base key 存在且内容相同时）
+    """
+
+    parts = logical_key.split("::", 1)
+    if len(parts) < 2:
+        return False
+    prefix = parts[0]
+    key_id = parts[1]
+
+    # vendor 后缀
+    if any(key_id.endswith(suffix) for suffix in _旧同步污染后缀):
+        return True
+
+    # 数字后缀重复：仅当 base key 存在且内容相同时才算污染
+    if all_known_keys is not None:
+        m = _旧同步数字后缀重复.match(key_id)
+        if m:
+            base_id = m.group(1)
+            num = int(m.group(2))
+            if num >= 2:
+                base_key = f"{prefix}::{base_id}"
+                if base_key in all_known_keys:
+                    # 内容验证：仅当内容与 base 相同时才过滤
+                    if all_entries is not None:
+                        dup_content = str(all_entries.get(logical_key, {}).get("content", ""))
+                        base_content = str(all_entries.get(base_key, {}).get("content", ""))
+                        if dup_content == base_content:
+                            return True
+                    else:
+                        return True
+
+    return False
+
+
+def 过滤旧同步污染条目(
+    side_entries: dict[str, dict[str, dict[str, Any]]],
+) -> tuple[dict[str, dict[str, dict[str, Any]]], dict[str, int]]:
+    """过滤所有侧中的旧同步污染条目。
+
+    污染类型：
+    - vendor 后缀：agent-xxx-claude（不应存在）
+    - 数字后缀重复：agent-xxx-2 / agent-xxx-3（旧同步冲突解决产物）
+
+    Returns:
+        (cleaned_entries, filter_stats)
+    """
+
+    # 先收集所有已知 key 和 entries（用于检测数字后缀重复）
+    all_keys: set[str] = set()
+    all_entries_merged: dict[str, dict[str, Any]] = {}
+    for entries in side_entries.values():
+        all_keys.update(entries.keys())
+        for k, v in entries.items():
+            if k not in all_entries_merged:
+                all_entries_merged[k] = v
+
+    cleaned_entries: dict[str, dict[str, dict[str, Any]]] = {}
+    total_removed = 0
+    per_side: dict[str, int] = {}
+    for side_id, entries in side_entries.items():
+        cleaned: dict[str, dict[str, Any]] = {}
+        removed = 0
+        for key, entry in entries.items():
+            if 是否旧同步污染key(key, all_known_keys=all_keys, all_entries=all_entries_merged):
+                removed += 1
+            else:
+                cleaned[key] = entry
+        cleaned_entries[side_id] = cleaned
+        if removed > 0:
+            per_side[side_id] = removed
+        total_removed += removed
+
+    return cleaned_entries, {"removed": total_removed, "per_side": per_side}
+
+
 def 计算一键更新决策(
     *,
     side_entries: dict[str, dict[str, dict[str, Any]]],
@@ -2113,10 +2516,10 @@ def 计算一键更新决策(
     fallback_count = 0
 
     for logical_key in sorted(all_keys):
-        winner_side = ""
-        winner_changed_at = -1.0
-        winner_exists = False
         key_has_registry = False
+        # 第一轮：计算每个 side 的 changed_at，并区分 present / absent。
+        present_candidates: list[tuple[str, float]] = []   # (side_id, changed_at)
+        absent_candidates: list[tuple[str, float]] = []    # (side_id, changed_at)
 
         for side_id in side_priority:
             current_entry = side_entries.get(side_id, {}).get(logical_key)
@@ -2131,15 +2534,23 @@ def 计算一键更新决策(
             previous = previous_registry.get((logical_key, side_id))
             if previous is not None:
                 key_has_registry = True
+
+            # 判断该 side 是否曾经真实拥有过此 key（区分"天然缺席"与"已删除"）。
+            previously_existed = previous is not None and int(previous.get("exists_flag", 0)) == 1
+
             if previous and int(previous.get("exists_flag", 0)) == exists_flag and str(previous.get("value_hash") or "") == value_hash:
                 changed_at = float(previous.get("changed_at_epoch", 0.0) or 0.0)
                 registry_hit_count += 1
-            else:
-                if observe_at > 0:
-                    changed_at = float(observe_at)
-                elif exists_flag == 0 and previous is None:
-                    # 首轮同步中“天然缺席”的 side 不应压过真实存在内容。
+                # 即使注册表命中，若供应商始终未拥有此 key，也不应参与胜出。
+                if exists_flag == 0 and not previously_existed:
                     changed_at = 0.0
+            else:
+                if exists_flag == 0 and not previously_existed:
+                    # 供应商当前缺席且从未拥有过此 key：不应参与胜出比较，
+                    # 避免目录 mtime 或脏注册表冒充"变更信号"压过真实存在内容。
+                    changed_at = 0.0
+                elif observe_at > 0:
+                    changed_at = float(observe_at)
                 else:
                     # 对有历史基线的缺席或无观测新增，回退为当前决策时刻。
                     changed_at = decision_now
@@ -2147,17 +2558,43 @@ def 计算一键更新决策(
             updated_at = max(observe_at, decision_now)
             registry_rows.append((logical_key, side_id, exists_flag, value_hash, changed_at, updated_at))
 
-            if changed_at > winner_changed_at:
-                winner_side = side_id
-                winner_changed_at = changed_at
-                winner_exists = bool(exists_flag)
-            elif changed_at == winner_changed_at and winner_side and ranked.get(side_id, 9999) < ranked.get(winner_side, 9999):
-                winner_side = side_id
-                winner_changed_at = changed_at
-                winner_exists = bool(exists_flag)
+            if exists_flag == 1:
+                present_candidates.append((side_id, changed_at))
+            else:
+                absent_candidates.append((side_id, changed_at))
 
         if not key_has_registry:
             fallback_count += 1
+
+        # 第二轮：选出胜出 side。
+        # 核心规则：当前存在（presence）永远优先于当前缺席（absence）。
+        # 只要有任何 side 当前拥有此 key，就在 present 中选最新的；
+        # 仅当所有 side 都缺席时（全部删除），才在 absent 中选最新的。
+        winner_side = ""
+        winner_changed_at = -1.0
+        winner_exists = False
+
+        if present_candidates:
+            for side_id, changed_at in present_candidates:
+                if changed_at > winner_changed_at:
+                    winner_side = side_id
+                    winner_changed_at = changed_at
+                    winner_exists = True
+                elif changed_at == winner_changed_at and ranked.get(side_id, 9999) < ranked.get(winner_side, 9999):
+                    winner_side = side_id
+                    winner_changed_at = changed_at
+                    winner_exists = True
+        else:
+            # 所有 side 均缺席：选最新的缺席信号（用于传播真正删除）。
+            for side_id, changed_at in absent_candidates:
+                if changed_at > winner_changed_at:
+                    winner_side = side_id
+                    winner_changed_at = changed_at
+                    winner_exists = False
+                elif changed_at == winner_changed_at and ranked.get(side_id, 9999) < ranked.get(winner_side, 9999):
+                    winner_side = side_id
+                    winner_changed_at = changed_at
+                    winner_exists = False
 
         if winner_side and winner_exists:
             winner_entry = side_entries.get(winner_side, {}).get(logical_key)
@@ -2246,7 +2683,7 @@ def 清理空目录到根(*, start_dir: Path, root_dir: Path) -> None:
             break
 
 
-def 删除目标过期托管文件(*, target: 发布目标, stale_files: set[str], dry_run: bool, stats: dict[str, Any]) -> None:
+def 删除目标过期托管文件(*, target: 发布目标, stale_files: set[str], dry_run: bool, stats: dict[str, Any], journal: Any = None) -> None:
     """删除目标中过期托管文件。"""
 
     for relative_path in sorted({规范路径(item) for item in stale_files if 规范路径(item)}):
@@ -2257,9 +2694,69 @@ def 删除目标过期托管文件(*, target: 发布目标, stale_files: set[str
         stats["touched_paths"].append(str(target_file))
         if dry_run:
             continue
+        if journal is not None:
+            journal.记录将删除(target_file)
         target_file.unlink()
         if 路径在目录内(target_file.parent, target.target_path):
             清理空目录到根(start_dir=target_file.parent, root_dir=target.target_path)
+
+
+# 托管目录模式：每个目录对应的文件 glob 模式
+_托管目录扫描模式: dict[str, list[str]] = {
+    "agents": ["*.md", "*.agent.md"],
+    "skills": ["**/SKILL.md", "*.md"],
+    "rules": ["*.md"],
+    "commands": ["*.md"],
+    "hooks": ["*.md", "*.json", "*.yaml", "*.yml"],
+}
+
+
+def 清理目标未跟踪文件(
+    *,
+    target: 发布目标,
+    managed_files: set[str],
+    dry_run: bool,
+    stats: dict[str, Any],
+    journal: Any = None,
+) -> int:
+    """清理目标目录中不在 managed_files 中的未跟踪文件。
+
+    仅扫描已知的托管目录（agents/, skills/, rules/ 等），
+    删除不在编译输出中的残留文件。
+
+    Returns:
+        删除的文件数。
+    """
+
+    deleted = 0
+    target_root = target.target_path.resolve()
+    if not target_root.exists():
+        return 0
+
+    for subdir_name in _托管目录扫描模式:
+        subdir = target_root / subdir_name
+        if not subdir.exists() or not subdir.is_dir():
+            continue
+        for file_path in sorted(subdir.rglob("*")):
+            if not file_path.is_file():
+                continue
+            rel = 规范路径(str(file_path.relative_to(target_root)))
+            if rel in managed_files:
+                continue
+            # 该文件不在编译输出中，删除
+            deleted += 1
+            stats["deleted"] += 1
+            stats.setdefault("cleanup_unknown_files", []).append(rel)
+            stats["touched_paths"].append(str(file_path))
+            if dry_run:
+                continue
+            if journal is not None:
+                journal.记录将删除(file_path)
+            file_path.unlink()
+            if 路径在目录内(file_path.parent, target_root):
+                清理空目录到根(start_dir=file_path.parent, root_dir=target_root)
+
+    return deleted
 
 
 def 发布到单个目标并同步删除(
@@ -2269,6 +2766,8 @@ def 发布到单个目标并同步删除(
     dry_run: bool,
     warnings: list[str],
     previous_managed_files: set[str],
+    journal: Any = None,
+    cleanup_unknown: bool = False,
 ) -> tuple[dict[str, Any], set[str]]:
     """发布到单个目标并同步删除过期托管文件。"""
 
@@ -2297,6 +2796,7 @@ def 发布到单个目标并同步删除(
                 target=target,
                 dry_run=dry_run,
                 stats=stats,
+                journal=journal,
             )
             managed_files = 收集提示词目标托管文件(compile_workspace_root)
         else:
@@ -2305,6 +2805,7 @@ def 发布到单个目标并同步删除(
                 target=target,
                 dry_run=dry_run,
                 stats=stats,
+                journal=journal,
             )
             managed_files = 收集结构化目标托管文件(compile_workspace_root, target=target)
     finally:
@@ -2312,7 +2813,9 @@ def 发布到单个目标并同步删除(
 
     stale_files = {item for item in previous_managed_files if item and item not in managed_files}
     stats["stale_managed_file_count"] = len(stale_files)
-    删除目标过期托管文件(target=target, stale_files=stale_files, dry_run=dry_run, stats=stats)
+    删除目标过期托管文件(target=target, stale_files=stale_files, dry_run=dry_run, stats=stats, journal=journal)
+    if cleanup_unknown and target.layout != "prompt_root":
+        清理目标未跟踪文件(target=target, managed_files=managed_files, dry_run=dry_run, stats=stats, journal=journal)
     stats["managed_file_count"] = len(managed_files)
     return stats, managed_files
 
@@ -2325,9 +2828,18 @@ def 文件内容一致(source_file: Path, target_file: Path) -> bool:
     return filecmp.cmp(str(source_file), str(target_file), shallow=False)
 
 
-def 复制聚合文件(*, source_file: Path, target_file: Path, dry_run: bool, stats: dict[str, Any]) -> None:
-    """按“较新优先”策略复制单个聚合文件。"""
+def 复制聚合文件(*, source_file: Path, target_file: Path, dry_run: bool, stats: dict[str, Any], journal: Any = None) -> None:
+    """按“较新优先”策略复制单个聚合文件。
 
+    Args:
+        source_file: 来源文件。
+        target_file: 目标文件。
+        dry_run: 是否预演。
+        stats: 发布统计累加器。
+        journal: 可选撤销账本；存在时在覆盖/新增前后登记撤销操作。
+    """
+
+    is_overwrite = False
     if target_file.exists():
         if target_file.is_dir():
             stats["errors"].append(f"目标路径为目录，无法覆盖文件：{target_file}")
@@ -2339,17 +2851,28 @@ def 复制聚合文件(*, source_file: Path, target_file: Path, dry_run: bool, s
             stats["skipped_target_newer"] += 1
             return
         stats["updated"] += 1
+        is_overwrite = True
     else:
         stats["added"] += 1
 
     stats["touched_paths"].append(str(target_file))
     if dry_run:
         return
+
+    if journal is not None:
+        if is_overwrite:
+            journal.记录将覆盖(target_file)
+        else:
+            journal.记录将创建(target_file)
+
     target_file.parent.mkdir(parents=True, exist_ok=True)
     shutil.copy2(source_file, target_file)
 
+    if journal is not None:
+        journal.标记同步后哈希(target_file)
 
-def 复制聚合条目(*, source_path: Path, target_path: Path, dry_run: bool, stats: dict[str, Any]) -> None:
+
+def 复制聚合条目(*, source_path: Path, target_path: Path, dry_run: bool, stats: dict[str, Any], journal: Any = None) -> None:
     """复制单个聚合条目，支持文件或目录。"""
 
     if source_path.is_dir():
@@ -2362,10 +2885,11 @@ def 复制聚合条目(*, source_path: Path, target_path: Path, dry_run: bool, s
                 target_file=target_path / relative,
                 dry_run=dry_run,
                 stats=stats,
+                journal=journal,
             )
         return
 
-    复制聚合文件(source_file=source_path, target_file=target_path, dry_run=dry_run, stats=stats)
+    复制聚合文件(source_file=source_path, target_file=target_path, dry_run=dry_run, stats=stats, journal=journal)
 
 
 def 是否提示词发布文件(file_path: Path, *, content_type: str) -> bool:
@@ -2683,7 +3207,7 @@ def 合并来源AOL(paths: 路径配置, *, aol_entries: list[tuple[聚合来源
     return merged_aol, warnings
 
 
-def 发布编译结果到结构化目录(*, compile_workspace_root: Path, target: 发布目标, dry_run: bool, stats: dict[str, Any]) -> None:
+def 发布编译结果到结构化目录(*, compile_workspace_root: Path, target: 发布目标, dry_run: bool, stats: dict[str, Any], journal: Any = None) -> None:
     """把 AOC 编译结果发布到结构化目标目录。"""
 
     for source_file in sorted(path for path in compile_workspace_root.rglob("*") if path.is_file()):
@@ -2693,6 +3217,7 @@ def 发布编译结果到结构化目录(*, compile_workspace_root: Path, target
             target_file=target.target_path / relative,
             dry_run=dry_run,
             stats=stats,
+            journal=journal,
         )
 
     for root_name in ["CLAUDE.md", "AGENTS.md", "GEMINI.md", "opencode.json"]:
@@ -2708,10 +3233,11 @@ def 发布编译结果到结构化目录(*, compile_workspace_root: Path, target
             target_file=target_file,
             dry_run=dry_run,
             stats=stats,
+            journal=journal,
         )
 
 
-def 发布编译结果到提示词目录(*, compile_workspace_root: Path, target: 发布目标, dry_run: bool, stats: dict[str, Any]) -> None:
+def 发布编译结果到提示词目录(*, compile_workspace_root: Path, target: 发布目标, dry_run: bool, stats: dict[str, Any], journal: Any = None) -> None:
     """把 AOC 编译结果中的 prompts/instructions 投影到 prompts 根目录。"""
 
     for content_type in ["prompts", "instructions"]:
@@ -2727,6 +3253,7 @@ def 发布编译结果到提示词目录(*, compile_workspace_root: Path, target
                 target_file=target.target_path / relative,
                 dry_run=dry_run,
                 stats=stats,
+                journal=journal,
             )
 
 
@@ -2916,6 +3443,24 @@ def 复制到备份快照(*, source: Path, destination: Path) -> None:
         shutil.copy2(source, destination)
         return
     shutil.copytree(source, destination)
+
+
+def 复制到沙盒镜像(*, source: Path, destination: Path) -> None:
+    """把来源复制到沙盒镜像路径，允许目标目录已存在（合并复制）。
+
+    与 `复制到备份快照` 不同，本函数在目标已存在时进行合并复制，
+    以支持多个共享同一镜像树的目标（如同一项目根下的多个 carrier 根）。
+
+    Args:
+        source: 来源文件或目录。
+        destination: 沙盒镜像目标路径。
+    """
+
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    if source.is_file():
+        shutil.copy2(source, destination)
+        return
+    shutil.copytree(source, destination, dirs_exist_ok=True)
 
 
 def 备份用户级内容(
@@ -3192,17 +3737,23 @@ def 准备用户级内容同步沙盒(
 
     sandbox_targets: list[发布目标] = []
     sandbox_target_summaries: list[dict[str, Any]] = []
+    path_mappings: list[dict[str, str]] = []
     for target in targets:
-        sandbox_target_root = sandbox_root / "targets" / f"{target.target_label}__{target.layout}"
         if target.scope == "project":
-            source_root = target.target_path.parent
-            if source_root.exists():
-                复制到备份快照(source=source_root, destination=sandbox_target_root)
-            sandbox_target_path = sandbox_target_root / target.target_path.name
+            # project 范围：复制整个项目根，并在沙盒里复刻项目根 -> carrier 根的层级。
+            container_root = target.target_path.parent
+            mirror_rel = 计算沙盒镜像相对路径(real_path=container_root, home_dir=home_dir)
+            sandbox_container_root = (sandbox_root / mirror_rel).resolve()
+            if container_root.exists():
+                复制到沙盒镜像(source=container_root, destination=sandbox_container_root)
+            sandbox_target_path = sandbox_container_root / target.target_path.name
         else:
-            sandbox_target_path = sandbox_target_root
+            container_root = target.target_path
+            mirror_rel = 计算沙盒镜像相对路径(real_path=target.target_path, home_dir=home_dir)
+            sandbox_target_path = (sandbox_root / mirror_rel).resolve()
             if target.target_path.exists():
-                复制到备份快照(source=target.target_path, destination=sandbox_target_path)
+                复制到沙盒镜像(source=target.target_path, destination=sandbox_target_path)
+
         sandbox_targets.append(
             发布目标(
                 target_path=sandbox_target_path,
@@ -3219,16 +3770,39 @@ def 准备用户级内容同步沙盒(
                 "layout": target.layout,
                 "scope": target.scope,
                 "original_path": str(target.target_path),
-                "container_root": str(target.target_path.parent if target.scope == "project" else target.target_path),
+                "container_root": str(container_root),
                 "sandbox_path": str(sandbox_target_path),
                 "exists_in_source": bool(target.target_path.exists()),
             }
         )
+        path_mappings.append(
+            {
+                "role": "target",
+                "label": target.target_label,
+                "scope": target.scope,
+                "real_path": str(target.target_path),
+                "sandbox_path": str(sandbox_target_path),
+            }
+        )
+
+    # 落盘 path_mapping.json
+    mapping_payload = {
+        "sandbox_root": str(sandbox_root),
+        "home_dir": str(用户主目录(home_dir)),
+        "layout_mode": "mirror_real_paths",
+        "mappings": path_mappings,
+    }
+    mapping_path = sandbox_root / "path_mapping.json"
+    mapping_path.parent.mkdir(parents=True, exist_ok=True)
+    mapping_path.write_text(json.dumps(mapping_payload, ensure_ascii=False, indent=2), encoding="utf-8")
 
     return sandbox_paths, sandbox_targets, {
         "enabled": True,
         "sandbox_root": str(sandbox_root),
+        "layout_mode": "mirror_real_paths",
         "targets": sandbox_target_summaries,
+        "path_mappings": path_mappings,
+        "path_mapping_file": str(mapping_path),
     }
 
 
@@ -3247,21 +3821,20 @@ def 准备用户级内容聚合沙盒(
 
     sandbox_sources: list[聚合来源] = []
     sandbox_source_summaries: list[dict[str, Any]] = []
+    path_mappings: list[dict[str, str]] = []
     for source in sources:
-        sandbox_source_root = sandbox_root / "sources" / f"{source.source_label}__{source.layout}"
         if source.scope == "project":
             source_container_root = source.source_path.parent
+            mirror_rel = 计算沙盒镜像相对路径(real_path=source_container_root, home_dir=home_dir)
+            sandbox_container_root = (sandbox_root / mirror_rel).resolve()
             if source_container_root.exists():
-                复制到备份快照(source=source_container_root, destination=sandbox_source_root)
-            sandbox_source_path = sandbox_source_root / source.source_path.name
-        elif source.source_path.is_file():
-            sandbox_source_path = sandbox_source_root / source.source_path.name
-            if source.source_path.exists():
-                复制到备份快照(source=source.source_path, destination=sandbox_source_path)
+                复制到沙盒镜像(source=source_container_root, destination=sandbox_container_root)
+            sandbox_source_path = sandbox_container_root / source.source_path.name
         else:
-            sandbox_source_path = sandbox_source_root
+            mirror_rel = 计算沙盒镜像相对路径(real_path=source.source_path, home_dir=home_dir)
+            sandbox_source_path = (sandbox_root / mirror_rel).resolve()
             if source.source_path.exists():
-                复制到备份快照(source=source.source_path, destination=sandbox_source_path)
+                复制到沙盒镜像(source=source.source_path, destination=sandbox_source_path)
 
         sandbox_sources.append(
             聚合来源(
@@ -3284,11 +3857,34 @@ def 准备用户级内容聚合沙盒(
                 "exists_in_source": bool(source.source_path.exists()),
             }
         )
+        path_mappings.append(
+            {
+                "role": "source",
+                "label": source.source_label,
+                "scope": source.scope,
+                "real_path": str(source.source_path),
+                "sandbox_path": str(sandbox_source_path),
+            }
+        )
+
+    # 落盘 path_mapping.json
+    mapping_payload = {
+        "sandbox_root": str(sandbox_root),
+        "home_dir": str(用户主目录(home_dir)),
+        "layout_mode": "mirror_real_paths",
+        "mappings": path_mappings,
+    }
+    mapping_path = sandbox_root / "path_mapping.json"
+    mapping_path.parent.mkdir(parents=True, exist_ok=True)
+    mapping_path.write_text(json.dumps(mapping_payload, ensure_ascii=False, indent=2), encoding="utf-8")
 
     return sandbox_paths, sandbox_sources, {
         "enabled": True,
         "sandbox_root": str(sandbox_root),
+        "layout_mode": "mirror_real_paths",
+        "path_mappings": path_mappings,
         "sources": sandbox_source_summaries,
+        "path_mapping_file": str(mapping_path),
     }
 
 
@@ -3425,9 +4021,17 @@ def 更新用户级内容(
     backup_dir: str = "",
     simulate_only: bool = False,
     sandbox_dir: str = "",
+    enable_undo_journal: bool = True,
+    undo_journal_dir: str = "",
+    cleanup_unknown: bool = False,
     resolved_targets_override: list[发布目标] | None = None,
 ) -> dict[str, Any]:
-    """执行用户级内容同步（基于 logical key + SQLite 元数据决策）。"""
+    """执行用户级内容同步（基于 logical key + SQLite 元数据决策）。
+
+    Args:
+        cleanup_unknown: 是否清理目标目录中不在编译输出中的未跟踪文件。
+            建议首次同步或沙盒模拟时启用。
+    """
 
     if not AOL运行时可用():
         raise ValueError("aoc runtime 不可用，无法执行 update-user-content")
@@ -3453,6 +4057,7 @@ def 更新用户级内容(
             home_dir=home_dir,
             sandbox_dir=sandbox_dir,
         )
+        sandbox_journal_dir = str(sandbox_paths.repo_root / "datastore" / "sync_undo")
         sandbox_result = 更新用户级内容(
             sandbox_paths,
             target_paths=[],
@@ -3468,6 +4073,9 @@ def 更新用户级内容(
             backup_dir="",
             simulate_only=False,
             sandbox_dir="",
+            enable_undo_journal=enable_undo_journal,
+            undo_journal_dir=sandbox_journal_dir,
+            cleanup_unknown=True,
             resolved_targets_override=sandbox_targets,
         )
         sandbox_result["sandbox"] = sandbox_summary
@@ -3496,6 +4104,7 @@ def 更新用户级内容(
         "decision_summary": {"added": 0, "updated": 0, "deleted": 0},
         "registry_summary": {"registry_hit_count": 0, "fallback_count": 0, "active_side_count": 0, "logical_key_count": 0},
         "sync_registry": {"enabled": False, "dry_run": dry_run},
+        "undo_journal": {"enabled": False, "dry_run": dry_run},
         "sandbox": {"enabled": False},
         "simulate_only": False,
     }
@@ -3536,6 +4145,14 @@ def 更新用户级内容(
         paths,
         targets=resolved_targets,
     )
+    # 去污染：过滤 canonical AOL 中旧同步 bug 产生的 vendor 后缀条目
+    side_entries, decontam_stats = 过滤旧同步污染条目(side_entries)
+    if decontam_stats.get("removed", 0) > 0:
+        per_side = decontam_stats.get("per_side", {})
+        side_detail = ", ".join(f"{k}={v}" for k, v in sorted(per_side.items()))
+        aggregate_warnings.append(
+            f"已过滤 {decontam_stats['removed']} 个旧同步 vendor 后缀污染条目（{side_detail}）"
+        )
     side_priority = ["libs", *[f"target:{item.target_label}" for item in resolved_targets]]
     final_entries, registry_rows, registry_summary = 计算一键更新决策(
         side_entries=side_entries,
@@ -3636,6 +4253,19 @@ def 更新用户级内容(
         "publish_warnings": [],
     }
 
+    undo_journal: Any = None
+    if enable_undo_journal and not sync_errors and 创建撤销账本 is not None:
+        undo_journal = 创建撤销账本(
+            repo_root=paths.repo_root,
+            journal_root=Path(str(undo_journal_dir).strip()).expanduser() if str(undo_journal_dir).strip() else None,
+            dry_run=dry_run,
+            summary_meta={
+                "repo_root": str(paths.repo_root),
+                "target_labels": [item.target_label for item in resolved_targets],
+                "decision_summary": dict(decision_summary),
+            },
+        )
+
     managed_target_files: dict[tuple[str, str], set[str]] = {}
     if sync_errors:
         publish_summary["errors"].append("同步侧存在反编译错误，已跳过正式发布")
@@ -3648,9 +4278,20 @@ def 更新用户级内容(
                 dry_run=dry_run,
                 warnings=publish_summary["publish_warnings"],
                 previous_managed_files=previous_target_files.get((target.target_label, target.layout), set()),
+                journal=undo_journal,
+                cleanup_unknown=cleanup_unknown,
             )
             managed_target_files[(target.target_label, target.layout)] = managed_files
             合并发布统计(publish_summary, part)
+
+    if undo_journal is not None:
+        summary["undo_journal"] = undo_journal.结果摘要()
+    else:
+        summary["undo_journal"] = {
+            "enabled": False,
+            "reason": "显式关闭撤销账本或同步侧存在错误",
+            "dry_run": dry_run,
+        }
 
     summary["sync_registry"] = 写入用户内容同步数据库(
         paths,
@@ -4865,6 +5506,8 @@ def 执行更新用户级内容(argv: list[str], paths: 路径配置) -> int:
     parser.add_argument("--skip-items-sync", action="store_true", help="更新完成后跳过 items sync")
     parser.add_argument("--simulate-only", action="store_true", help="仅在沙盒副本中执行同步，不修改真实目录")
     parser.add_argument("--sandbox-dir", default="", help="可选：沙盒根目录；不传则默认使用 Downloads 下的时间戳目录")
+    parser.add_argument("--skip-undo-journal", action="store_true", help="本次同步不记录可撤销的增删改账本")
+    parser.add_argument("--undo-journal-dir", default="", help="可选：撤销账本根目录；不传则默认使用 autodo-lib/datastore/sync_undo")
     args = parser.parse_args(argv)
 
     stats = 更新用户级内容(
@@ -4882,6 +5525,8 @@ def 执行更新用户级内容(argv: list[str], paths: 路径配置) -> int:
         backup_dir=str(args.backup_dir or "").strip(),
         simulate_only=bool(args.simulate_only),
         sandbox_dir=str(args.sandbox_dir or "").strip(),
+        enable_undo_journal=not bool(args.skip_undo_journal),
+        undo_journal_dir=str(args.undo_journal_dir or "").strip(),
     )
     print(json.dumps(stats, ensure_ascii=False, indent=2))
     return 0

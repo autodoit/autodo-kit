@@ -68,14 +68,14 @@ FLOW_STAGE_LIST_VIEWS: tuple[tuple[str, str], ...] = (
 )
 TRANSACTION_RELATION_OVERVIEW_VIEW_NAME = "事务关联总视图"
 TRANSACTION_RELATION_NODE_LABELS: tuple[tuple[str, str], ...] = (
-    ("A060", "综述文献候选视图构建"),
-    ("A070", "综述文献研读"),
-    ("A075", "普通文献候选视图构建"),
-    ("A080", "普通文献泛读"),
-    ("A095", "普通文献研读候选视图构建"),
-    ("A100", "文献批判性研读"),
-    ("A110", "研究脉络梳理"),
-    ("A140", "创新点凝练"),
+    ("A110", "综述文献候选视图构建"),
+    ("A130", "综述文献研读"),
+    ("A140", "普通文献候选视图构建"),
+    ("A150", "普通文献泛读"),
+    ("A160", "普通文献研读候选视图构建"),
+    ("A170", "文献批判性研读"),
+    ("A180", "研究脉络梳理"),
+    ("A190", "创新点凝练"),
 )
 TRANSACTION_RELATION_FILTER_VIEWS: tuple[tuple[str, str], ...] = tuple(
     (f"{node_code}事务关联视图", node_code)
@@ -1813,8 +1813,31 @@ def _create_or_replace_view(conn: sqlite3.Connection, view_name: str, select_sql
     if object_type == "table":
         raise sqlite3.OperationalError(f"对象 {view_name} 已存在且为表，无法覆盖为视图")
     # 无论探测结果如何，统一先删除同名视图，避免编码/缓存差异下误判导致重复创建失败。
-    conn.execute(f"DROP VIEW IF EXISTS {_quote_identifier(view_name)}")
-    conn.execute(f"CREATE VIEW {_quote_identifier(view_name)} AS\n{select_sql.strip()}")
+    quoted_name = _quote_identifier(view_name)
+    conn.execute(f"DROP VIEW IF EXISTS temp.{quoted_name}")
+    conn.execute(f"DROP VIEW IF EXISTS main.{quoted_name}")
+    conn.execute(f"DROP VIEW IF EXISTS {quoted_name}")
+    try:
+        conn.execute(f"CREATE VIEW {_quote_identifier(view_name)} AS\n{select_sql.strip()}")
+    except sqlite3.OperationalError as exc:
+        msg = str(exc).lower()
+        if "already exists" in msg:
+            # 防御性兜底：某些边界条件下 DROP 未生效（如连接隔离、schema 缓存或编码差异），
+            # 直接遍历 sqlite_master 强制删除所有同名视图/表对象后再重试一次。
+            stale_objects = conn.execute(
+                "SELECT name, type FROM sqlite_master WHERE name = ?", (view_name,)
+            ).fetchall()
+            for obj_name, obj_type in stale_objects:
+                qn = _quote_identifier(obj_name)
+                if obj_type == "view":
+                    conn.execute(f"DROP VIEW IF EXISTS {qn}")
+                elif obj_type == "table":
+                    raise sqlite3.OperationalError(
+                        f"对象 {view_name} 已存在且为表，无法覆盖为视图"
+                    )
+            conn.execute(f"CREATE VIEW {_quote_identifier(view_name)} AS\n{select_sql.strip()}")
+        else:
+            raise
 
 
 CONTENTDB_CONTRACT_VIEW_ALIAS_OVERRIDES: dict[str, str] = {
@@ -2425,8 +2448,8 @@ def _refresh_reading_state_views(conn: sqlite3.Connection) -> None:
             COALESCE(lit.{_quote_identifier(_resolve_physical_column(LITERATURE_TABLE_NAME, 'year'))}, '') AS 年份,
             '' AS 文献角色,
             CASE
-                WHEN COALESCE(q.{_quote_identifier(_resolve_physical_column(READING_QUEUE_TABLE_NAME, 'stage'))}, '') IN ('A050', 'A055', 'A060', 'A065', 'A070') THEN '综述主链'
-                WHEN COALESCE(q.{_quote_identifier(_resolve_physical_column(READING_QUEUE_TABLE_NAME, 'stage'))}, '') IN ('A075', 'A080', 'A095', 'A100', 'A105') THEN '普通主链'
+                WHEN COALESCE(q.{_quote_identifier(_resolve_physical_column(READING_QUEUE_TABLE_NAME, 'stage'))}, '') IN ('A060', 'A070', 'A110', 'A120', 'A130') THEN '综述主链'
+                WHEN COALESCE(q.{_quote_identifier(_resolve_physical_column(READING_QUEUE_TABLE_NAME, 'stage'))}, '') IN ('A140', 'A150', 'A160', 'A170', 'A105') THEN '普通主链'
                 ELSE ''
             END AS 流程轨道,
             COALESCE(lit.{_quote_identifier(_resolve_physical_column(LITERATURE_TABLE_NAME, 'primary_attachment_name'))}, '') AS 主附件名称,
@@ -2500,17 +2523,17 @@ def _refresh_reading_state_views(conn: sqlite3.Connection) -> None:
     legacy_stage_name_case = """
     CASE 当前阶段
         WHEN 'A040' THEN '文献检索与入库事务'
-        WHEN 'A050' THEN '预处理优先级生成事务'
-        WHEN 'A055' THEN '统一文献预处理执行事务'
-        WHEN 'A060' THEN '综述文献候选视图构建事务'
-        WHEN 'A065' THEN '综述参考文献预处理与笔记骨架事务'
-        WHEN 'A070' THEN '综述文献研读事务'
-        WHEN 'A075' THEN '普通文献候选视图构建事务'
-        WHEN 'A080' THEN '普通文献泛读事务'
-        WHEN 'A095' THEN '普通文献研读候选视图构建事务'
-        WHEN 'A100' THEN '文献批判性研读事务'
-        WHEN 'A110' THEN '研究脉络梳理事务'
-        WHEN 'A140' THEN '创新点凝练事务'
+        WHEN 'A060' THEN '预处理优先级生成事务'
+        WHEN 'A070' THEN '统一文献预处理执行事务'
+        WHEN 'A110' THEN '综述文献候选视图构建事务'
+        WHEN 'A120' THEN '综述参考文献预处理与笔记骨架事务'
+        WHEN 'A130' THEN '综述文献研读事务'
+        WHEN 'A140' THEN '普通文献候选视图构建事务'
+        WHEN 'A150' THEN '普通文献泛读事务'
+        WHEN 'A160' THEN '普通文献研读候选视图构建事务'
+        WHEN 'A170' THEN '文献批判性研读事务'
+        WHEN 'A180' THEN '研究脉络梳理事务'
+        WHEN 'A190' THEN '创新点凝练事务'
         WHEN 'A105' THEN '文献批判性研读与标准笔记事务'
         ELSE 当前阶段
     END

@@ -759,7 +759,7 @@ def translate_parse_asset_text(
     parse_level: str = "non_review_deep",
     translation_policy: Dict[str, Any] | None = None,
     workspace_root: str | Path | None = None,
-    affair_name: str = "A100",
+    affair_name: str = "A170",
     config_path: str | Path | None = None,
 ) -> Dict[str, Any]:
     """生成解析正文译文资产。"""

@@ -2,8 +2,8 @@
 
 本事务保留为历史兼容与局部补位入口，负责综述结构化解析资产准备。
 
-它不再是 AcademicResearch-auto-workflow 当前主链中 A060 的官方 AOK 映射；
-当前主链 A060 官方入口已切换为候选文献视图构建事务。
+它不再是 AcademicResearch-auto-workflow 当前主链中 A110 的官方 AOK 映射；
+当前主链 A110 官方入口已切换为候选文献视图构建事务。
 """
 
 from __future__ import annotations
@@ -51,11 +51,11 @@ def _safe_read_csv(path: Path) -> pd.DataFrame:
 
 
 def _build_review_pool_from_queue(content_db: Path, literature_table: pd.DataFrame) -> pd.DataFrame:
-    """从 stage=A060 队列构建当前 review_read_pool。"""
+    """从 stage=A110 队列构建当前 review_read_pool。"""
 
     queue_df = load_reading_queue_df(
         content_db,
-        stage="A060",
+        stage="A110",
         only_current=True,
         queue_statuses=["queued", "candidate", "in_progress"],
     )
@@ -72,7 +72,7 @@ def _build_review_pool_from_queue(content_db: Path, literature_table: pd.DataFra
 
 
 def _build_review_pool_from_state(content_db: Path, literature_table: pd.DataFrame) -> pd.DataFrame:
-    """从 review_state 构建 A060 输入池。"""
+    """从 review_state 构建 A110 输入池。"""
 
     state_df = load_review_state_df(content_db, flag_filters={"pending_review_parse": 1})
     if state_df.empty:
@@ -93,7 +93,7 @@ def _build_a065_queue_rows(
     run_uid: str,
     topic: str,
 ) -> List[Dict[str, Any]]:
-    """构建 A060 -> A065 队列。"""
+    """构建 A110 -> A120 队列。"""
 
     rows: List[Dict[str, Any]] = []
     for _, row in review_read_pool.fillna("").iterrows():
@@ -105,15 +105,15 @@ def _build_a065_queue_rows(
             {
                 "uid_literature": uid_literature,
                 "cite_key": cite_key,
-                "stage": "A065",
-                "source_affair": "A060",
+                "stage": "A120",
+                "source_affair": "A110",
                 "queue_status": "queued",
                 "priority": row.get("score") or row.get("priority") or 68.0,
                 "bucket": "review_parse_ready",
-                "preferred_next_stage": "A080",
-                "recommended_reason": "A060 结构化解析资产已就绪，进入 A065 引文与骨架处理",
+                "preferred_next_stage": "A150",
+                "recommended_reason": "A110 结构化解析资产已就绪，进入 A120 引文与骨架处理",
                 "theme_relation": topic,
-                "source_round": "a060",
+                "source_round": "a110",
                 "run_uid": run_uid,
                 "scope_key": "a060_to_a065",
                 "is_current": 1,
@@ -171,9 +171,9 @@ def _consume_current_stage_queue_rows(content_db: Path, *, stage: str, queue_row
     return affected
 
 
-@affair_auto_git_commit("A060")
+@affair_auto_git_commit("A110")
 def execute(config_path: Path) -> List[Path]:
-    """执行 A060 综述结构化解析资产准备。
+    """执行 A110 综述结构化解析资产准备。
 
     Args:
         config_path: 节点配置文件路径。
@@ -183,12 +183,12 @@ def execute(config_path: Path) -> List[Path]:
 
     Raises:
         ValueError: 当缺少 content_db 时抛出。
-        FileNotFoundError: 当 A050 必需输入缺失时抛出。
+        FileNotFoundError: 当 A060 必需输入缺失时抛出。
     """
 
     raw_cfg = load_json_or_py(config_path)
     if not isinstance(raw_cfg, dict):
-        raise ValueError("A060 配置必须是字典")
+        raise ValueError("A110 配置必须是字典")
 
     workspace_root = _resolve_workspace_root(config_path, raw_cfg)
     legacy_output_dir = resolve_legacy_output_dir(
@@ -196,7 +196,7 @@ def execute(config_path: Path) -> List[Path]:
         config_path,
         default_path=workspace_root / "steps" / "A060_review_preprocessing",
     )
-    output_dir = create_task_instance_dir(workspace_root, "A060")
+    output_dir = create_task_instance_dir(workspace_root, "A110")
 
     global_config_path = workspace_root / "config" / "config.json"
     if not global_config_path.exists():
@@ -206,7 +206,7 @@ def execute(config_path: Path) -> List[Path]:
 
     content_db, db_input_key = _resolve_content_db_path(raw_cfg, global_cfg)
     if content_db is None:
-        raise ValueError("A060 需要 content_db（可由节点配置或 config.paths.content_db_path 提供）")
+        raise ValueError("A110 需要 content_db（可由节点配置或 config.paths.content_db_path 提供）")
 
     literature_table = load_reference_main_table(content_db)
     review_read_pool = _build_review_pool_from_state(content_db, literature_table)
@@ -217,7 +217,7 @@ def execute(config_path: Path) -> List[Path]:
     if review_read_pool.empty and review_read_pool_path.exists():
         review_read_pool = _safe_read_csv(review_read_pool_path)
     if review_read_pool.empty:
-        raise FileNotFoundError("未找到可用的综述阅读池（A060 队列或 review_read_pool.csv）。")
+        raise FileNotFoundError("未找到可用的综述阅读池（A110 队列或 review_read_pool.csv）。")
 
     review_reading_batches_path = workspace_root / "batches" / "review_candidates" / "review_reading_batches.csv"
     review_reading_batches = _safe_read_csv(review_reading_batches_path)
@@ -233,9 +233,9 @@ def execute(config_path: Path) -> List[Path]:
         content_db=content_db,
         source_df=review_read_pool,
         output_dir=output_dir,
-        source_stage="A060",
-        upstream_stage="A050",
-        downstream_stage="A065",
+        source_stage="A110",
+        upstream_stage="A060",
+        downstream_stage="A120",
         parse_level="review_deep",
         literature_scope="review",
         runtime_settings=parse_runtime,
@@ -277,13 +277,13 @@ def execute(config_path: Path) -> List[Path]:
     parse_status_path = output_dir / "parse_asset_status.csv"
     pd.DataFrame(parse_status_rows).to_csv(parse_status_path, index=False, encoding="utf-8-sig")
 
-    run_uid = f"a060-{now_compact()}"
+    run_uid = f"a110-{now_compact()}"
     topic = str(raw_cfg.get("research_topic") or raw_cfg.get("topic") or "A060_topic")
     ready_df = pd.DataFrame(ready_rows)
     a065_queue_rows = _build_a065_queue_rows(ready_df, run_uid=run_uid, topic=topic)
     if a065_queue_rows:
         upsert_reading_queue_rows(content_db, a065_queue_rows)
-    consumed_a060_queue_count = _consume_current_stage_queue_rows(content_db, stage="A060", queue_rows=ready_df)
+    consumed_a060_queue_count = _consume_current_stage_queue_rows(content_db, stage="A110", queue_rows=ready_df)
     review_state_rows: List[Dict[str, Any]] = []
     for _, row in ready_df.fillna("").iterrows():
         uid_literature = str(row.get("uid_literature") or "").strip()
@@ -294,7 +294,7 @@ def execute(config_path: Path) -> List[Path]:
             {
                 "uid_literature": uid_literature,
                 "cite_key": cite_key,
-                "source_stage": "A060",
+                "source_stage": "A110",
                 "pending_review_parse": 0,
                 "review_parse_ready": 1,
                 "pending_reference_preprocess": 1,
@@ -305,12 +305,12 @@ def execute(config_path: Path) -> List[Path]:
         upsert_review_state_rows(content_db, review_state_rows)
 
     gate_review = build_gate_review(
-        node_uid="A060",
+        node_uid="A110",
         node_name="综述预处理",
         summary=(
             f"完成综述结构化资产准备：阅读池 {len(review_read_pool)} 条，"
             f"structured 就绪 {ready_count} 条，后处理成功 {postprocess_success_count} 条，"
-            f"进入 A065 队列 {len(a065_queue_rows)} 条，消费 A060 队列 {consumed_a060_queue_count} 条。"
+            f"进入 A120 队列 {len(a065_queue_rows)} 条，消费 A110 队列 {consumed_a060_queue_count} 条。"
         ),
         checks=[
             {"name": "review_read_pool_count", "value": len(review_read_pool)},
@@ -375,11 +375,11 @@ def execute(config_path: Path) -> List[Path]:
         event_type="A060_REVIEW_PREPROCESSING_COMPLETED",
         project_root=workspace_root,
         enabled=logging_enabled,
-        affair_code="A060",
+        affair_code="A110",
         handler_name="综述预处理",
         agent_names=["ar_A060_综述预处理事务智能体_v5"],
         skill_names=["ar_A060_综述预处理_v5", "m_ObsidianMarkdown_v1"],
-        reasoning_summary="承接 A050 阅读池，完成 parse asset 预热并推进到 A065。",
+        reasoning_summary="承接 A060 阅读池，完成 parse asset 预热并推进到 A120。",
         gate_review=gate_review,
         gate_review_path=gate_path,
         artifact_paths=[parse_status_path, gate_path, manifest_result["manifest_path"], manifest_result["management_table_path"], manifest_result["handoff_path"]],

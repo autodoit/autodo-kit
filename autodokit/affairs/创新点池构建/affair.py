@@ -1,4 +1,4 @@
-"""A140 创新点凝练事务。"""
+"""A190 创新点凝练事务。"""
 
 from __future__ import annotations
 
@@ -28,7 +28,7 @@ def _stringify(value: Any) -> str:
 
 
 def _archive_publication(raw_cfg: Dict[str, Any], scored_table: pd.DataFrame) -> Dict[str, Any]:
-    """构造 A140 内联后的交付归档结果。"""
+    """构造 A190 内联后的交付归档结果。"""
 
     archive_files = list(raw_cfg.get("archive_files") or [])
     if scored_table is not None and not scored_table.empty:
@@ -43,7 +43,7 @@ def _archive_publication(raw_cfg: Dict[str, Any], scored_table: pd.DataFrame) ->
             "publication_status": publication_status,
             "archive_files": archive_files,
             "archive_count": len(archive_files),
-            "release_note": _stringify(raw_cfg.get("release_note") or "A140 已在同一节点内完成创新点池、可行性评分与交付归档摘要。"),
+            "release_note": _stringify(raw_cfg.get("release_note") or "A190 已在同一节点内完成创新点池、可行性评分与交付归档摘要。"),
             "closed": publication_status.strip().lower() in {"accepted", "published", "ready_for_delivery"},
         },
     }
@@ -76,7 +76,7 @@ def _generate_innovation_items(raw_cfg: Dict[str, Any]) -> List[Dict[str, Any]]:
     return items
 
 
-@affair_auto_git_commit("A140")
+@affair_auto_git_commit("A190")
 def execute(config_path: Path) -> List[Path]:
     """事务执行入口。"""
 
@@ -85,7 +85,7 @@ def execute(config_path: Path) -> List[Path]:
     if not workspace_root.is_absolute():
         raise ValueError(f"workspace_root 必须为绝对路径: {workspace_root}")
     legacy_output_dir = resolve_legacy_output_dir(raw_cfg, config_path)
-    output_dir = create_task_instance_dir(workspace_root, "A140")
+    output_dir = create_task_instance_dir(workspace_root, "A190")
 
     pool_table = init_empty_innovation_pool_table()
     generated_items = _generate_innovation_items(raw_cfg)
@@ -106,7 +106,7 @@ def execute(config_path: Path) -> List[Path]:
     publication_path.write_text(json.dumps(publication_result, ensure_ascii=False, indent=2), encoding="utf-8")
 
     gate_review = build_gate_review(
-        node_uid="A140",
+        node_uid="A190",
         node_name="创新点凝练",
         summary=f"生成 {len(pool_table)} 条候选创新点，完成 {len(scored_table)} 条可行性评分，其中建议提升 {promotable_count} 条，并在同一节点内输出交付归档摘要。",
         checks=[

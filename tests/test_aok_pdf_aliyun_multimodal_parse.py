@@ -486,7 +486,7 @@ def test_init_content_db_should_convert_runtime_public_tables_to_views(tmp_path:
         )
         conn.execute(
             'INSERT INTO "文献流程状态" VALUES (?, ?, ?, ?, ?)',
-            ("lit-legacy-001", "legacy_001", "A050", "A050", "2026-04-03T00:00:00+00:00"),
+            ("lit-legacy-001", "legacy_001", "A060", "A060", "2026-04-03T00:00:00+00:00"),
         )
         conn.execute(
             'CREATE TABLE "文献解析资产" ("uid_资产" TEXT, "uid_文献" TEXT, "uid_附件" TEXT, "解析状态" TEXT, "结构化正文路径" TEXT, "更新时间" TEXT)'
@@ -578,7 +578,7 @@ def test_init_content_db_should_convert_runtime_public_tables_to_views(tmp_path:
 
 
 def test_transaction_relation_view_should_support_queue_only_rows(tmp_path: Path) -> None:
-    """事务编号关联视图应显示仅存在于预处理队列中的 A075/A080 条目。"""
+    """事务编号关联视图应显示仅存在于预处理队列中的 A140/A150 条目。"""
 
     content_db = (tmp_path / "transaction_relation.db").resolve()
     init_content_db(content_db)
@@ -616,12 +616,12 @@ def test_transaction_relation_view_should_support_queue_only_rows(tmp_path: Path
             {
                 "uid_literature": "lit-queue-001",
                 "cite_key": "queue_001",
-                "stage": "A080",
-                "source_affair": "A075",
+                "stage": "A150",
+                "source_affair": "A140",
                 "queue_status": "queued",
                 "priority": 80,
                 "recommended_reason": "human seed",
-                "preferred_next_stage": "A080",
+                "preferred_next_stage": "A150",
                 "is_current": 1,
                 "updated_at": "2026-05-27T00:00:00+00:00",
             }
@@ -661,7 +661,7 @@ def test_transaction_relation_view_should_support_queue_only_rows(tmp_path: Path
             ).fetchall()
         }
 
-    assert rows == [("A075", "queue_001", "普通文献泛读事务", "待处理")]
+    assert rows == [("A140", "queue_001", "普通文献泛读事务", "待处理")]
     assert a080_view_type == ("view",)
     assert transaction_view_names == {
         "A070事务关联视图",

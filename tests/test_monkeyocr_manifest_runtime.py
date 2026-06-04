@@ -179,7 +179,7 @@ def _write_runner_artifacts(output_dir: Path, manifest_df: pd.DataFrame) -> dict
 def test_run_parse_manifest_should_register_assets_without_gpu(monkeypatch, tmp_path: Path) -> None:
     module = importlib.import_module("autodokit.tools.ocr.runtime.monkeyocr_manifest_runtime")
     workspace_root, content_db, _ = _prepare_workspace(tmp_path)
-    output_dir = workspace_root / "tasks" / "202604110001-A080"
+    output_dir = workspace_root / "tasks" / "202604110001-A150"
     output_dir.mkdir(parents=True, exist_ok=True)
 
     monkeypatch.setattr(
@@ -193,9 +193,9 @@ def test_run_parse_manifest_should_register_assets_without_gpu(monkeypatch, tmp_
             {"uid_literature": "lit-001", "cite_key": "demo-001", "priority_rank": 1}
         ]),
         output_dir=output_dir,
-        source_stage="A080",
-        upstream_stage="A070",
-        downstream_stage="A080",
+        source_stage="A150",
+        upstream_stage="A130",
+        downstream_stage="A150",
         parse_level="non_review_rough",
         literature_scope="non_review",
         runtime_settings={
@@ -226,7 +226,7 @@ def test_run_parse_manifest_should_register_assets_without_gpu(monkeypatch, tmp_
 def test_run_parse_manifest_should_report_gpu_lock_conflict_without_running(monkeypatch, tmp_path: Path) -> None:
     module = importlib.import_module("autodokit.tools.ocr.runtime.monkeyocr_manifest_runtime")
     workspace_root, content_db, _ = _prepare_workspace(tmp_path)
-    output_dir = workspace_root / "tasks" / "202604110002-A100"
+    output_dir = workspace_root / "tasks" / "202604110002-A170"
     output_dir.mkdir(parents=True, exist_ok=True)
 
     runtime_settings = {
@@ -255,8 +255,8 @@ def test_run_parse_manifest_should_report_gpu_lock_conflict_without_running(monk
             {"uid_literature": "lit-001", "cite_key": "demo-001", "priority_rank": 1}
         ]),
         output_dir=output_dir,
-        source_stage="A100",
-        upstream_stage="A080",
+        source_stage="A170",
+        upstream_stage="A150",
         downstream_stage="A105",
         parse_level="non_review_deep",
         literature_scope="non_review",
@@ -274,7 +274,7 @@ def test_run_parse_manifest_should_report_gpu_lock_conflict_without_running(monk
 def test_run_parse_manifest_should_cleanup_incomplete_asset_before_rerun(monkeypatch, tmp_path: Path) -> None:
     module = importlib.import_module("autodokit.tools.ocr.runtime.monkeyocr_manifest_runtime")
     workspace_root, content_db, pdf_path = _prepare_workspace(tmp_path)
-    output_dir = workspace_root / "tasks" / "202604110003-A055"
+    output_dir = workspace_root / "tasks" / "202604110003-A070"
     output_dir.mkdir(parents=True, exist_ok=True)
 
     partial_dir = workspace_root / "references" / "structured_monkeyocr_full" / "lit-001"
@@ -294,9 +294,9 @@ def test_run_parse_manifest_should_cleanup_incomplete_asset_before_rerun(monkeyp
             {"uid_literature": "lit-001", "cite_key": "demo-001", "priority_rank": 1}
         ]),
         output_dir=output_dir,
-        source_stage="A055",
-        upstream_stage="A050",
-        downstream_stage="A080",
+        source_stage="A070",
+        upstream_stage="A060",
+        downstream_stage="A150",
         parse_level="non_review_rough",
         literature_scope="non_review",
         runtime_settings={
@@ -327,11 +327,11 @@ def test_a080_affair_should_consume_manifest_runner(monkeypatch, tmp_path: Path)
             {
                 "uid_literature": "lit-001",
                 "cite_key": "demo-001",
-                "stage": "A080",
+                "stage": "A150",
                 "queue_status": "queued",
                 "priority": 80,
-                "source_affair": "A075",
-                "preferred_next_stage": "A100",
+                "source_affair": "A140",
+                "preferred_next_stage": "A170",
                 "recommended_reason": "test",
                 "theme_relation": "demo",
                 "is_current": 1,
@@ -346,7 +346,7 @@ def test_a080_affair_should_consume_manifest_runner(monkeypatch, tmp_path: Path)
                 "cite_key": "demo-001",
                 "title": "Demo Paper",
                 "pdf_path": str(pdf_path),
-                "source_stage": "A080",
+                "source_stage": "A150",
                 "recommended_reason": "test",
                 "theme_relation": "demo",
                 "source_origin": "auto",
@@ -377,7 +377,7 @@ def test_a080_affair_should_consume_manifest_runner(monkeypatch, tmp_path: Path)
 
     monkeypatch.setattr(module, "run_parse_manifest", _fake_runner)
 
-    config_path = tmp_path / "a080.json"
+    config_path = tmp_path / "a150.json"
     _write_json(
         config_path,
         {
@@ -403,10 +403,10 @@ def test_a100_affair_should_promote_parse_ready_without_gpu(monkeypatch, tmp_pat
             {
                 "uid_literature": "lit-001",
                 "cite_key": "demo-001",
-                "stage": "A100",
+                "stage": "A170",
                 "queue_status": "queued",
                 "priority": 80,
-                "source_affair": "A080",
+                "source_affair": "A150",
                 "preferred_next_stage": "A105",
                 "recommended_reason": "test",
                 "theme_relation": "demo",
@@ -448,7 +448,7 @@ def test_a100_affair_should_promote_parse_ready_without_gpu(monkeypatch, tmp_pat
 
     monkeypatch.setattr(module, "run_parse_manifest", _fake_runner)
 
-    config_path = tmp_path / "a100.json"
+    config_path = tmp_path / "a170.json"
     _write_json(
         config_path,
         {
@@ -498,9 +498,9 @@ def test_a060_merged_followups_should_build_internal_phase_configs(monkeypatch, 
             "content_db": str(content_db),
             "research_topic": "Demo Topic",
             "merged_phase_configs": {
-                "A065": {"api_key_file": "demo-key.txt"},
-                "A070": {"review_state_max_chars": 12345},
-                "A075": {
+                "A120": {"api_key_file": "demo-key.txt"},
+                "A130": {"review_state_max_chars": 12345},
+                "A140": {
                     "human_seed_contract": {
                         "enabled": True,
                         "seed_items": [{"cite_key": "seed-001", "recommended_reason": "demo"}],
@@ -512,16 +512,16 @@ def test_a060_merged_followups_should_build_internal_phase_configs(monkeypatch, 
     )
 
     merged_config_dir = output_dir / "merged_phase_configs"
-    assert (merged_config_dir / "A065.json").exists()
-    assert (merged_config_dir / "A070.json").exists()
-    assert (merged_config_dir / "A075.json").exists()
-    assert not (workspace_root / "config" / "affairs_config" / "A065.json").exists()
+    assert (merged_config_dir / "A120.json").exists()
+    assert (merged_config_dir / "A130.json").exists()
+    assert (merged_config_dir / "A140.json").exists()
+    assert not (workspace_root / "config" / "affairs_config" / "A120.json").exists()
     assert captured_payloads["autodokit.affairs.候选文献视图构建.phase_a065"]["api_key_file"] == "demo-key.txt"
     assert captured_payloads["autodokit.affairs.候选文献视图构建.phase_a070"]["review_state_max_chars"] == 12345
     assert captured_payloads["autodokit.affairs.候选文献视图构建.phase_a075"]["human_seed_contract"]["seed_items"][0]["cite_key"] == "seed-001"
-    assert any(path.name == "A065.json" for path in outputs)
-    assert any(path.name == "A070.json" for path in outputs)
-    assert any(path.name == "A075.json" for path in outputs)
+    assert any(path.name == "A120.json" for path in outputs)
+    assert any(path.name == "A130.json" for path in outputs)
+    assert any(path.name == "A140.json" for path in outputs)
 
 
 def test_a070_review_reading_followups_should_allow_selected_nodes(monkeypatch, tmp_path: Path) -> None:
@@ -554,24 +554,24 @@ def test_a070_review_reading_followups_should_allow_selected_nodes(monkeypatch, 
             "content_db": str(content_db),
             "research_topic": "Demo Topic",
             "merged_phase_configs": {
-                "A065": {"downstream_stage": "A075"},
-                "A070": {"review_state_max_chars": 12345},
-                "A075": {"human_seed_contract": {"enabled": True}},
+                "A120": {"downstream_stage": "A140"},
+                "A130": {"review_state_max_chars": 12345},
+                "A140": {"human_seed_contract": {"enabled": True}},
             },
         },
         output_dir=output_dir,
-        selected_nodes=("A065", "A070"),
+        selected_nodes=("A120", "A130"),
     )
 
     merged_config_dir = output_dir / "merged_phase_configs"
-    assert (merged_config_dir / "A065.json").exists()
-    assert (merged_config_dir / "A070.json").exists()
-    assert not (merged_config_dir / "A075.json").exists()
-    assert captured_payloads["autodokit.affairs.候选文献视图构建.phase_a065"]["downstream_stage"] == "A075"
+    assert (merged_config_dir / "A120.json").exists()
+    assert (merged_config_dir / "A130.json").exists()
+    assert not (merged_config_dir / "A140.json").exists()
+    assert captured_payloads["autodokit.affairs.候选文献视图构建.phase_a065"]["downstream_stage"] == "A140"
     assert captured_payloads["autodokit.affairs.候选文献视图构建.phase_a070"]["review_state_max_chars"] == 12345
     assert "autodokit.affairs.候选文献视图构建.phase_a075" not in captured_payloads
-    assert any(path.name == "A065.json" for path in outputs)
-    assert any(path.name == "A070.json" for path in outputs)
+    assert any(path.name == "A120.json" for path in outputs)
+    assert any(path.name == "A130.json" for path in outputs)
 
 
 def test_a050_affair_should_consume_flow_state_when_legacy_flags_missing(monkeypatch, tmp_path: Path) -> None:
@@ -592,7 +592,7 @@ def test_a050_affair_should_consume_flow_state_when_legacy_flags_missing(monkeyp
                 "当前阶段组": "预处理",
                 "当前状态": "待处理",
                 "下一阶段": "普通文献泛读",
-                "来源阶段": "A075",
+                "来源阶段": "A140",
                 "来源类型": "review_export",
                 "推荐原因": "flow seeded",
                 "主题关系": "demo-theme",
@@ -601,7 +601,7 @@ def test_a050_affair_should_consume_flow_state_when_legacy_flags_missing(monkeyp
                 "是否当前有效": 1,
                 "是否可执行": 1,
                 "stage_code": "non_review_preprocess",
-                "node_code": "A050",
+                "node_code": "A060",
             }
         ],
     )
@@ -645,7 +645,7 @@ def test_a050_affair_should_consume_flow_state_when_legacy_flags_missing(monkeyp
 
     monkeypatch.setattr(module, "run_parse_manifest", _fake_runner)
 
-    config_path = tmp_path / "a050.json"
+    config_path = tmp_path / "a060.json"
     _write_json(
         config_path,
         {
@@ -753,7 +753,7 @@ def test_a050_priority_only_should_rank_full_library_and_write_main_table_summar
         {
             "workspace_root": str(workspace_root),
             "content_db": str(content_db),
-            "node_code": "A050",
+            "node_code": "A060",
             "execution_mode": "priority_only",
             "processing_settings": {
                 "priority_policy": {
@@ -864,8 +864,8 @@ def test_a055_should_consume_queue_in_ascending_priority_order(monkeypatch, tmp_
                 "stage": "A050_NON_REVIEW",
                 "queue_status": "queued",
                 "priority": 9,
-                "source_affair": "A050",
-                "preferred_next_stage": "A080",
+                "source_affair": "A060",
+                "preferred_next_stage": "A150",
                 "recommended_reason": "later",
                 "theme_relation": "demo",
                 "is_current": 1,
@@ -876,8 +876,8 @@ def test_a055_should_consume_queue_in_ascending_priority_order(monkeypatch, tmp_
                 "stage": "A050_NON_REVIEW",
                 "queue_status": "queued",
                 "priority": 2,
-                "source_affair": "A050",
-                "preferred_next_stage": "A080",
+                "source_affair": "A060",
+                "preferred_next_stage": "A150",
                 "recommended_reason": "earlier",
                 "theme_relation": "demo",
                 "is_current": 1,
@@ -938,7 +938,7 @@ def test_a055_should_consume_queue_in_ascending_priority_order(monkeypatch, tmp_
         {
             "workspace_root": str(workspace_root),
             "content_db": str(content_db),
-            "node_code": "A055",
+            "node_code": "A070",
             "execution_mode": "full_preprocess",
             "profile": "non_review",
             "run_mode": "local_only",
@@ -1018,8 +1018,8 @@ def test_a055_mixed_should_start_from_global_min_priority_batch(monkeypatch, tmp
                 "stage": "A050_REVIEW",
                 "queue_status": "queued",
                 "priority": 8,
-                "source_affair": "A050",
-                "preferred_next_stage": "A060",
+                "source_affair": "A060",
+                "preferred_next_stage": "A110",
                 "recommended_reason": "review later",
                 "theme_relation": "demo",
                 "is_current": 1,
@@ -1030,8 +1030,8 @@ def test_a055_mixed_should_start_from_global_min_priority_batch(monkeypatch, tmp
                 "stage": "A050_NON_REVIEW",
                 "queue_status": "queued",
                 "priority": 1,
-                "source_affair": "A050",
-                "preferred_next_stage": "A080",
+                "source_affair": "A060",
+                "preferred_next_stage": "A150",
                 "recommended_reason": "non-review first",
                 "theme_relation": "demo",
                 "is_current": 1,
@@ -1094,7 +1094,7 @@ def test_a055_mixed_should_start_from_global_min_priority_batch(monkeypatch, tmp
         {
             "workspace_root": str(workspace_root),
             "content_db": str(content_db),
-            "node_code": "A055",
+            "node_code": "A070",
             "execution_mode": "full_preprocess",
             "profile": "mixed",
             "run_mode": "local_only",
@@ -1178,12 +1178,12 @@ def test_a055_remote_only_tmux_should_dispatch_without_local_parse(monkeypatch, 
         {
             "workspace_root": str(workspace_root),
             "content_db": str(content_db),
-            "node_code": "A055",
+            "node_code": "A070",
             "execution_mode": "full_preprocess",
             "run_mode": "remote_only_tmux",
             "remote_only": {
-                "remote_command": "echo remote-only-a055",
-                "tmux_session_prefix": "a055",
+                "remote_command": "echo remote-only-a070",
+                "tmux_session_prefix": "a070",
             },
             "pdf_parse_runtime": {
                 "remote_processing": {
@@ -1217,7 +1217,7 @@ def test_a055_local_only_should_return_gate_when_queue_empty(monkeypatch, tmp_pa
         {
             "workspace_root": str(workspace_root),
             "content_db": str(content_db),
-            "node_code": "A055",
+            "node_code": "A070",
             "execution_mode": "full_preprocess",
             "run_mode": "local_only",
         },
@@ -1246,8 +1246,8 @@ def test_a055_record_parse_results_should_sync_from_done_marker(tmp_path: Path) 
                 "stage": "A050_NON_REVIEW",
                 "queue_status": "queued",
                 "priority": 80,
-                "source_affair": "A050",
-                "preferred_next_stage": "A080",
+                "source_affair": "A060",
+                "preferred_next_stage": "A150",
                 "recommended_reason": "test",
                 "theme_relation": "demo",
                 "is_current": 1,
@@ -1266,7 +1266,7 @@ def test_a055_record_parse_results_should_sync_from_done_marker(tmp_path: Path) 
         {
             "workspace_root": str(workspace_root),
             "content_db": str(content_db),
-            "node_code": "A055",
+            "node_code": "A070",
             "execution_mode": "full_preprocess",
             "run_mode": "record_parse_results",
             "parse_done_marker_name": marker_name,
@@ -1284,7 +1284,7 @@ def test_a055_record_parse_results_should_sync_from_done_marker(tmp_path: Path) 
     queue_df = load_reading_queue_df(content_db, stage="A050_NON_REVIEW", only_current=True)
     assert queue_df.empty
 
-    a080_queue = load_reading_queue_df(content_db, stage="A080", only_current=True)
+    a080_queue = load_reading_queue_df(content_db, stage="A150", only_current=True)
     assert not a080_queue.empty
 
     with sqlite3.connect(content_db) as conn:
@@ -1362,8 +1362,8 @@ def test_a055_local_only_should_disable_remote_and_write_done_marker(monkeypatch
                 "stage": "A050_NON_REVIEW",
                 "queue_status": "queued",
                 "priority": 80,
-                "source_affair": "A050",
-                "preferred_next_stage": "A080",
+                "source_affair": "A060",
+                "preferred_next_stage": "A150",
                 "recommended_reason": "test",
                 "theme_relation": "demo",
                 "is_current": 1,
@@ -1424,7 +1424,7 @@ def test_a055_local_only_should_disable_remote_and_write_done_marker(monkeypatch
             "workspace_root": str(workspace_root),
             "content_db": str(content_db),
             "output_dir": str(output_dir),
-            "node_code": "A055",
+            "node_code": "A070",
             "execution_mode": "full_preprocess",
             "profile": "non_review",
             "run_mode": "local_only",

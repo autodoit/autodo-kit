@@ -8,7 +8,14 @@
 
 from __future__ import annotations
 
+from pathlib import Path
+
 from autodokit.tools.aob.aob_workspace_pipeline import execute_workspace_conversion_pipeline
+from autodokit.tools.atomic.aob_runtime.aob_sync_undo import (
+    执行撤销 as _执行撤销,
+    列出撤销会话 as _列出撤销会话,
+    撤销数据库文件名 as _撤销数据库文件名,
+)
 from autodokit.tools.aob.aob_tools import (
     run_aob_aoc,
     run_aob_aggregate_user_content,
@@ -364,3 +371,53 @@ def aob_check_opencode_deploy_regression(
     if str(project_name).strip():
         args.extend(["--project-name", str(project_name).strip()])
     return run_aob_regression_opencode_deploy_check(args)
+
+
+def aob_undo_sync(
+    *,
+    session_id: str,
+    repo_root: str = "",
+    db_path: str = "",
+    dry_run: bool = True,
+) -> dict[str, object]:
+    """撤销指定会话的同步操作（幂等）。
+
+    Args:
+        session_id: 要撤销的会话 ID。
+        repo_root: AOB 仓库根目录，用于推断撤销数据库位置。
+        db_path: 显式指定撤销数据库路径；不传则自动推断。
+        dry_run: 是否仅预览不执行。
+
+    Returns:
+        dict[str, object]: 撤销结果摘要。
+    """
+
+    if str(db_path).strip():
+        target_db = Path(str(db_path).strip()).expanduser().resolve()
+    else:
+        from autodokit.tools.aob.aob_tools import _resolve_aob_repo_root
+        root = _resolve_aob_repo_root(repo_root)
+        target_db = root / "datastore" / "sync_undo" / _撤销数据库文件名
+
+    return _执行撤销(target_db, session_id=session_id, dry_run=dry_run)
+
+
+def aob_list_undo_sessions(*, repo_root: str = "", db_path: str = "") -> list[dict[str, object]]:
+    """列出所有可撤销的同步会话。
+
+    Args:
+        repo_root: AOB 仓库根目录。
+        db_path: 显式指定撤销数据库路径。
+
+    Returns:
+        list[dict[str, object]]: 会话列表。
+    """
+
+    if str(db_path).strip():
+        target_db = Path(str(db_path).strip()).expanduser().resolve()
+    else:
+        from autodokit.tools.aob.aob_tools import _resolve_aob_repo_root
+        root = _resolve_aob_repo_root(repo_root)
+        target_db = root / "datastore" / "sync_undo" / _撤销数据库文件名
+
+    return _列出撤销会话(target_db)

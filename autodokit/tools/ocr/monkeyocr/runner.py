@@ -92,7 +92,7 @@ def _ensure_remote_compat_artifacts(parse_output_dir: Path, *, output_name: str,
     """补齐远端旧格式输出，确保满足上层完整性判定。
 
     旧版远端输出常见为: `{output_name}.md` 与 `{output_name}_middle.json`。
-    上层 A055 需要 `reconstructed_content.md`、`normalized_structured.json`
+    上层 A070 需要 `reconstructed_content.md`、`normalized_structured.json`
     以及 `parse_record.json`、`quality_report.json`。
     """
 
@@ -237,7 +237,7 @@ def stop_remote_monkeyocr_jobs(runtime_settings: Dict[str, Any]) -> Dict[str, An
 
     ssh_cfg = _load_ssh_connection(dict(remote_cfg.get("ssh") or {}))
     remote_base = _stringify(ssh_cfg.get("remote_base")).rstrip("/")
-    tmux_prefix = _stringify(ssh_cfg.get("tmux_session_prefix")) or "a055"
+    tmux_prefix = _stringify(ssh_cfg.get("tmux_session_prefix")) or "a070"
 
     tmux_prefix_quoted = shlex.quote(tmux_prefix)
     remote_base_quoted = shlex.quote(remote_base)
@@ -264,7 +264,7 @@ def launch_remote_tmux_command(
     runtime_settings: Dict[str, Any],
     *,
     remote_command: str,
-    session_prefix: str = "a055",
+    session_prefix: str = "a070",
     session_name: str = "",
     timeout: int = 60,
 ) -> Dict[str, Any]:
@@ -298,7 +298,7 @@ def launch_remote_tmux_command(
     if not command_text:
         raise ValueError("remote_command 不能为空")
 
-    resolved_prefix = _stringify(session_prefix) or "a055"
+    resolved_prefix = _stringify(session_prefix) or "a070"
     resolved_session_name = _stringify(session_name)
     if not resolved_session_name:
         resolved_session_name = f"{resolved_prefix}_{_now_ts()[-8:]}"
@@ -503,7 +503,7 @@ def _run_remote_monkeyocr(
         tmux_session = ""
         ssh_result: Dict[str, Any]
         if use_tmux:
-            tmux_prefix = _stringify(ssh_cfg.get("tmux_session_prefix")) or "a055"
+            tmux_prefix = _stringify(ssh_cfg.get("tmux_session_prefix")) or "a070"
             tmux_session = f"{tmux_prefix}_{job_id[-8:]}"
             launch_cmd = f"tmux new-session -d -s {shlex.quote(tmux_session)} {shlex.quote(remote_cmd)}"
             ssh_result = _ssh_run(ssh_cfg, launch_cmd, timeout=max(timeout, 30))

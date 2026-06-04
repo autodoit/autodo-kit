@@ -1,7 +1,7 @@
-﻿"""A080 普通文献泛读事务。
+﻿"""A150 普通文献泛读事务。
 
-A080 优先消费正式 `A080` 阶段队列，并结合 `文献主表.current_parse_*`
-与结构化摘要字段完成统一预处理；粗读候选筛选与批次汇总已剥离到 A095。
+A150 优先消费正式 `A150` 阶段队列，并结合 `文献主表.current_parse_*`
+与结构化摘要字段完成统一预处理；粗读候选筛选与批次汇总已剥离到 A160。
 旧 reading_state 仅保留兼容回写。
 """
 
@@ -240,7 +240,7 @@ def _light_patch_analysis_notes(note_paths: Dict[str, Path], *, cite_key: str, t
     lines_map = {
         "trajectory": [f"- {cite_key}《{title}》：补充进入当前研究脉络的相关性判断。", *problem_lines[:1]],
         "core_findings": [f"- {cite_key}《{title}》：{finding_lines[0] if finding_lines else '形成初步核心发现占位。'}"],
-        "controversies": [f"- {cite_key}《{title}》：当前仅形成轻量争议占位，待 A100 正式修订。"],
+        "controversies": [f"- {cite_key}《{title}》：当前仅形成轻量争议占位，待 A170 正式修订。"],
         "future_directions": [f"- {cite_key}《{title}》：建议结合深读判断未来研究推进方向。"],
         "framework": [f"- {cite_key}《{title}》：方法/变量线索：{method_lines[0] if method_lines else '待补充'}"],
     }
@@ -331,23 +331,23 @@ def _build_followup_queue_rows(
 def _build_a095_queue_rows(state_df: pd.DataFrame) -> List[Dict[str, Any]]:
     return _build_followup_queue_rows(
         state_df,
-        stage="A095",
-        source_affair="A080",
-        preferred_next_stage="A100",
-        reason_fallback="A080 普通文献泛读完成预处理，进入 A095 普通文献研读候选视图构建",
+        stage="A160",
+        source_affair="A150",
+        preferred_next_stage="A170",
+        reason_fallback="A150 普通文献泛读完成预处理，进入 A160 普通文献研读候选视图构建",
         theme_relation_fallback="a080_to_a095",
         bucket="non_review_rough_read",
         scope_key="a080_to_a095",
     )
 
 
-def _build_a100_queue_rows(state_df: pd.DataFrame, *, source_affair: str = "A095") -> List[Dict[str, Any]]:
+def _build_a100_queue_rows(state_df: pd.DataFrame, *, source_affair: str = "A160") -> List[Dict[str, Any]]:
     return _build_followup_queue_rows(
         state_df,
-        stage="A100",
+        stage="A170",
         source_affair=source_affair,
-        preferred_next_stage="A100",
-        reason_fallback=f"{source_affair} 完成普通文献研读候选筛选与批次汇总，进入 A100 文献批判性研读",
+        preferred_next_stage="A170",
+        reason_fallback=f"{source_affair} 完成普通文献研读候选筛选与批次汇总，进入 A170 文献批判性研读",
         theme_relation_fallback=f"{source_affair.lower()}_to_a100",
         bucket="non_review_batch_summary",
         scope_key=f"{source_affair.lower()}_to_a100",
@@ -725,11 +725,11 @@ def _load_preprocess_pool(
     literature_df: pd.DataFrame,
     state_df: pd.DataFrame,
 ) -> tuple[pd.DataFrame, str]:
-    """优先从正式 A080 阶段队列构建输入池，必要时兼容旧 reading_state。"""
+    """优先从正式 A150 阶段队列构建输入池，必要时兼容旧 reading_state。"""
 
     queue_df = load_reading_queue_df(
         content_db,
-        stage="A080",
+        stage="A150",
         only_current=True,
         queue_statuses=["queued", "candidate", "in_progress"],
     )
@@ -768,7 +768,7 @@ def _load_preprocess_pool(
 def _seed_state_from_legacy_queue(content_db: Path) -> int:
     queue_df = load_reading_queue_df(
         content_db,
-        stage="A080",
+        stage="A150",
         only_current=True,
         queue_statuses=["queued", "candidate", "in_progress"],
     )
@@ -786,7 +786,7 @@ def _seed_state_from_legacy_queue(content_db: Path) -> int:
                 "uid_literature": uid_literature,
                 "cite_key": cite_key,
                 "source_stage": "A080_legacy_queue",
-                "recommended_reason": _stringify(row.get("recommended_reason")) or "legacy A080 queue seed",
+                "recommended_reason": _stringify(row.get("recommended_reason")) or "legacy A150 queue seed",
                 "theme_relation": _stringify(row.get("theme_relation")) or "legacy_a080_queue",
                 "source_origin": _stringify(row.get("source_origin")) or "legacy_queue",
                 "pending_preprocess": 1,
@@ -884,7 +884,7 @@ def _write_related_literature_items(output_dir: Path, frame: pd.DataFrame) -> li
         "manual_guidance": "人工提示",
         "failure_reason": "失败原因",
     }
-    lines = ["# A080 相关文献条目", "", f"共 {len(snapshot_df)} 条。", ""]
+    lines = ["# A150 相关文献条目", "", f"共 {len(snapshot_df)} 条。", ""]
     if snapshot_df.empty:
         lines.append("当前任务没有产出可记录的相关文献条目。")
     else:
@@ -901,12 +901,12 @@ def _write_related_literature_items(output_dir: Path, frame: pd.DataFrame) -> li
     return [csv_path, md_path]
 
 
-@affair_auto_git_commit("A080")
+@affair_auto_git_commit("A150")
 def execute(config_path: Path) -> List[Path]:
     config_path = Path(config_path)
     raw_cfg = load_json_or_py(config_path)
     if not isinstance(raw_cfg, dict):
-        raise ValueError("A080 配置必须是字典")
+        raise ValueError("A150 配置必须是字典")
 
     workspace_root = _resolve_workspace_root(config_path, raw_cfg)
     legacy_output_dir = resolve_legacy_output_dir(
@@ -914,7 +914,7 @@ def execute(config_path: Path) -> List[Path]:
         config_path,
         default_path=workspace_root / "tasks" / "A080_non_review_preprocess",
     )
-    output_dir = create_task_instance_dir(workspace_root, "A080")
+    output_dir = create_task_instance_dir(workspace_root, "A150")
     task_uid = output_dir.name
     global_config_path = _resolve_global_config_path(workspace_root)
 
@@ -964,9 +964,9 @@ def execute(config_path: Path) -> List[Path]:
         content_db=content_db,
         source_df=state_df,
         output_dir=output_dir,
-        source_stage="A080",
-        upstream_stage="A075",
-        downstream_stage="A080",
+        source_stage="A150",
+        upstream_stage="A140",
+        downstream_stage="A150",
         parse_level="non_review_rough",
         literature_scope="non_review",
         runtime_settings=parse_runtime,
@@ -1018,7 +1018,7 @@ def execute(config_path: Path) -> List[Path]:
             state_row = {
                 "uid_literature": uid_literature,
                 "cite_key": cite_key,
-                "source_stage": "A080",
+                "source_stage": "A150",
                 "recommended_reason": recommended_reason,
                 "theme_relation": theme_relation,
                 "source_origin": source_origin,
@@ -1050,7 +1050,7 @@ def execute(config_path: Path) -> List[Path]:
                 {
                     "uid_literature": uid_literature,
                     "cite_key": cite_key,
-                    "source_stage": _stringify(existing.get("source_stage")) or "A075",
+                    "source_stage": _stringify(existing.get("source_stage")) or "A140",
                     "recommended_reason": recommended_reason,
                     "theme_relation": theme_relation,
                     "source_origin": source_origin,
@@ -1113,7 +1113,7 @@ def execute(config_path: Path) -> List[Path]:
     if a095_queue_rows:
         upsert_reading_queue_rows(content_db, a095_queue_rows)
 
-    consumed_a080_queue_count = _consume_current_stage_queue_rows(content_db, stage="A080", ready_df=ready_df)
+    consumed_a080_queue_count = _consume_current_stage_queue_rows(content_db, stage="A150", ready_df=ready_df)
 
     result_df = pd.DataFrame(result_rows)
     index_path = output_dir / OUTPUT_INDEX
@@ -1121,16 +1121,16 @@ def execute(config_path: Path) -> List[Path]:
     related_item_paths = _write_related_literature_items(output_dir, result_df)
 
     gate_review = build_gate_review(
-        node_uid="A080",
+        node_uid="A150",
         node_name="普通文献泛读",
         summary=(
-            f"消费 A080 输入池 {len(state_df)} 条（mode={input_mode}）；"
+            f"消费 A150 输入池 {len(state_df)} 条（mode={input_mode}）；"
             f"legacy queue 补种 {legacy_seeded_count} 条；"
             f"解析就绪 {ready_count} 条；"
-            f"写入 A095 队列 {len(a095_queue_rows)} 条；"
+            f"写入 A160 队列 {len(a095_queue_rows)} 条；"
             f"失败 {failed_count} 条；"
             f"后处理成功 {postprocess_success_count} 条；"
-            f"消费 A080 兼容队列 {consumed_a080_queue_count} 条。"
+            f"消费 A150 兼容队列 {consumed_a080_queue_count} 条。"
         ),
         checks=[
             {"name": "a080_input_count", "value": len(state_df)},
@@ -1163,8 +1163,8 @@ def execute(config_path: Path) -> List[Path]:
             "parse_runtime": parse_runtime,
             "postprocess_enabled": bool(postprocess_settings.get("enabled", False)),
             "input_mode": input_mode,
-            "upstream_stage": "A075",
-            "downstream_stage": "A095",
+            "upstream_stage": "A140",
+            "downstream_stage": "A160",
             "allow_unparsed_read_bypass": allow_unparsed_read_bypass,
             "auto_enable_unparsed_for_failed_items": auto_enable_unparsed_for_failed_items,
             "a095_queue_count": len(a095_queue_rows),
@@ -1188,11 +1188,11 @@ def execute(config_path: Path) -> List[Path]:
         append_aok_log_event(
             event_type="A080_NON_REVIEW_PREPROCESS_READY",
             project_root=workspace_root,
-            affair_code="A080",
+            affair_code="A150",
             handler_name="普通文献泛读",
             agent_names=["ar_A080_普通文献泛读事务智能体_v7"],
-            skill_names=["a080-nonreview-preprocess-v6"],
-            reasoning_summary="完成普通文献预处理，并把可泛读条目推进到 A095 普通文献研读候选视图构建。",
+            skill_names=["a150-nonreview-preprocess-v6"],
+            reasoning_summary="完成普通文献预处理，并把可泛读条目推进到 A160 普通文献研读候选视图构建。",
             gate_review=gate_review,
             gate_review_path=gate_path,
             artifact_paths=artifact_paths,

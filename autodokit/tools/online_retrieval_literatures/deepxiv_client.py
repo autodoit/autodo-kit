@@ -373,7 +373,7 @@ def download_single(config: dict[str, Any], record_payload: dict[str, Any]) -> d
             "result": {
                 "status": "BLOCKED",
                 "error_type": "MissingPdfUrl",
-                "error": "DeepXiv 记录缺少可用 pdf_url，无法执行 A045 物化。",
+                "error": "DeepXiv 记录缺少可用 pdf_url，无法执行 A050 物化。",
             },
             "output_path": "",
         }

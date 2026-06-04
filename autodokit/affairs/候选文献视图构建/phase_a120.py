@@ -1,6 +1,6 @@
 ﻿"""综述参考文献预处理与笔记骨架事务。
 
-A065 承接 A060 已就绪的综述解析资产，执行参考文献处理、标准笔记骨架生成，并写入 A080。
+A120 承接 A110 已就绪的综述解析资产，执行参考文献处理、标准笔记骨架生成，并写入 A150。
 """
 
 from __future__ import annotations
@@ -56,7 +56,7 @@ def _load_note_paths_from_created_notes_csv(path: Path) -> list[Path]:
 def _build_review_pool_from_queue(content_db: Path, literature_table: pd.DataFrame) -> pd.DataFrame:
     queue_df = load_reading_queue_df(
         content_db,
-        stage="A065",
+        stage="A120",
         only_current=True,
         queue_statuses=["queued", "candidate", "in_progress"],
     )
@@ -74,7 +74,7 @@ def _build_review_pool_from_queue(content_db: Path, literature_table: pd.DataFra
 
 
 def _build_review_pool_from_state(content_db: Path, literature_table: pd.DataFrame) -> pd.DataFrame:
-    """从 review_state 构建 A065 输入池。"""
+    """从 review_state 构建 A120 输入池。"""
 
     state_df = load_review_state_df(content_db, flag_filters={"pending_reference_preprocess": 1})
     if state_df.empty:
@@ -89,12 +89,12 @@ def _build_review_pool_from_state(content_db: Path, literature_table: pd.DataFra
     return merged.fillna("")
 
 
-@affair_auto_git_commit("A065")
+@affair_auto_git_commit("A120")
 def execute(config_path: Path) -> List[Path]:
     config_path = Path(config_path)
     raw_cfg = load_json_or_py(config_path)
     if not isinstance(raw_cfg, dict):
-        raise ValueError("A065 配置必须是字典")
+        raise ValueError("A120 配置必须是字典")
 
     workspace_root = _resolve_workspace_root(config_path, raw_cfg)
     legacy_output_dir = resolve_legacy_output_dir(
@@ -102,7 +102,7 @@ def execute(config_path: Path) -> List[Path]:
         config_path,
         default_path=workspace_root / "steps" / "A065_review_reference_preprocessing",
     )
-    output_dir = create_task_instance_dir(workspace_root, "A065")
+    output_dir = create_task_instance_dir(workspace_root, "A120")
 
     global_config_path = workspace_root / "config" / "config.json"
     if not global_config_path.exists():
@@ -112,7 +112,7 @@ def execute(config_path: Path) -> List[Path]:
 
     content_db, db_input_key = _resolve_content_db_path(raw_cfg, global_cfg, config_path)
     if content_db is None:
-        raise ValueError("A065 需要 content_db（可由节点配置或 config.paths.content_db_path 提供）")
+        raise ValueError("A120 需要 content_db（可由节点配置或 config.paths.content_db_path 提供）")
 
     literature_table = load_reference_main_table(content_db)
     literature_table = _enrich_literature_with_primary_attachments(literature_table, content_db)
@@ -124,7 +124,7 @@ def execute(config_path: Path) -> List[Path]:
     if review_read_pool.empty and review_read_pool_path.exists():
         review_read_pool = _safe_read_csv(review_read_pool_path)
     if review_read_pool.empty:
-        raise FileNotFoundError("未找到可用的综述阅读池（A065 队列或 review_read_pool.csv）。")
+        raise FileNotFoundError("未找到可用的综述阅读池（A120 队列或 review_read_pool.csv）。")
     max_review_items = int(raw_cfg.get("max_review_items") or 0)
     if max_review_items > 0:
         review_read_pool = review_read_pool.head(max_review_items).copy()
@@ -156,7 +156,7 @@ def execute(config_path: Path) -> List[Path]:
         enable_reference_line_repair=bool(raw_cfg.get("enable_reference_line_repair", True)),
         reference_line_repair_model=str(raw_cfg.get("reference_line_repair_model") or "auto"),
         placeholder_source=str(raw_cfg.get("placeholder_source") or "placeholder_from_a065_review_scan"),
-        run_uid_prefix="a065",
+        run_uid_prefix="a120",
     )
 
     note_timezone = str(
@@ -183,11 +183,11 @@ def execute(config_path: Path) -> List[Path]:
             validation_errors.append(f"笔记时区标准化失败: {exc}")
 
     a080_queue_rows: List[Dict[str, Any]] = []
-    downstream_stage = _stringify(raw_cfg.get("downstream_stage")) or "A080"
+    downstream_stage = _stringify(raw_cfg.get("downstream_stage")) or "A150"
     downstream_reason = (
-        "A065 参考文献处理与标准笔记骨架完成，进入普通文献候选视图构建入口"
-        if downstream_stage == "A075"
-        else "A065 参考文献处理与标准笔记骨架完成，进入非综述候选构建入口"
+        "A120 参考文献处理与标准笔记骨架完成，进入普通文献候选视图构建入口"
+        if downstream_stage == "A140"
+        else "A120 参考文献处理与标准笔记骨架完成，进入非综述候选构建入口"
     )
     for _, row in review_read_pool.fillna("").iterrows():
         uid_literature = str(row.get("uid_literature") or "").strip()
@@ -199,16 +199,16 @@ def execute(config_path: Path) -> List[Path]:
                 "uid_literature": uid_literature,
                 "cite_key": cite_key,
                 "stage": downstream_stage,
-                "source_affair": "A065",
+                "source_affair": "A120",
                 "queue_status": "queued",
                 "priority": row.get("score") or row.get("priority") or 68.0,
                 "bucket": "review_preprocessed",
                 "preferred_next_stage": downstream_stage,
                 "recommended_reason": downstream_reason,
                 "theme_relation": str(raw_cfg.get("research_topic") or raw_cfg.get("topic") or "A065_topic"),
-                "source_round": "a065",
+                "source_round": "a120",
                 "run_uid": prepared_assets.get("quality_summary", {}).get("run_uid") or "",
-                "scope_key": "a065",
+                "scope_key": "a120",
                 "is_current": 1,
             }
         )
@@ -224,7 +224,7 @@ def execute(config_path: Path) -> List[Path]:
             {
                 "uid_literature": uid_literature,
                 "cite_key": cite_key,
-                "source_stage": "A065",
+                "source_stage": "A120",
                 "pending_reference_preprocess": 0,
                 "reference_preprocessed": 1,
                 "pending_review_read": 1,
@@ -234,10 +234,10 @@ def execute(config_path: Path) -> List[Path]:
         upsert_review_state_rows(content_db, review_state_rows)
 
     gate_review = build_gate_review(
-        node_uid="A065",
+        node_uid="A120",
         node_name="综述参考文献预处理与笔记骨架",
         summary=(
-            f"完成 A065：阅读池 {len(review_read_pool)} 条，"
+            f"完成 A120：阅读池 {len(review_read_pool)} 条，"
             f"创建/更新笔记 {prepared_assets.get('created_note_count', 0)} 条，"
             f"映射参考文献 {prepared_assets.get('mapped_reference_count', 0)} 条。"
         ),
@@ -282,11 +282,11 @@ def execute(config_path: Path) -> List[Path]:
         event_type="A065_REVIEW_REFERENCE_PREPROCESSING_COMPLETED",
         project_root=workspace_root,
         enabled=logging_enabled,
-        affair_code="A065",
+        affair_code="A120",
         handler_name="综述参考文献预处理与笔记骨架",
         agent_names=["ar_A065_综述参考文献预处理与笔记骨架事务智能体_v7"],
         skill_names=["ar_A065_综述参考文献预处理与笔记骨架_v5", "m_ObsidianMarkdown_v1"],
-        reasoning_summary="承接 A060 解析资产，完成参考文献处理与笔记骨架生成并推进到 A080。",
+        reasoning_summary="承接 A110 解析资产，完成参考文献处理与笔记骨架生成并推进到 A150。",
         gate_review=gate_review,
         gate_review_path=gate_path,
         artifact_paths=[

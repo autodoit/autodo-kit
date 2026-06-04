@@ -19,13 +19,13 @@ from autodokit.tools.atomic.task_aok.git_snapshot_ledger import (
 from autodokit.tools.time_utils import now_iso
 
 
-SUPPORTED_TARGET_NODES = {"A020", "A040", "A045", "A050", "A055"}
+SUPPORTED_TARGET_NODES = {"A020", "A040", "A050", "A060", "A070"}
 DEFAULT_REQUEST_TYPE_BY_NODE = {
     "A020": "import_preprocess",
     "A040": "retrieval",
-    "A045": "download_fulltext",
-    "A050": "preprocess_priority",
-    "A055": "unified_preprocess",
+    "A050": "download_fulltext",
+    "A060": "preprocess_priority",
+    "A070": "unified_preprocess",
 }
 PENDING_REQUEST_STATUSES = {"pending", "待分发", "dispatched", "已分发"}
 RUNNING_REQUEST_STATUSES = {"running", "运行中"}
@@ -226,7 +226,7 @@ def _build_standard_a040_payload_from_feedback_request(
                 "source_task_uid": _stringify(feedback_request.get("source_task_uid")),
                 "resume_policy": "manual_or_scheduler",
             },
-            "next_suggested_node": "A045" if bool(feedback_request.get("need_fulltext", False)) else "A040",
+            "next_suggested_node": "A050" if bool(feedback_request.get("need_fulltext", False)) else "A040",
         },
     }
 
@@ -334,7 +334,7 @@ def _apply_a050_request_business_payload(runtime_cfg: Dict[str, Any], business_p
     updated = dict(runtime_cfg)
     profile = _normalize_enum_value("profile", business_payload.get("profile") or updated.get("profile") or "混合", default="mixed").lower()
     updated["profile"] = profile or "mixed"
-    updated["node_code"] = "A050"
+    updated["node_code"] = "A060"
     updated["execution_mode"] = _normalize_enum_value("execution_mode", "仅生成优先级", default="priority_only")
     return updated
 
@@ -343,7 +343,7 @@ def _apply_a055_request_business_payload(runtime_cfg: Dict[str, Any], business_p
     updated = dict(runtime_cfg)
     profile = _normalize_enum_value("profile", business_payload.get("profile") or updated.get("profile") or "混合", default="mixed").lower()
     updated["profile"] = profile or "mixed"
-    updated["node_code"] = "A055"
+    updated["node_code"] = "A070"
     updated["execution_mode"] = _normalize_enum_value("execution_mode", "执行完整预处理", default="full_preprocess")
     return updated
 
@@ -460,7 +460,7 @@ def register_a040_retrieval_request(
     workspace_root: str | Path,
     payload: Dict[str, Any] | None = None,
     feedback_request: Dict[str, Any] | None = None,
-    source_node: str = "A080",
+    source_node: str = "A150",
     priority: str = "中",
     creator_type: str = "tool",
     creator_id: str = "affair_request_bus",
@@ -498,7 +498,7 @@ def register_a040_requests_from_feedback(
     *,
     workspace_root: str | Path,
     feedback_requests: List[Dict[str, Any]],
-    source_node: str = "A080",
+    source_node: str = "A150",
     priority: str = "中",
     creator_type: str = "tool",
     creator_id: str = "affair_request_bus",
@@ -561,12 +561,12 @@ def register_a045_download_request(
     tasks_db_path: str | Path | None = None,
 ) -> Dict[str, Any]:
     resolved_payload = dict(payload or {})
-    resolved_payload.setdefault("request_type", DEFAULT_REQUEST_TYPE_BY_NODE["A045"])
-    resolved_payload.setdefault("target_node", "A045")
-    resolved_payload.setdefault("request_uid", _build_request_uid("A045"))
+    resolved_payload.setdefault("request_type", DEFAULT_REQUEST_TYPE_BY_NODE["A050"])
+    resolved_payload.setdefault("target_node", "A050")
+    resolved_payload.setdefault("request_uid", _build_request_uid("A050"))
     return register_affair_request(
         workspace_root=workspace_root,
-        target_node="A045",
+        target_node="A050",
         payload=resolved_payload,
         priority=priority,
         creator_type=creator_type,
@@ -587,12 +587,12 @@ def register_a050_preprocess_request(
     tasks_db_path: str | Path | None = None,
 ) -> Dict[str, Any]:
     resolved_payload = dict(payload or {})
-    resolved_payload.setdefault("request_type", DEFAULT_REQUEST_TYPE_BY_NODE["A050"])
-    resolved_payload.setdefault("target_node", "A050")
-    resolved_payload.setdefault("request_uid", _build_request_uid("A050"))
+    resolved_payload.setdefault("request_type", DEFAULT_REQUEST_TYPE_BY_NODE["A060"])
+    resolved_payload.setdefault("target_node", "A060")
+    resolved_payload.setdefault("request_uid", _build_request_uid("A060"))
     return register_affair_request(
         workspace_root=workspace_root,
-        target_node="A050",
+        target_node="A060",
         payload=resolved_payload,
         priority=priority,
         creator_type=creator_type,
@@ -613,12 +613,12 @@ def register_a055_preprocess_request(
     tasks_db_path: str | Path | None = None,
 ) -> Dict[str, Any]:
     resolved_payload = dict(payload or {})
-    resolved_payload.setdefault("request_type", DEFAULT_REQUEST_TYPE_BY_NODE["A055"])
-    resolved_payload.setdefault("target_node", "A055")
-    resolved_payload.setdefault("request_uid", _build_request_uid("A055"))
+    resolved_payload.setdefault("request_type", DEFAULT_REQUEST_TYPE_BY_NODE["A070"])
+    resolved_payload.setdefault("target_node", "A070")
+    resolved_payload.setdefault("request_uid", _build_request_uid("A070"))
     return register_affair_request(
         workspace_root=workspace_root,
-        target_node="A055",
+        target_node="A070",
         payload=resolved_payload,
         priority=priority,
         creator_type=creator_type,
@@ -713,11 +713,11 @@ def build_affair_request_runtime_config(
         runtime_cfg = _apply_a020_request_business_payload(runtime_cfg, business_payload)
     elif normalized_target_node == "A040":
         runtime_cfg = _apply_a040_request_business_payload(runtime_cfg, business_payload)
-    elif normalized_target_node == "A045":
-        runtime_cfg = _apply_a045_request_business_payload(runtime_cfg, business_payload)
     elif normalized_target_node == "A050":
+        runtime_cfg = _apply_a045_request_business_payload(runtime_cfg, business_payload)
+    elif normalized_target_node == "A060":
         runtime_cfg = _apply_a050_request_business_payload(runtime_cfg, business_payload)
-    elif normalized_target_node == "A055":
+    elif normalized_target_node == "A070":
         runtime_cfg = _apply_a055_request_business_payload(runtime_cfg, business_payload)
 
     return {

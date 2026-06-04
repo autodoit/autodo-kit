@@ -1,4 +1,4 @@
-"""非标准解析导入后的解析资产登记与 A060 准入治理工具。"""
+"""非标准解析导入后的解析资产登记与 A110 准入治理工具。"""
 
 from __future__ import annotations
 
@@ -209,7 +209,7 @@ def _repair_nonstandard_promoted_review_state(content_db: Path, rows: list[dict[
 
 
 def _demote_nonstandard_a065_queue_rows(content_db: Path, rows: list[dict[str, Any]]) -> int:
-    """降级非标准工具写入的 A065 current 队列。"""
+    """降级非标准工具写入的 A120 current 队列。"""
 
     if not rows:
         return 0
@@ -236,7 +236,7 @@ def _demote_nonstandard_a065_queue_rows(content_db: Path, rows: list[dict[str, A
                        SET "{queue_is_current_column}" = 0,
                            "{queue_status_column}" = 'superseded',
                            "{queue_updated_at_column}" = ?
-                     WHERE COALESCE("{queue_stage_column}", '') = 'A065'
+                     WHERE COALESCE("{queue_stage_column}", '') = 'A120'
                        AND COALESCE("{queue_is_current_column}", 1) = 1
                        AND COALESCE("{queue_bucket_column}", '') = 'nonstandard_a060_backfill'
                        AND COALESCE("{uid_literature_column}", '') = ?
@@ -252,7 +252,7 @@ def _demote_nonstandard_a065_queue_rows(content_db: Path, rows: list[dict[str, A
 
 
 def backfill_a060_state_from_parse_assets(payload: dict[str, Any]) -> dict[str, Any]:
-    """基于解析资产执行登记、修复与可选的 A060 后状态提升。
+    """基于解析资产执行登记、修复与可选的 A110 后状态提升。
 
     Args:
         payload: 运行参数。
@@ -351,7 +351,7 @@ def backfill_a060_state_from_parse_assets(payload: dict[str, Any]) -> dict[str, 
 
         eligible_rows.append(row)
 
-    run_uid = f"manual-a060-backfill-{now_compact()}"
+    run_uid = f"manual-a110-backfill-{now_compact()}"
     review_rows: list[dict[str, Any]] = []
     queue_rows: list[dict[str, Any]] = []
     if promotion_enabled:
@@ -364,9 +364,9 @@ def backfill_a060_state_from_parse_assets(payload: dict[str, Any]) -> dict[str, 
                 {
                     "uid_literature": uid_literature,
                     "cite_key": cite_key,
-                    "source_stage": "A060",
+                    "source_stage": "A110",
                     "source_origin": "nonstandard_parse_migration",
-                    "recommended_reason": "非标准解析资产导入后显式提升为 A060 后状态",
+                    "recommended_reason": "非标准解析资产导入后显式提升为 A110 后状态",
                     "pending_review_parse": 0,
                     "review_parse_ready": 1,
                     "pending_reference_preprocess": 1,
@@ -383,13 +383,13 @@ def backfill_a060_state_from_parse_assets(payload: dict[str, Any]) -> dict[str, 
                 {
                     "uid_literature": uid_literature,
                     "cite_key": cite_key,
-                    "stage": "A065",
-                    "source_affair": "A060",
+                    "stage": "A120",
+                    "source_affair": "A110",
                     "queue_status": "queued",
                     "priority": 68.0,
                     "bucket": "review_parse_ready",
-                    "preferred_next_stage": "A080",
-                    "recommended_reason": "A060 状态补齐后进入 A065",
+                    "preferred_next_stage": "A150",
+                    "recommended_reason": "A110 状态补齐后进入 A120",
                     "source_round": "manual_backfill",
                     "run_uid": run_uid,
                     "scope_key": "nonstandard_a060_backfill",

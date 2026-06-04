@@ -1,4 +1,4 @@
-﻿"""A060/A070 综述候选与综述研读事务。"""
+﻿"""A110/A130 综述候选与综述研读事务。"""
 
 from __future__ import annotations
 
@@ -102,19 +102,19 @@ DEFAULT_STRUCTURED_VARIANTS: Tuple[Tuple[str, str], ...] = (
 )
 
 MERGED_FOLLOWUP_AFFAIRS: Tuple[Tuple[str, str], ...] = (
-    ("A065", "autodokit.affairs.候选文献视图构建.phase_a065"),
-    ("A070", "autodokit.affairs.候选文献视图构建.phase_a070"),
-    ("A075", "autodokit.affairs.候选文献视图构建.phase_a075"),
+    ("A120", "autodokit.affairs.候选文献视图构建.phase_a065"),
+    ("A130", "autodokit.affairs.候选文献视图构建.phase_a070"),
+    ("A140", "autodokit.affairs.候选文献视图构建.phase_a075"),
 )
 
 MERGED_PHASE_OUTPUT_DIRS: Dict[str, str] = {
-    "A065": "A070_phase_a065_review_reference_preprocessing",
-    "A070": "A070_phase_a070_review_synthesis",
-    "A075": "A075_non_review_candidate_views",
+    "A120": "A070_phase_a065_review_reference_preprocessing",
+    "A130": "A070_phase_a070_review_synthesis",
+    "A140": "A075_non_review_candidate_views",
 }
 
 MERGED_PHASE_DEFAULT_CONFIGS: Dict[str, Dict[str, Any]] = {
-    "A065": {
+    "A120": {
         "ensure_parse_on_entry": False,
         "enable_reference_block_llm": True,
         "reference_block_model": "qwen3.5-plus",
@@ -128,7 +128,7 @@ MERGED_PHASE_DEFAULT_CONFIGS: Dict[str, Dict[str, Any]] = {
         "placeholder_source": "placeholder_from_a065_review_scan",
         "structured_extractors": {"enable_images": False},
     },
-    "A070": {
+    "A130": {
         "ensure_parse_on_entry": False,
         "enable_review_state_llm": True,
         "review_state_model": "qwen3.5-plus",
@@ -143,13 +143,13 @@ MERGED_PHASE_DEFAULT_CONFIGS: Dict[str, Dict[str, Any]] = {
         },
         "downstream_delivery": {
             "main_channel": "文献流程状态",
-            "a080_stage": "A080",
+            "a080_stage": "A150",
             "allow_csv_export": True,
             "allow_markdown_export": True,
             "export_preference": ["csv", "markdown"],
         },
     },
-    "A075": {
+    "A140": {
         "seed_sources": {
             "priority_csv": "review_priority_candidates.csv",
             "reference_csv": "review_reference_candidates.csv",
@@ -166,7 +166,7 @@ MERGED_PHASE_DEFAULT_CONFIGS: Dict[str, Dict[str, Any]] = {
         "export_contract": {
             "export_csv": True,
             "export_markdown": True,
-            "target_stages": ["A080"],
+            "target_stages": ["A150"],
         },
     },
 }
@@ -200,7 +200,7 @@ def _build_merged_phase_config(
     workspace_root: Path,
     raw_cfg: Dict[str, Any],
 ) -> Dict[str, Any]:
-    """基于 A060 配置派生内部 merged phase 配置。"""
+    """基于 A110 配置派生内部 merged phase 配置。"""
 
     content_db_path, _ = resolve_content_db_config(
         raw_cfg,
@@ -230,7 +230,7 @@ def _build_merged_phase_config(
         "postprocess_contract": raw_cfg.get("postprocess_contract") or raw_cfg.get("后处理契约") or {},
         "后处理契约": raw_cfg.get("后处理契约") or raw_cfg.get("postprocess_contract") or {},
     }
-    if node_code == "A075":
+    if node_code == "A140":
         common_cfg["seed_sources"] = {
             "a070_exports_dir": str(workspace_root / "knowledge" / "audits"),
             **dict(common_cfg.get("seed_sources") or {}),
@@ -252,7 +252,7 @@ def _run_merged_followup_affairs(
     output_dir: Path,
     selected_nodes: Iterable[str] | None = None,
 ) -> List[Path]:
-    """顺序执行已迁入 A060 目录下的本地 phase。"""
+    """顺序执行已迁入 A110 目录下的本地 phase。"""
 
     merged_config_dir = output_dir / "merged_phase_configs"
     merged_config_dir.mkdir(parents=True, exist_ok=True)
@@ -490,7 +490,7 @@ def _ensure_structured_reference_lines(
         if _is_monkeyocr_converter(structured_converter):
             if structured_generation_required:
                 raise ValueError(
-                    "当前 A060 仅消费文献主表 current_parse/结构化摘要，不再在事务内补造 MonkeyOCR 解析资产。"
+                    "当前 A110 仅消费文献主表 current_parse/结构化摘要，不再在事务内补造 MonkeyOCR 解析资产。"
                     f" uid_literature={_stringify(source_record.get('uid_literature')) or 'unknown'}"
                 )
             return working_literature, source_record, [], [], False
@@ -660,7 +660,7 @@ def _collect_direct_structured_review_rows(
     structured_dir: Path,
     research_topic: str,
 ) -> pd.DataFrame:
-    """收集已经存在 structured 解析目录的文献，直接作为 A050 阅读池。"""
+    """收集已经存在 structured 解析目录的文献，直接作为 A060 阅读池。"""
 
     if literature_table.empty or not structured_dir.exists() or not structured_dir.is_dir():
         return literature_table.iloc[0:0].copy()
@@ -719,7 +719,7 @@ def _build_direct_structured_review_views(
     batch_size: int,
     extra_fields: Iterable[str] | None = None,
 ) -> Dict[str, pd.DataFrame]:
-    """把已解析目录命中的文献直接转成 A050 综述视图。"""
+    """把已解析目录命中的文献直接转成 A060 综述视图。"""
 
     if matched_table.empty:
         empty = pd.DataFrame()
@@ -940,7 +940,7 @@ def _render_standard_note_body(
     if reference_lines:
         placeholder_refs.extend([f"- {item}" for item in reference_lines])
     else:
-        placeholder_refs.append("- 待 A070 扫描后回填")
+        placeholder_refs.append("- 待 A130 扫描后回填")
     batch_lines = ["- 待补充批次"]
     if batch_rows:
         batch_lines = [
@@ -958,22 +958,22 @@ def _render_standard_note_body(
             "- 当前综述回链：[[" + (_stringify(row.get("cite_key")) or _stringify(row.get("uid_literature"))) + "]]",
             "",
             "## 研究问题",
-            "- 待 A070 填充",
+            "- 待 A130 填充",
             "",
             "## 研究方法与证据",
-            "- 待 A070 填充",
+            "- 待 A130 填充",
             "",
             "## 核心发现",
-            "- 待 A070 填充",
+            "- 待 A130 填充",
             "",
             "## 阅读批次",
             *batch_lines,
             "",
             "## 共识与争议",
-            "- 待 A070 填充",
+            "- 待 A130 填充",
             "",
             "## 未来方向",
-            "- 待 A070 填充",
+            "- 待 A130 填充",
             "",
             "## 摘要摘录",
             abstract or "- 待补充",
@@ -995,13 +995,13 @@ def _render_composite_note(title: str, summary: str) -> str:
             f"> {summary}",
             "",
             "## 输入综述",
-            "- 待 A070 回填 `[[cite_key]]` 列表",
+            "- 待 A130 回填 `[[cite_key]]` 列表",
             "",
             "## 结构化提要",
-            "- 待 A070 填充",
+            "- 待 A130 填充",
             "",
             "## 证据回链",
-            "- 待 A070 填充 `[[cite_key]]`",
+            "- 待 A130 填充 `[[cite_key]]`",
         ]
     )
 
@@ -1012,7 +1012,7 @@ def _write_standard_note_references(note_path: Path, reference_entries: List[str
     text = note_path.read_text(encoding="utf-8") if note_path.exists() else ""
     marker = "## 参考文献列表"
     prefix, _, _ = text.partition(marker)
-    entries = reference_entries or ["- 待 A070 扫描后回填"]
+    entries = reference_entries or ["- 待 A130 扫描后回填"]
     new_text = prefix.rstrip() + "\n\n" + marker + "\n" + "\n".join(entries) + "\n"
     note_path.write_text(new_text, encoding="utf-8")
 
@@ -1092,7 +1092,7 @@ def _prepare_review_assets(
     enable_reference_line_repair: bool = True,
     reference_line_repair_model: str = "auto",
     placeholder_source: str = "placeholder_from_a065_review_scan",
-    run_uid_prefix: str = "a065",
+    run_uid_prefix: str = "a120",
     enable_legacy_postprocess: bool = False,
     enable_llm_basic_cleanup: bool = True,
     basic_cleanup_llm_model: str = "qwen3.5-flash",
@@ -1308,23 +1308,23 @@ def _prepare_review_assets(
         queue_row = {
             "uid_literature": uid_literature,
             "cite_key": cite_key,
-            "stage": "A080",
-            "source_affair": "A065",
+            "stage": "A150",
+            "source_affair": "A120",
             "queue_status": "queued",
             "priority": source_record.get("score") or source_record.get("priority") or 68.0,
             "bucket": "review_preprocessed",
-            "preferred_next_stage": "A080",
-            "recommended_reason": "A065 参考文献处理与标准笔记骨架完成，进入非综述候选构建入口",
+            "preferred_next_stage": "A150",
+            "recommended_reason": "A120 参考文献处理与标准笔记骨架完成，进入非综述候选构建入口",
             "theme_relation": str(source_record.get("research_topic") or source_record.get("topic") or "A065_topic"),
-            "source_round": "a065",
+            "source_round": "a120",
             "run_uid": placeholder_run_uid,
-            "scope_key": "a065",
+            "scope_key": "a120",
             "is_current": 1,
         }
         review_row = {
             "uid_literature": uid_literature,
             "cite_key": cite_key,
-            "source_stage": "A065",
+            "source_stage": "A120",
             "pending_reference_preprocess": 0,
             "reference_preprocessed": 1,
             "pending_review_read": 1,
@@ -1474,7 +1474,7 @@ def _prepare_review_assets(
     if reference_scan_tag_rows:
         replace_tags_for_namespace(
             content_db,
-            namespace="a050/reference_scan",
+            namespace="a060/reference_scan",
             tag_rows=reference_scan_tag_rows,
             source_type="a050_review_scan",
         )
@@ -1507,7 +1507,7 @@ def _load_candidate_records(raw_cfg: Dict[str, Any]) -> List[Dict[str, Any]]:
     return []
 
 
-@affair_auto_git_commit("A060")
+@affair_auto_git_commit("A110")
 def execute(config_path: Path) -> List[Path]:
     """事务执行入口。"""
 
@@ -1518,7 +1518,7 @@ def execute(config_path: Path) -> List[Path]:
 
     if execution_mode in {"review_reading", "review_reading_only", "a070_review_reading"}:
         legacy_output_dir = resolve_legacy_output_dir(raw_cfg, config_path)
-        output_dir = create_task_instance_dir(workspace_root, "A070")
+        output_dir = create_task_instance_dir(workspace_root, "A130")
         global_config_path = workspace_root / "config" / "config.json"
         if not global_config_path.exists():
             global_config_path = None
@@ -1528,12 +1528,12 @@ def execute(config_path: Path) -> List[Path]:
             workspace_root=workspace_root,
             raw_cfg=raw_cfg,
             output_dir=output_dir,
-            selected_nodes=("A065", "A070"),
+            selected_nodes=("A120", "A130"),
         )
         gate_review = build_gate_review(
-            node_uid="A070",
+            node_uid="A130",
             node_name="综述文献研读",
-            summary=f"承接 A060 候选视图后完成 A065/A070 内部阶段，共输出产物 {len(merged_outputs)} 项。",
+            summary=f"承接 A110 候选视图后完成 A120/A130 内部阶段，共输出产物 {len(merged_outputs)} 项。",
             checks=[
                 {"name": "execution_mode", "value": execution_mode},
                 {"name": "executed_followup_count", "value": 2},
@@ -1542,11 +1542,11 @@ def execute(config_path: Path) -> List[Path]:
             artifacts=[str(path) for path in merged_outputs],
             recommendation="pass_next" if merged_outputs else "retry_current",
             score=92.0 if merged_outputs else 40.0,
-            issues=[] if merged_outputs else ["A070 未生成任何内部阶段产物。"],
+            issues=[] if merged_outputs else ["A130 未生成任何内部阶段产物。"],
             metadata={
                 "workspace_root": str(workspace_root),
                 "execution_mode": execution_mode,
-                "internal_followups": ["A065", "A070"],
+                "internal_followups": ["A120", "A130"],
             },
         )
         gate_path = output_dir / "gate_review.json"
@@ -1555,11 +1555,11 @@ def execute(config_path: Path) -> List[Path]:
             event_type="A070_REVIEW_READING_COMPLETED",
             project_root=workspace_root,
             enabled=logging_enabled,
-            affair_code="A070",
+            affair_code="A130",
             handler_name="综述文献研读",
             agent_names=["ar_A070_综述文献研读事务智能体_v7"],
             skill_names=["ar_A070_综述文献研读_v7", "m_ObsidianMarkdown_v1"],
-            reasoning_summary="承接 A060 候选视图，顺序执行 A065 参考文献预处理与 A070 综述综合研读。",
+            reasoning_summary="承接 A110 候选视图，顺序执行 A120 参考文献预处理与 A130 综述综合研读。",
             gate_review=gate_review,
             gate_review_path=gate_path,
             artifact_paths=[gate_path, *merged_outputs],
@@ -1577,7 +1577,7 @@ def execute(config_path: Path) -> List[Path]:
     global_cfg = _load_global_config(global_config_path)
     content_db_path, db_input_key = _resolve_content_db_path(raw_cfg, global_cfg, config_path)
     legacy_output_dir = resolve_legacy_output_dir(raw_cfg, config_path)
-    output_dir = create_task_instance_dir(workspace_root, "A060")
+    output_dir = create_task_instance_dir(workspace_root, "A110")
     global_config_path = workspace_root / "config" / "config.json"
     if not global_config_path.exists():
         global_config_path = None
@@ -1740,9 +1740,9 @@ def execute(config_path: Path) -> List[Path]:
         "mapped_reference_count": 0,
         "validation_errors": [],
     }
-    queue_stage = "A070"
+    queue_stage = "A130"
     if not direct_structured_matches.empty and bool(raw_cfg.get("skip_a060_when_structured_ready", False)):
-        queue_stage = _stringify(raw_cfg.get("direct_review_queue_stage")) or "A070"
+        queue_stage = _stringify(raw_cfg.get("direct_review_queue_stage")) or "A130"
     next_stage_queue_count = 0
     review_state_count = 0
     if content_db is not None:
@@ -1758,14 +1758,14 @@ def execute(config_path: Path) -> List[Path]:
                     "uid_literature": uid_literature,
                     "cite_key": cite_key,
                     "stage": queue_stage,
-                    "source_affair": "A060",
+                    "source_affair": "A110",
                     "queue_status": "queued",
                     "priority": _stringify(row.get("score")) or _stringify(row.get("priority")) or 68.0,
                     "bucket": "review_reference_preprocess",
-                    "preferred_next_stage": "A070",
-                    "recommended_reason": "A060 综述候选视图构建完成，进入 A070 综述文献研读阶段",
+                    "preferred_next_stage": "A130",
+                    "recommended_reason": "A110 综述候选视图构建完成，进入 A130 综述文献研读阶段",
                     "theme_relation": _stringify(raw_cfg.get("research_topic") or raw_cfg.get("topic") or "A060_topic"),
-                    "source_round": "a060",
+                    "source_round": "a110",
                     "run_uid": run_uid,
                     "scope_key": scope_key,
                     "is_current": 1,
@@ -1775,7 +1775,7 @@ def execute(config_path: Path) -> List[Path]:
                 {
                     "uid_literature": uid_literature,
                     "cite_key": cite_key,
-                    "source_stage": "A060",
+                    "source_stage": "A110",
                     "pending_review_candidate": 0,
                     "review_candidate_ready": 1,
                     "pending_review_parse": 0,
@@ -1792,7 +1792,7 @@ def execute(config_path: Path) -> List[Path]:
             review_state_count = len(review_rows)
 
     gate_review = build_gate_review(
-        node_uid="A060",
+        node_uid="A110",
         node_name="综述文献候选视图构建",
         summary=f"基于文献总库生成综述候选 {len(review_candidate_pool_index)} 条，可读视图 {len(review_candidate_pool_readable)} 条，阅读批次 {review_reading_batches['batch_id'].nunique() if not review_reading_batches.empty else 0} 个，并写入 {queue_stage} 当前态队列 {next_stage_queue_count} 条。",
         checks=[
@@ -1867,11 +1867,11 @@ def execute(config_path: Path) -> List[Path]:
         event_type="A060_REVIEW_CANDIDATE_VIEWS_BUILT",
         project_root=workspace_root,
         enabled=logging_enabled,
-        affair_code="A060",
+        affair_code="A110",
         handler_name="综述文献候选视图构建",
         agent_names=["ar_A060_综述文献候选视图构建事务智能体_v7"],
         skill_names=["ar_A060_综述文献候选视图构建_v7", "m_ObsidianMarkdown_v1"],
-        reasoning_summary="生成综述候选池、阅读池与批次，并把当前态推进到 A070 综述文献研读。",
+        reasoning_summary="生成综述候选池、阅读池与批次，并把当前态推进到 A130 综述文献研读。",
         gate_review=gate_review,
         gate_review_path=gate_path,
         artifact_paths=[

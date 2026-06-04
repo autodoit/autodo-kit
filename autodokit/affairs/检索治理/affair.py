@@ -1361,7 +1361,7 @@ def _build_seed_items(
         if title or cite_key or detail_url:
             seeds.append(seed_item)
 
-    if (not seeds) and runtime_node["node_code"] == "A045" and _coerce_bool(raw_cfg.get("auto_seed_from_latest_a040"), True):
+    if (not seeds) and runtime_node["node_code"] == "A050" and _coerce_bool(raw_cfg.get("auto_seed_from_latest_a040"), True):
         seeds.extend(
             _load_a045_seed_items_from_latest_a040(
                 workspace_root,
@@ -1370,7 +1370,7 @@ def _build_seed_items(
             )
         )
 
-    suppress_query_term_seed_fallback = runtime_node["node_code"] == "A045" and _coerce_bool(
+    suppress_query_term_seed_fallback = runtime_node["node_code"] == "A050" and _coerce_bool(
         raw_cfg.get("suppress_query_term_seed_fallback"),
         True,
     )
@@ -2359,7 +2359,7 @@ def _resolve_runtime_node_contract(raw_cfg: dict[str, Any]) -> dict[str, str]:
     node_code = (_normalize_text(raw_cfg.get("node_code")) or "A040").upper()
     node_name = _normalize_text(raw_cfg.get("node_name")) or "文献检索与入库"
     gate_code = (_normalize_text(raw_cfg.get("gate_code")) or f"G{node_code[1:]}").upper()
-    next_node_code = (_normalize_text(raw_cfg.get("next_node_code")) or "A050").upper()
+    next_node_code = (_normalize_text(raw_cfg.get("next_node_code")) or "A060").upper()
     summary_title = _normalize_text(raw_cfg.get("summary_title")) or f"{node_code} {node_name}执行摘要"
     return {
         "node_code": node_code,
@@ -2512,7 +2512,7 @@ def _execute_impl(config_path: Path) -> list[Path]:
     online_trigger_policy = _normalize_text(raw_cfg.get("online_trigger_policy") or "gap_only").lower()
     online_acquisition_mode = _normalize_text(raw_cfg.get("online_acquisition_mode") or "none").lower()
     explicit_seed_items = [item for item in _coerce_list(raw_cfg.get("seed_items"))]
-    force_local_seed_scan = runtime_node["node_code"] == "A045" and (not explicit_seed_items) and bool(query_terms)
+    force_local_seed_scan = runtime_node["node_code"] == "A050" and (not explicit_seed_items) and bool(query_terms)
 
     local_result = {
         "status": "SKIPPED",

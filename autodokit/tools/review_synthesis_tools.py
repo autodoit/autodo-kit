@@ -150,7 +150,7 @@ def generate_evidence_constrained_summary_lines(
 ) -> List[str]:
     """基于证据包生成综合分析摘要行。
 
-    输出以 bullet lines 形式返回，供 A070 分析笔记回填使用。
+    输出以 bullet lines 形式返回，供 A130 分析笔记回填使用。
     """
 
     if not review_states:

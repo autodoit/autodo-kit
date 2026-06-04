@@ -280,7 +280,7 @@ def test_candidate_view_affair_execute_should_work(tmp_path: Path) -> None:
 
     gate_path = next(path for path in outputs if path.name == "gate_review.json")
     gate_payload = json.loads(gate_path.read_text(encoding="utf-8"))
-    assert gate_payload["node_uid"] in {"A05", "A050", "A060"}
+    assert gate_payload["node_uid"] in {"A05", "A060", "A110"}
 
     index_path = next(path for path in outputs if path.name == "review_candidate_pool_index.csv")
     readable_path = next(path for path in outputs if path.name == "review_candidate_pool_readable.csv")
@@ -326,10 +326,10 @@ def test_a090_discovered_rows_should_only_use_current_item_mappings() -> None:
     assert len(discovered_rows) == 1
     assert discovered_rows[0]["uid_literature"] == "lit-101"
     assert discovered_rows[0]["cite_key"] == "cite-101"
-    assert discovered_rows[0]["source_stage"] == "A080"
+    assert discovered_rows[0]["source_stage"] == "A150"
     assert discovered_rows[0]["source_uid_literature"] == "lit-001"
     assert discovered_rows[0]["source_cite_key"] == "source-cite"
-    assert discovered_rows[0]["recommended_reason"] == "A080 从 source-cite 参考文献发现候选"
+    assert discovered_rows[0]["recommended_reason"] == "A150 从 source-cite 参考文献发现候选"
     assert discovered_rows[0]["theme_relation"] == "a080_reference_discovery"
     assert discovered_rows[0]["pending_preprocess"] == 1
 
@@ -342,7 +342,7 @@ def test_followup_candidate_should_route_to_pending_rough_read_when_already_prep
     routed = module.build_followup_candidate_state_row(
         uid_literature="lit-201",
         cite_key="cite-201",
-        source_stage="A100",
+        source_stage="A170",
         source_uid_literature="lit-001",
         source_cite_key="source-cite",
         recommended_reason="from deep read",
@@ -372,7 +372,7 @@ def test_followup_candidate_should_not_requeue_when_already_rough_read_done() ->
     routed = module.build_followup_candidate_state_row(
         uid_literature="lit-301",
         cite_key="cite-301",
-        source_stage="A080",
+        source_stage="A150",
         source_uid_literature="lit-001",
         source_cite_key="source-cite",
         recommended_reason="from rough read",
@@ -391,7 +391,7 @@ def test_followup_candidate_should_not_requeue_when_already_rough_read_done() ->
 
 
 def test_candidate_view_affair_should_only_prepare_candidate_outputs(monkeypatch, tmp_path: Path) -> None:
-    """A050 当前仅负责候选视图与闸门产物，不再直接产出 A065 映射审计文件。"""
+    """A060 当前仅负责候选视图与闸门产物，不再直接产出 A120 映射审计文件。"""
 
     module = importlib.import_module("autodokit.affairs.候选文献视图构建.affair")
     references_db = tmp_path / "references.db"
@@ -510,7 +510,7 @@ def test_candidate_view_affair_should_only_prepare_candidate_outputs(monkeypatch
 
 
 def test_a075_human_seed_should_route_unique_cite_key() -> None:
-    """A075 人工 seed 在 cite_key 唯一命中时应写入状态行。"""
+    """A140 人工 seed 在 cite_key 唯一命中时应写入状态行。"""
 
     module = importlib.import_module("autodokit.affairs.候选文献视图构建.phase_a075")
     literatures_df = pd.DataFrame(
@@ -573,7 +573,7 @@ def test_a075_human_seed_should_route_unique_cite_key() -> None:
 
 
 def test_a075_human_seed_should_report_ambiguous_cite_key() -> None:
-    """A075 人工 seed 在 cite_key 多重命中时应进入问题列表。"""
+    """A140 人工 seed 在 cite_key 多重命中时应进入问题列表。"""
 
     module = importlib.import_module("autodokit.affairs.候选文献视图构建.phase_a075")
     literatures_df = pd.DataFrame(
@@ -668,7 +668,7 @@ def test_review_map_affair_execute_should_work(monkeypatch, tmp_path: Path) -> N
 
 
 def test_review_map_affair_should_ensure_parse_asset_on_entry(monkeypatch, tmp_path: Path) -> None:
-    """A070 在 structured 可用时应优先走 structured 抽取并完成闸门产出。"""
+    """A130 在 structured 可用时应优先走 structured 抽取并完成闸门产出。"""
 
     module = importlib.import_module("autodokit.affairs.候选文献视图构建.phase_a070")
     workspace_root, content_db, _, review_read_pool_csv, output_dir = _prepare_review_synthesis_workspace(tmp_path)
@@ -755,7 +755,7 @@ def test_review_map_affair_should_ensure_parse_asset_on_entry(monkeypatch, tmp_p
     gate_path = gate_candidates[-1]
     assert gate_path.exists()
     payload = json.loads(gate_path.read_text(encoding="utf-8"))
-    assert payload["node_uid"] == "A070"
+    assert payload["node_uid"] == "A130"
     assert payload["recommendation"] == "pass"
     assert payload["metadata"]["processed_review_cite_keys"] == ["review-001"]
 
@@ -767,7 +767,7 @@ def test_review_map_affair_should_ensure_parse_asset_on_entry(monkeypatch, tmp_p
     assert len(must_read_df) == 1
     assert must_read_df.iloc[0]["cite_key"] == "origin-001"
 
-    queue_a080 = load_reading_queue_df(content_db, stage="A080", only_current=True)
+    queue_a080 = load_reading_queue_df(content_db, stage="A150", only_current=True)
     assert queue_a080.empty
 
     reading_state_df = load_reading_state_df(content_db)
@@ -778,7 +778,7 @@ def test_review_map_affair_should_ensure_parse_asset_on_entry(monkeypatch, tmp_p
     assert review_priority_path.exists()
     assert review_reference_path.exists()
 
-    # A070 新口径不直接生成普通文献种子文件，A075 负责构造。
+    # A130 新口径不直接生成普通文献种子文件，A140 负责构造。
     assert not (gate_path.parent / "a075_seed_candidates.csv").exists()
 
     batch_df = pd.read_csv(
@@ -790,7 +790,7 @@ def test_review_map_affair_should_ensure_parse_asset_on_entry(monkeypatch, tmp_p
 
 
 def test_a075_should_build_seed_rows_from_a070_exports(tmp_path: Path) -> None:
-    """A075 应从 A070 导出件构建种子，并可投递 A080 正式队列。"""
+    """A140 应从 A130 导出件构建种子，并可投递 A150 正式队列。"""
 
     module = importlib.import_module("autodokit.affairs.候选文献视图构建.phase_a075")
     workspace_root, content_db, _, _, _ = _prepare_review_synthesis_workspace(tmp_path)
@@ -843,16 +843,16 @@ def test_a075_should_build_seed_rows_from_a070_exports(tmp_path: Path) -> None:
     a080_queue_rows = module._build_a080_queue_rows(
         state_rows=rows,
         seed_df=seed_df,
-        source_affair="A075",
+        source_affair="A140",
     )
     assert len(a080_queue_rows) == 1
-    assert a080_queue_rows[0]["stage"] == "A080"
-    assert a080_queue_rows[0]["preferred_next_stage"] == "A095"
-    assert a080_queue_rows[0]["source_affair"] == "A075"
+    assert a080_queue_rows[0]["stage"] == "A150"
+    assert a080_queue_rows[0]["preferred_next_stage"] == "A160"
+    assert a080_queue_rows[0]["source_affair"] == "A140"
 
 
 def test_a075_execute_should_write_a080_queue(tmp_path: Path) -> None:
-    """A075 执行后应正式写入 A080 阶段队列。"""
+    """A140 执行后应正式写入 A150 阶段队列。"""
 
     module = importlib.import_module("autodokit.affairs.候选文献视图构建.phase_a075")
     workspace_root, content_db, _, _, _ = _prepare_review_synthesis_workspace(tmp_path)
@@ -896,16 +896,16 @@ def test_a075_execute_should_write_a080_queue(tmp_path: Path) -> None:
     outputs = module.execute(config_path)
     assert any(path.name == "gate_review.json" for path in outputs)
 
-    queue_df = load_reading_queue_df(content_db, stage="A080", only_current=True)
+    queue_df = load_reading_queue_df(content_db, stage="A150", only_current=True)
     assert not queue_df.empty
     target = queue_df.loc[queue_df["cite_key"].astype(str) == "origin-001"].iloc[0]
-    assert target["source_affair"] == "A075"
-    assert target["preferred_next_stage"] == "A095"
+    assert target["source_affair"] == "A140"
+    assert target["preferred_next_stage"] == "A160"
     assert target["queue_status"] == "queued"
 
 
 def test_a080_build_a095_queue_rows_should_write_a095_queue() -> None:
-    """A080 预处理完成后应正式写入 A095 阶段队列。"""
+    """A150 预处理完成后应正式写入 A160 阶段队列。"""
 
     module = importlib.import_module("autodokit.affairs.非综述候选视图构建.affair")
     state_df = pd.DataFrame(
@@ -926,9 +926,9 @@ def test_a080_build_a095_queue_rows_should_write_a095_queue() -> None:
     queue_rows = module._build_a095_queue_rows(state_df)
     assert len(queue_rows) == 1
     target = queue_rows[0]
-    assert target["stage"] == "A095"
-    assert target["source_affair"] == "A080"
-    assert target["preferred_next_stage"] == "A100"
+    assert target["stage"] == "A160"
+    assert target["source_affair"] == "A150"
+    assert target["preferred_next_stage"] == "A170"
     assert target["queue_status"] == "queued"
 
 
@@ -1254,7 +1254,7 @@ def test_review_map_affair_should_prefer_structured_cache(monkeypatch, tmp_path:
 
 
 def test_a07_should_prefer_a06_queue_and_seed_a08_queue(tmp_path: Path) -> None:
-    """A080 应消费当前兼容队列并把条目推进到 pending_rough_read。"""
+    """A150 应消费当前兼容队列并把条目推进到 pending_rough_read。"""
 
     module = importlib.import_module("autodokit.affairs.非综述候选视图构建.affair")
     workspace_root = tmp_path / "workspace"
@@ -1308,11 +1308,11 @@ def test_a07_should_prefer_a06_queue_and_seed_a08_queue(tmp_path: Path) -> None:
             {
                 "uid_literature": "lit-101",
                 "cite_key": "origin-001",
-                "stage": "A080",
+                "stage": "A150",
                 "queue_status": "queued",
                 "priority": 80,
-                "source_affair": "A065",
-                "preferred_next_stage": "A100",
+                "source_affair": "A120",
+                "preferred_next_stage": "A170",
                 "recommended_reason": "综述高置信引用推荐",
                 "theme_relation": "review_must_read",
                 "is_current": 1,
@@ -1346,7 +1346,7 @@ def test_a07_should_prefer_a06_queue_and_seed_a08_queue(tmp_path: Path) -> None:
 
 
 def test_a08_should_consume_queue_and_write_back_a095_queue(monkeypatch, tmp_path: Path) -> None:
-    """A080 应优先消费 A080 阶段队列，并把条目推进到 A095。"""
+    """A150 应优先消费 A150 阶段队列，并把条目推进到 A160。"""
 
     module = importlib.import_module("autodokit.affairs.非综述候选视图构建.affair")
     workspace_root = tmp_path / "workspace"
@@ -1400,11 +1400,11 @@ def test_a08_should_consume_queue_and_write_back_a095_queue(monkeypatch, tmp_pat
             {
                 "uid_literature": "lit-201",
                 "cite_key": "origin-rough",
-                "stage": "A080",
+                "stage": "A150",
                 "queue_status": "queued",
                 "priority": 80,
-                "source_affair": "A080",
-                "preferred_next_stage": "A095",
+                "source_affair": "A150",
+                "preferred_next_stage": "A160",
                 "recommended_reason": "进入粗读池",
                 "theme_relation": "A080_reading_chain_pool",
                 "is_current": 1,
@@ -1496,15 +1496,15 @@ def test_a08_should_consume_queue_and_write_back_a095_queue(monkeypatch, tmp_pat
     assert int(current_row["pending_rough_read"] or 0) == 1
     assert int(current_row["rough_read_done"] or 0) == 0
 
-    queue_df = load_reading_queue_df(content_db, stage="A095", only_current=True)
+    queue_df = load_reading_queue_df(content_db, stage="A160", only_current=True)
     assert not queue_df.empty
     queue_row = queue_df.loc[queue_df["cite_key"].astype(str) == "origin-rough"].iloc[0].to_dict()
-    assert queue_row["source_affair"] == "A080"
-    assert queue_row["preferred_next_stage"] == "A100"
+    assert queue_row["source_affair"] == "A150"
+    assert queue_row["preferred_next_stage"] == "A170"
 
 
 def test_a095_should_consume_queue_and_write_back_completion(monkeypatch, tmp_path: Path) -> None:
-    """A095 应消费 A095 阶段队列，并把粗读结果推进到 A100。"""
+    """A160 应消费 A160 阶段队列，并把粗读结果推进到 A170。"""
 
     module = importlib.import_module("autodokit.affairs.普通文献研读候选视图构建.affair")
     workspace_root = tmp_path / "workspace"
@@ -1569,11 +1569,11 @@ def test_a095_should_consume_queue_and_write_back_completion(monkeypatch, tmp_pa
             {
                 "uid_literature": "lit-201",
                 "cite_key": "origin-rough",
-                "stage": "A095",
+                "stage": "A160",
                 "queue_status": "queued",
                 "priority": 80,
-                "source_affair": "A080",
-                "preferred_next_stage": "A100",
+                "source_affair": "A150",
+                "preferred_next_stage": "A170",
                 "recommended_reason": "进入普通文献研读候选视图构建",
                 "theme_relation": "a080_to_a095",
                 "is_current": 1,
@@ -1637,11 +1637,11 @@ def test_a095_should_consume_queue_and_write_back_completion(monkeypatch, tmp_pa
     assert int(current_row["rough_read_done"] or 0) == 1
     assert current_row["rough_read_decision"] in {"promote_a100", "hold"}
 
-    queue_df = load_reading_queue_df(content_db, stage="A100", only_current=True)
+    queue_df = load_reading_queue_df(content_db, stage="A170", only_current=True)
     assert not queue_df.empty
     queue_row = queue_df.loc[queue_df["cite_key"].astype(str) == "origin-rough"].iloc[0].to_dict()
-    assert queue_row["source_affair"] == "A095"
-    assert queue_row["preferred_next_stage"] == "A100"
+    assert queue_row["source_affair"] == "A160"
+    assert queue_row["preferred_next_stage"] == "A170"
 
 
 def test_single_rough_reading_should_accept_structured_json(tmp_path: Path) -> None:

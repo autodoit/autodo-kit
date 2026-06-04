@@ -257,7 +257,7 @@ def register_a040_requests_from_feedback(*args: Any, **kwargs: Any) -> list[dict
 
 
 def register_a045_download_request(*args: Any, **kwargs: Any) -> dict[str, Any]:
-    """延迟加载 A045 请求登记工具，避免入口模块循环导入。"""
+    """延迟加载 A050 请求登记工具，避免入口模块循环导入。"""
 
     module = importlib.import_module("autodokit.tools.affair_request_bus")
     impl = getattr(module, "register_a045_download_request")
@@ -265,7 +265,7 @@ def register_a045_download_request(*args: Any, **kwargs: Any) -> dict[str, Any]:
 
 
 def register_a050_preprocess_request(*args: Any, **kwargs: Any) -> dict[str, Any]:
-    """延迟加载 A050 请求登记工具，避免入口模块循环导入。"""
+    """延迟加载 A060 请求登记工具，避免入口模块循环导入。"""
 
     module = importlib.import_module("autodokit.tools.affair_request_bus")
     impl = getattr(module, "register_a050_preprocess_request")
@@ -273,7 +273,7 @@ def register_a050_preprocess_request(*args: Any, **kwargs: Any) -> dict[str, Any
 
 
 def register_a055_preprocess_request(*args: Any, **kwargs: Any) -> dict[str, Any]:
-    """延迟加载 A055 请求登记工具，避免入口模块循环导入。"""
+    """延迟加载 A070 请求登记工具，避免入口模块循环导入。"""
 
     module = importlib.import_module("autodokit.tools.affair_request_bus")
     impl = getattr(module, "register_a055_preprocess_request")
@@ -385,7 +385,7 @@ def migrate_parse_assets_with_full_rewrite(payload: dict[str, Any]) -> dict[str,
 
 
 def backfill_a060_state_from_parse_assets(payload: dict[str, Any]) -> dict[str, Any]:
-    """延迟加载非标准解析导入后的 A060 状态补齐工具。"""
+    """延迟加载非标准解析导入后的 A110 状态补齐工具。"""
 
     module = importlib.import_module("autodokit.tools.nonstandard_a060_state_backfill_tools")
     impl = getattr(module, "backfill_a060_state_from_parse_assets")

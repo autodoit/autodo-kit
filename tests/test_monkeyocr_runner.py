@@ -129,8 +129,8 @@ def test_launch_remote_tmux_command_should_delegate_to_ssh(monkeypatch) -> None:
                 "ssh": {"host": "dummy", "user": "dummy"},
             }
         },
-        remote_command="echo remote-only-a055",
-        session_prefix="a055",
+        remote_command="echo remote-only-a070",
+        session_prefix="a070",
         session_name="a055_test_session",
         timeout=15,
     )
@@ -162,7 +162,7 @@ def test_launch_remote_tmux_command_should_quote_inline_python(monkeypatch) -> N
             }
         },
         remote_command="cd /repo && ./.venv/bin/python -c \"from pathlib import Path; print(Path('demo'))\"",
-        session_prefix="a055",
+        session_prefix="a070",
         session_name="a055_python_inline",
         timeout=15,
     )

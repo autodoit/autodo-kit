@@ -1,4 +1,4 @@
-﻿"""A070 单篇综述精读包工具。"""
+﻿"""A130 单篇综述精读包工具。"""
 
 from __future__ import annotations
 

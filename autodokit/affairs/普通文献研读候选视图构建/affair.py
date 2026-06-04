@@ -1,7 +1,7 @@
-"""A095 普通文献研读候选视图构建事务。
+"""A160 普通文献研读候选视图构建事务。
 
-A095 消费正式 `A095` 阶段队列，执行普通文献粗读、轻量分析与批次汇总，
-并把可进入深读的条目正式推进到 A100。
+A160 消费正式 `A160` 阶段队列，执行普通文献粗读、轻量分析与批次汇总，
+并把可进入深读的条目正式推进到 A170。
 """
 
 from __future__ import annotations
@@ -48,11 +48,11 @@ def _build_a095_ready_df(queue_df: pd.DataFrame, state_df: pd.DataFrame) -> pd.D
     return merged.fillna("")
 
 
-@affair_auto_git_commit("A095")
+@affair_auto_git_commit("A160")
 def execute(config_path: Path) -> List[Path]:
     raw_cfg = load_json_or_py(config_path)
     if not isinstance(raw_cfg, dict):
-        raise ValueError("A095 配置必须是字典")
+        raise ValueError("A160 配置必须是字典")
 
     workspace_root = a080_rough_affair._resolve_workspace_root(config_path, raw_cfg)
     legacy_output_dir = resolve_legacy_output_dir(
@@ -60,7 +60,7 @@ def execute(config_path: Path) -> List[Path]:
         config_path,
         default_path=workspace_root / "tasks" / "A095_reading_candidate_build",
     )
-    output_dir = create_task_instance_dir(workspace_root, "A095")
+    output_dir = create_task_instance_dir(workspace_root, "A160")
 
     content_db, _ = resolve_content_db_config(
         raw_cfg,
@@ -74,7 +74,7 @@ def execute(config_path: Path) -> List[Path]:
     state_df = load_reading_state_df(content_db)
     queue_df = load_reading_queue_df(
         content_db,
-        stage="A095",
+        stage="A160",
         only_current=True,
         queue_statuses=["queued", "candidate", "in_progress"],
     )
@@ -93,20 +93,20 @@ def execute(config_path: Path) -> List[Path]:
             literature_table=literatures_df,
             attachment_table=attachments_df,
             ready_df=ready_df,
-            source_stage="A095",
-            output_prefix="a095",
+            source_stage="A160",
+            output_prefix="a160",
         )
 
-    consumed_a095_queue_count = a080_rough_affair._consume_current_stage_queue_rows(content_db, stage="A095", ready_df=ready_df)
+    consumed_a095_queue_count = a080_rough_affair._consume_current_stage_queue_rows(content_db, stage="A160", ready_df=ready_df)
 
     gate_review = build_gate_review(
-        node_uid="A095",
+        node_uid="A160",
         node_name="普通文献研读候选视图构建",
         summary=(
-            f"消费 A095 输入池 {len(ready_df)} 条；"
+            f"消费 A160 输入池 {len(ready_df)} 条；"
             f"粗读完成 {merged_summary.get('rough_read_count', 0)} 条；"
-            f"写入 A100 队列 {merged_summary.get('a100_queue_count', 0)} 条；"
-            f"消费 A095 兼容队列 {consumed_a095_queue_count} 条。"
+            f"写入 A170 队列 {merged_summary.get('a100_queue_count', 0)} 条；"
+            f"消费 A160 兼容队列 {consumed_a095_queue_count} 条。"
         ),
         checks=[
             {"name": "a095_input_count", "value": len(ready_df)},
@@ -121,8 +121,8 @@ def execute(config_path: Path) -> List[Path]:
         metadata={
             "workspace_root": str(workspace_root),
             "content_db": str(content_db),
-            "upstream_stage": "A080",
-            "downstream_stage": "A100",
+            "upstream_stage": "A150",
+            "downstream_stage": "A170",
             "rough_read_count": merged_summary.get("rough_read_count", 0),
             "a100_queue_count": merged_summary.get("a100_queue_count", 0),
         },
@@ -137,11 +137,11 @@ def execute(config_path: Path) -> List[Path]:
         append_aok_log_event(
             event_type="A095_READING_CANDIDATE_READY",
             project_root=workspace_root,
-            affair_code="A095",
+            affair_code="A160",
             handler_name="普通文献研读候选视图构建",
             agent_names=["ar_A095_普通文献研读候选视图构建事务智能体_v7"],
             skill_names=[],
-            reasoning_summary="消费 A095 阶段队列，完成普通文献粗读与批次汇总，并把可深读条目推进到 A100。",
+            reasoning_summary="消费 A160 阶段队列，完成普通文献粗读与批次汇总，并把可深读条目推进到 A170。",
             gate_review=gate_review,
             gate_review_path=gate_path,
             artifact_paths=artifact_paths,

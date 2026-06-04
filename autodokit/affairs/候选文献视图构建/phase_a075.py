@@ -1,4 +1,4 @@
-"""A075 普通文献候选视图构建事务。"""
+"""A140 普通文献候选视图构建事务。"""
 
 from __future__ import annotations
 
@@ -173,7 +173,7 @@ def _build_seed_rows_from_a070_exports(
             bucket = _classify_seed_bucket(title, reason, year)
 
             if not uid_literature:
-                issues.append(f"A070 seed 缺少 uid_literature: cite_key={cite_key or 'unknown'}")
+                issues.append(f"A130 seed 缺少 uid_literature: cite_key={cite_key or 'unknown'}")
                 continue
 
             candidate_rows.append(
@@ -183,7 +183,7 @@ def _build_seed_rows_from_a070_exports(
                     "title_or_hint": title,
                     "class": bucket,
                     "recommended_reason": reason,
-                    "target_stage": "A080",
+                    "target_stage": "A150",
                     "candidate_source": source_name,
                     "theme_relation": theme_relation,
                     "priority": priority_base,
@@ -193,14 +193,14 @@ def _build_seed_rows_from_a070_exports(
     _append_candidates(
         priority_df,
         source_name="review_priority_candidates",
-        default_reason="A070 优先候选",
+        default_reason="A130 优先候选",
         theme_relation="review_priority_candidate",
         priority_base=88.0,
     )
     _append_candidates(
         reference_df,
         source_name="review_reference_candidates",
-        default_reason="A070 参考候选",
+        default_reason="A130 参考候选",
         theme_relation="review_reference_candidate",
         priority_base=66.0,
     )
@@ -243,7 +243,7 @@ def _build_seed_rows_from_a070_exports(
             "uid_literature": uid_literature,
             "cite_key": cite_key,
             "source_stage": "A075_seed",
-            "recommended_reason": _stringify(row.get("recommended_reason")) or "A070 seed",
+            "recommended_reason": _stringify(row.get("recommended_reason")) or "A130 seed",
             "theme_relation": _stringify(row.get("theme_relation")) or "a070_seed",
             "source_origin": "a070_export",
             "pending_preprocess": pending_preprocess,
@@ -362,7 +362,7 @@ def _write_seed_markdown(seed_df: pd.DataFrame, markdown_path: Path) -> None:
             lines.append(
                 "- "
                 + f"{_stringify(row.get('cite_key')) or _stringify(row.get('uid_literature'))} | "
-                + f"{_stringify(row.get('target_stage')) or 'A080'} | "
+                + f"{_stringify(row.get('target_stage')) or 'A150'} | "
                 + f"{_stringify(row.get('recommended_reason'))}"
             )
     markdown_path.write_text("\n".join(lines).strip() + "\n", encoding="utf-8")
@@ -399,13 +399,13 @@ def _build_a080_queue_rows(
             {
                 "uid_literature": uid_literature,
                 "cite_key": cite_key,
-                "stage": "A080",
+                "stage": "A150",
                 "source_affair": source_affair,
                 "queue_status": "queued",
                 "priority": priority_map.get(identity) or 80,
                 "bucket": "non_review_seed",
-                "preferred_next_stage": "A095",
-                "recommended_reason": _stringify(row.get("recommended_reason")) or f"{source_affair} 非综述候选导种完成，进入 A080",
+                "preferred_next_stage": "A160",
+                "recommended_reason": _stringify(row.get("recommended_reason")) or f"{source_affair} 非综述候选导种完成，进入 A150",
                 "theme_relation": _stringify(row.get("theme_relation")) or "a075_seed",
                 "source_round": source_affair.lower(),
                 "scope_key": f"{source_affair.lower()}_to_a080",
@@ -415,12 +415,12 @@ def _build_a080_queue_rows(
     return queue_rows
 
 
-@affair_auto_git_commit("A075")
+@affair_auto_git_commit("A140")
 def execute(config_path: Path) -> List[Path]:
     raw_cfg = load_json_or_py(config_path)
     workspace_root = _resolve_workspace_root(config_path, raw_cfg)
     legacy_output_dir = _resolve_output_dir(config_path, raw_cfg)
-    output_dir = _build_task_instance_dir(workspace_root, "A075")
+    output_dir = _build_task_instance_dir(workspace_root, "A140")
     content_db, _ = resolve_content_db_config(
         raw_cfg,
         legacy_keys=("references_db",),
@@ -470,7 +470,7 @@ def execute(config_path: Path) -> List[Path]:
                     "title_or_hint": "",
                     "class": "manual",
                     "recommended_reason": _stringify(row.get("recommended_reason")),
-                    "target_stage": "A080",
+                    "target_stage": "A150",
                     "candidate_source": "human_seed_contract",
                     "theme_relation": _stringify(row.get("theme_relation")),
                     "priority": "99",
@@ -484,7 +484,7 @@ def execute(config_path: Path) -> List[Path]:
     a080_queue_rows = _build_a080_queue_rows(
         state_rows=[*a070_seed_rows, *human_seed_rows],
         seed_df=seed_df,
-        source_affair="A075",
+        source_affair="A140",
     )
     if a080_queue_rows:
         upsert_reading_queue_rows(content_db, a080_queue_rows)
@@ -496,13 +496,13 @@ def execute(config_path: Path) -> List[Path]:
     _write_seed_markdown(seed_df, seed_md_path)
 
     gate_review = build_gate_review(
-        node_uid="A075",
+        node_uid="A140",
         node_name="普通文献候选视图构建",
         summary=(
             f"生成普通文献候选条目 {len(seed_df)} 条；"
-            f"A070 导种 {seeded_from_a070} 条；"
+            f"A130 导种 {seeded_from_a070} 条；"
             f"人工导种 {seeded_from_human} 条；"
-            f"写入 A080 队列 {len(a080_queue_rows)} 条；"
+            f"写入 A150 队列 {len(a080_queue_rows)} 条；"
             f"问题 {len(failures)} 条。"
         ),
         checks=[
@@ -534,11 +534,11 @@ def execute(config_path: Path) -> List[Path]:
         append_aok_log_event(
             event_type="A075_NON_REVIEW_SEED_READY",
             project_root=workspace_root,
-            affair_code="A075",
+            affair_code="A140",
             handler_name="普通文献候选视图构建",
             agent_names=["ar_A075_普通文献候选视图构建事务智能体_v7"],
             skill_names=["ar_A075_普通文献候选视图构建_v1"],
-            reasoning_summary="消费 A070 导出件与人工种子，正式写入 A080 阶段队列，并兼容回写旧 reading_state。",
+            reasoning_summary="消费 A130 导出件与人工种子，正式写入 A150 阶段队列，并兼容回写旧 reading_state。",
             gate_review=gate_review,
             gate_review_path=gate_path,
             artifact_paths=[seed_csv_path, seed_md_path, gate_path],

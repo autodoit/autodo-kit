@@ -1,12 +1,12 @@
-"""A050/A055 统一文献预处理事务。
+"""A060/A070 统一文献预处理事务。
 
 该事务模块支持两种执行模式：
-1. priority_only：用于 A050，只生成预处理优先级清单，不执行具体解析。
-2. full_preprocess：用于 A055，按 profile 执行具体预处理。
+1. priority_only：用于 A060，只生成预处理优先级清单，不执行具体解析。
+2. full_preprocess：用于 A070，按 profile 执行具体预处理。
 
 full_preprocess 支持按 profile 调度 MonkeyOCR：
-1. review：消费 `文献预处理` 的 A050_REVIEW 队列，产出 review_deep 资产并推进 A060。
-2. non_review：消费 `文献预处理` 的 A050_NON_REVIEW 队列，产出 non_review_rough 资产并推进 A080。
+1. review：消费 `文献预处理` 的 A050_REVIEW 队列，产出 review_deep 资产并推进 A110。
+2. non_review：消费 `文献预处理` 的 A050_NON_REVIEW 队列，产出 non_review_rough 资产并推进 A150。
 3. mixed：自动按文献类型拆分到 review/non_review 两条子链执行。
 """
 
@@ -103,7 +103,7 @@ def _normalize_enum_value(key: str, value: Any, default: str = "") -> str:
 
 
 def _resolve_a055_run_mode(raw_cfg: Dict[str, Any], *, parse_runtime: Dict[str, Any], execution_mode: str) -> str:
-    """解析 A055 运行模式。"""
+    """解析 A070 运行模式。"""
 
     if execution_mode == "priority_only":
         return "priority_only"
@@ -425,7 +425,7 @@ def _inspect_structured_output(workspace_root: Path, *, uid_literature: str, cit
 
 
 def _runtime_guard_path(workspace_root: Path) -> Path:
-    runtime_dir = workspace_root / "runtime" / "a055"
+    runtime_dir = workspace_root / "runtime" / "a070"
     runtime_dir.mkdir(parents=True, exist_ok=True)
     return runtime_dir / "active_run.json"
 
@@ -481,9 +481,9 @@ def _takeover_previous_a055_run(*, workspace_root: Path, parse_runtime: Dict[str
     previous_pid = int(previous.get("pid") or 0)
     if previous_pid and previous_pid != current_pid and _is_pid_alive(previous_pid):
         if not _terminate_local_process(previous_pid):
-            raise RuntimeError(f"A055 旧实例仍在运行，且本次接管未能终止该进程：pid={previous_pid}")
+            raise RuntimeError(f"A070 旧实例仍在运行，且本次接管未能终止该进程：pid={previous_pid}")
         if _is_pid_alive(previous_pid):
-            raise RuntimeError(f"A055 旧实例终止后仍存活，拒绝并发启动：pid={previous_pid}")
+            raise RuntimeError(f"A070 旧实例终止后仍存活，拒绝并发启动：pid={previous_pid}")
         actions.append(f"local_killed:{previous_pid}")
 
     actions.extend(_stop_remote_a055_instances(parse_runtime))
@@ -818,7 +818,7 @@ def _build_full_library_priority_rows(
                 "status_bucket": status_bucket,
                 "year_value": year_value,
                 "recommended_reason": (
-                    f"A050 全库优先级重排：{topic_name}；匹配家族={('/'.join(family_hits) or 'general')}；"
+                    f"A060 全库优先级重排：{topic_name}；匹配家族={('/'.join(family_hits) or 'general')}；"
                     f"状态={queue_status}"
                 ),
                 "theme_relation": "/".join(family_hits) or topic_name,
@@ -844,12 +844,12 @@ def _build_full_library_priority_rows(
                 "uid_literature": _stringify(row.get("uid_literature")),
                 "cite_key": _stringify(row.get("cite_key")),
                 "stage": f"A050_{profile.upper()}",
-                "source_affair": "A050",
+                "source_affair": "A060",
                 "queue_status": _stringify(row.get("queue_status")) or "queued",
                 "decision": "preserve_in_progress" if _stringify(row.get("queue_status")) == "in_progress" else "ranked",
                 "priority": int(row.get("priority") or 0),
                 "bucket": _bucket_from_row(queue_status=_stringify(row.get("queue_status")), family_hits=_stringify(row.get("family_hits")).split("/") if _stringify(row.get("family_hits")) else []),
-                "preferred_next_stage": "A060" if profile == "review" else "A080",
+                "preferred_next_stage": "A110" if profile == "review" else "A150",
                 "recommended_reason": _stringify(row.get("recommended_reason")),
                 "theme_relation": _stringify(row.get("theme_relation")),
                 "preprocess_state": _stringify(row.get("preprocess_state")),
@@ -1026,7 +1026,7 @@ def _merge_with_literatures(state_df: pd.DataFrame, literature_df: pd.DataFrame)
 
 
 def _load_flow_seed_source_df(content_db: Path, *, profile: str) -> pd.DataFrame:
-    """从统一流程状态表装载 A050 可执行输入，并补齐队列字段名。"""
+    """从统一流程状态表装载 A060 可执行输入，并补齐队列字段名。"""
 
     normalized_profile = _stringify(profile).lower()
     if normalized_profile == "review":
@@ -1075,7 +1075,7 @@ def _load_flow_seed_source_df(content_db: Path, *, profile: str) -> pd.DataFrame
 
 
 def _seed_a050_queue_rows(content_db: Path, profile: str, source_df: pd.DataFrame) -> int:
-    """把现有状态表回填为 A050 队列行，便于后续统一从队列消费。"""
+    """把现有状态表回填为 A060 队列行，便于后续统一从队列消费。"""
 
     if source_df is None or source_df.empty:
         return 0
@@ -1103,18 +1103,18 @@ def _seed_a050_queue_rows(content_db: Path, profile: str, source_df: pd.DataFram
         if pd.isna(priority_value):
             priority_value = None
 
-        next_stage = "A060" if normalized_profile == "review" else "A080"
+        next_stage = "A110" if normalized_profile == "review" else "A150"
         bucket = "review_parse_ready" if normalized_profile == "review" else "non_review_preprocess"
         recommended_reason = _stringify(row.get("recommended_reason"))
         if not recommended_reason:
-            recommended_reason = "A050 状态回填到队列"
+            recommended_reason = "A060 状态回填到队列"
 
         rows.append(
             {
                 "uid_literature": uid_literature,
                 "cite_key": cite_key,
                 "stage": stage,
-                "source_affair": "A050",
+                "source_affair": "A060",
                 "queue_status": "queued",
                 "decision": "",
                 "priority": priority_value,
@@ -1127,7 +1127,7 @@ def _seed_a050_queue_rows(content_db: Path, profile: str, source_df: pd.DataFram
                 "preprocess_started_at": "",
                 "preprocess_finished_at": "",
                 "preprocess_failure_reason": "",
-                "source_round": "a050",
+                "source_round": "a060",
                 "run_uid": _stringify(row.get("run_uid")),
                 "scope_key": f"a050_{normalized_profile}_queue",
                 "is_current": 1,
@@ -1146,7 +1146,7 @@ def _load_a050_queue_source_df(
     *,
     profile: str,
 ) -> pd.DataFrame:
-    """从 A050 队列读取待处理条目；队列为空时仅用正式流程状态生成队列。"""
+    """从 A060 队列读取待处理条目；队列为空时仅用正式流程状态生成队列。"""
 
     normalized_profile = _stringify(profile).lower()
     if normalized_profile not in {"review", "non_review"}:
@@ -1281,8 +1281,8 @@ def _run_profile_parse(
             source_df=source_df,
             output_dir=output_dir,
             source_stage="A050_REVIEW",
-            upstream_stage="A050",
-            downstream_stage="A060",
+            upstream_stage="A060",
+            downstream_stage="A110",
             parse_level="review_deep",
             literature_scope="review",
             runtime_settings=parse_runtime,
@@ -1297,8 +1297,8 @@ def _run_profile_parse(
         source_df=source_df,
         output_dir=output_dir,
         source_stage="A050_NON_REVIEW",
-        upstream_stage="A050",
-        downstream_stage="A080",
+        upstream_stage="A060",
+        downstream_stage="A150",
         parse_level="non_review_rough",
         literature_scope="non_review",
         runtime_settings=parse_runtime,
@@ -1383,7 +1383,7 @@ def _quote_identifier(identifier: str) -> str:
 
 
 def _ensure_queue_preprocess_defaults(content_db: Path) -> None:
-    """为 A050 队列补齐预处理状态默认值。"""
+    """为 A060 队列补齐预处理状态默认值。"""
 
     stage_column = resolve_content_physical_column(READING_QUEUE_TABLE_NAME, "stage")
     current_column = resolve_content_physical_column(READING_QUEUE_TABLE_NAME, "is_current")
@@ -1439,7 +1439,7 @@ def _update_flow_state_after_preprocess(
                     "uid_literature": uid_literature,
                     "cite_key": cite_key,
                     "stage_code": "review_candidate",
-                    "node_code": "A060",
+                    "node_code": "A110",
                     "文献角色": "综述文献",
                     "流程轨道": "综述主链",
                     "当前阶段": "综述候选构建",
@@ -1448,7 +1448,7 @@ def _update_flow_state_after_preprocess(
                     "下一阶段": "综述参考扩展",
                     "来源阶段": source_stage,
                     "来源类型": "A055_unified_preprocess",
-                    "推荐原因": "A055 统一预处理完成，进入 A060 综述文献研读",
+                    "推荐原因": "A070 统一预处理完成，进入 A110 综述文献研读",
                     "主题关系": _stringify(row.get("theme_relation")) or "A055_review",
                     "是否当前有效": 1,
                     "是否可执行": 1,
@@ -1460,7 +1460,7 @@ def _update_flow_state_after_preprocess(
                     "uid_literature": uid_literature,
                     "cite_key": cite_key,
                     "stage_code": "rough_read",
-                    "node_code": "A080",
+                    "node_code": "A150",
                     "文献角色": "普通候选文献",
                     "流程轨道": "普通主链",
                     "当前阶段": "普通阅读链处理",
@@ -1469,7 +1469,7 @@ def _update_flow_state_after_preprocess(
                     "下一阶段": "深度解析准备",
                     "来源阶段": source_stage,
                     "来源类型": "A055_unified_preprocess",
-                    "推荐原因": "A055 统一预处理完成，进入 A080 普通文献泛读",
+                    "推荐原因": "A070 统一预处理完成，进入 A150 普通文献泛读",
                     "主题关系": _stringify(row.get("theme_relation")) or "A055_non_review",
                     "是否当前有效": 1,
                     "是否可执行": 1,
@@ -1492,13 +1492,13 @@ def _upsert_a080_queue(content_db: Path, ready_df: pd.DataFrame, *, source_affai
             {
                 "uid_literature": uid_literature,
                 "cite_key": cite_key,
-                "stage": "A080",
+                "stage": "A150",
                 "source_affair": source_affair,
                 "queue_status": "queued",
                 "priority": row.get("priority") or row.get("priority_rank") or 60.0,
                 "bucket": "non_review_reading_chain",
-                "preferred_next_stage": "A100",
-                "recommended_reason": f"{source_affair} 统一预处理完成，进入 A080",
+                "preferred_next_stage": "A170",
+                "recommended_reason": f"{source_affair} 统一预处理完成，进入 A150",
                 "theme_relation": _stringify(row.get("theme_relation")) or f"{source_affair}_non_review",
                 "preprocess_state": _stringify(row.get("preprocess_state")) or "已处理",
                 "preprocess_result_path": _stringify(row.get("preprocess_result_path")) or _stringify(row.get("asset_dir")),
@@ -1525,13 +1525,13 @@ def _upsert_a065_queue(content_db: Path, ready_df: pd.DataFrame, *, source_affai
             {
                 "uid_literature": uid_literature,
                 "cite_key": cite_key,
-                "stage": "A065",
+                "stage": "A120",
                 "source_affair": source_affair,
                 "queue_status": "queued",
                 "priority": row.get("score") or row.get("priority") or 68.0,
                 "bucket": "review_parse_ready",
-                "preferred_next_stage": "A080",
-                "recommended_reason": f"{source_affair} 统一预处理完成，进入 A065",
+                "preferred_next_stage": "A150",
+                "recommended_reason": f"{source_affair} 统一预处理完成，进入 A120",
                 "theme_relation": _stringify(row.get("theme_relation")) or f"{source_affair}_unified",
                 "preprocess_state": _stringify(row.get("preprocess_state")) or "已处理",
                 "preprocess_result_path": _stringify(row.get("preprocess_result_path")) or _stringify(row.get("asset_dir")),
@@ -1547,9 +1547,9 @@ def _upsert_a065_queue(content_db: Path, ready_df: pd.DataFrame, *, source_affai
     return len(rows)
 
 
-@affair_auto_git_commit("A050")
+@affair_auto_git_commit("A060")
 def execute(config_path: Path) -> List[Path]:
-    """执行 A050/A055 统一文献预处理。
+    """执行 A060/A070 统一文献预处理。
 
     Args:
         config_path: 节点配置路径。
@@ -1562,17 +1562,17 @@ def execute(config_path: Path) -> List[Path]:
         FileNotFoundError: 无待处理数据时抛出。
 
     Examples:
-        >>> execute(Path("workspace/config/affairs_config/A050.json"))
+        >>> execute(Path("workspace/config/affairs_config/A060.json"))
     """
 
     config_path = Path(config_path)
     raw_cfg = normalize_to_legacy_contract(load_json_or_py(config_path))
     if not isinstance(raw_cfg, dict):
-        raise ValueError("A050/A055 配置必须是字典")
+        raise ValueError("A060/A070 配置必须是字典")
 
-    node_code = _stringify(raw_cfg.get("node_code") or "A050").upper()
-    if node_code not in {"A050", "A055"}:
-        raise ValueError("node_code 仅支持 A050/A055")
+    node_code = _stringify(raw_cfg.get("node_code") or "A060").upper()
+    if node_code not in {"A060", "A070"}:
+        raise ValueError("node_code 仅支持 A060/A070")
 
     execution_mode = _normalize_enum_value("execution_mode", raw_cfg.get("execution_mode") or "执行完整预处理", default="full_preprocess").lower()
     if execution_mode not in {"full_preprocess", "priority_only"}:
@@ -1590,8 +1590,8 @@ def execute(config_path: Path) -> List[Path]:
     )
     output_dir = create_task_instance_dir(workspace_root, node_code)
 
-    default_agent_name = "ar_A055_统一文献预处理执行事务智能体_v1" if node_code == "A055" else "ar_A050_统一文献预处理解析事务智能体_v1"
-    default_skill_name = "ar_A055_统一文献预处理执行_v1" if node_code == "A055" else "ar_A050_统一文献预处理解析_v1"
+    default_agent_name = "ar_A055_统一文献预处理执行事务智能体_v1" if node_code == "A070" else "ar_A050_统一文献预处理解析事务智能体_v1"
+    default_skill_name = "ar_A055_统一文献预处理执行_v1" if node_code == "A070" else "ar_A050_统一文献预处理解析_v1"
     agent_names = [_stringify(item) for item in list(raw_cfg.get("agent_names") or []) if _stringify(item)] or [default_agent_name]
     skill_names = [_stringify(item) for item in list(raw_cfg.get("skill_names") or []) if _stringify(item)] or [default_skill_name]
 
@@ -1763,7 +1763,7 @@ def execute(config_path: Path) -> List[Path]:
             non_review_source = _load_non_review_pending_df(content_db, literature_df)
             _emit_progress(
                 node_code,
-                "A055 检测到当前队列为空，已按 A050 全库优先级规则回填队列：review={review_count}，non_review={non_review_count}".format(
+                "A070 检测到当前队列为空，已按 A060 全库优先级规则回填队列：review={review_count}，non_review={non_review_count}".format(
                     review_count=len(review_source),
                     non_review_count=len(non_review_source),
                 ),
@@ -1812,7 +1812,7 @@ def execute(config_path: Path) -> List[Path]:
     write_done_marker = bool(raw_cfg.get("write_parse_done_marker", True))
 
     restart_actions: List[str] = []
-    if node_code == "A055":
+    if node_code == "A070":
         restart_actions = _takeover_previous_a055_run(
             workspace_root=workspace_root,
             parse_runtime=parse_runtime,
@@ -1825,7 +1825,7 @@ def execute(config_path: Path) -> List[Path]:
         session_prefix = _stringify(
             remote_only_cfg.get("tmux_session_prefix")
             or ((parse_runtime.get("remote_processing") or {}).get("ssh") or {}).get("tmux_session_prefix")
-            or "a055"
+            or "a070"
         )
         requested_session_name = _stringify(remote_only_cfg.get("tmux_session_name"))
         if requested_session_name:
@@ -1856,7 +1856,7 @@ def execute(config_path: Path) -> List[Path]:
         gate_review = build_gate_review(
             node_uid=node_code,
             node_name=node_name,
-            summary=f"A055 remote_only_tmux 已提交远端会话 {dispatch_payload['session_name']}，本地不执行解析。",
+            summary=f"A070 remote_only_tmux 已提交远端会话 {dispatch_payload['session_name']}，本地不执行解析。",
             checks=[
                 {"name": "run_mode", "value": run_mode},
                 {"name": "session_name", "value": dispatch_payload["session_name"]},
@@ -1877,7 +1877,7 @@ def execute(config_path: Path) -> List[Path]:
         gate_path.write_text(json.dumps(gate_review, ensure_ascii=False, indent=2), encoding="utf-8")
         final_artifacts = [dispatch_path, gate_path]
         mirror_artifacts_to_legacy(final_artifacts, legacy_output_dir, output_dir)
-        if node_code == "A055":
+        if node_code == "A070":
             _release_a055_runtime_guard(workspace_root)
         return final_artifacts
 
@@ -1919,7 +1919,7 @@ def execute(config_path: Path) -> List[Path]:
             node_uid=node_code,
             node_name=node_name,
             summary=(
-                f"A055 record_parse_results 完成：review 记录 {review_ready_count} 条，"
+                f"A070 record_parse_results 完成：review 记录 {review_ready_count} 条，"
                 f"non_review 记录 {non_review_ready_count} 条。"
             ),
             checks=[
@@ -1946,7 +1946,7 @@ def execute(config_path: Path) -> List[Path]:
         gate_path.write_text(json.dumps(gate_review, ensure_ascii=False, indent=2), encoding="utf-8")
         final_artifacts = [index_path, gate_path]
         mirror_artifacts_to_legacy(final_artifacts, legacy_output_dir, output_dir)
-        if node_code == "A055":
+        if node_code == "A070":
             _release_a055_runtime_guard(workspace_root)
         return final_artifacts
 
@@ -1967,7 +1967,7 @@ def execute(config_path: Path) -> List[Path]:
         )
     )
     if restart_actions:
-        _emit_progress(node_code, f"A055 启动前已清理旧实例：{';'.join(restart_actions)}")
+        _emit_progress(node_code, f"A070 启动前已清理旧实例：{';'.join(restart_actions)}")
 
     result_rows: List[Dict[str, Any]] = []
     artifact_paths: List[Path] = []
@@ -2025,7 +2025,7 @@ def execute(config_path: Path) -> List[Path]:
             )
         )
 
-        if node_code == "A055" and write_done_marker and not ready_df.empty:
+        if node_code == "A070" and write_done_marker and not ready_df.empty:
             for _, ready_row in ready_df.fillna("").iterrows():
                 ready_payload = dict(ready_row.to_dict())
                 asset_dir = _resolve_a055_asset_dir(
@@ -2155,6 +2155,6 @@ def execute(config_path: Path) -> List[Path]:
 
     final_artifacts = [index_path, gate_path] + artifact_paths
     mirror_artifacts_to_legacy(final_artifacts, legacy_output_dir, output_dir)
-    if node_code == "A055":
+    if node_code == "A070":
         _release_a055_runtime_guard(workspace_root)
     return final_artifacts

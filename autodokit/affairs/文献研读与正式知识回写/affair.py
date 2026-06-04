@@ -1,4 +1,4 @@
-﻿"""A100 文献批判性研读事务。"""
+﻿"""A170 文献批判性研读事务。"""
 
 from __future__ import annotations
 
@@ -152,7 +152,7 @@ def _write_critical_related_items(output_dir: Path, frame: pd.DataFrame) -> list
         "note_translation_status": "译文状态",
         "translated_note_path": "译文笔记路径",
     }
-    lines = ["# A100-A105 相关文献条目", "", f"共 {len(snapshot_df)} 条。", ""]
+    lines = ["# A170-A105 相关文献条目", "", f"共 {len(snapshot_df)} 条。", ""]
     if snapshot_df.empty:
         lines.append("当前任务没有产出可记录的相关文献条目。")
     else:
@@ -177,7 +177,7 @@ def _run_critical_reading_merged(
     content_db: Path,
     target_uid_set: set[str],
 ) -> tuple[List[Path], Dict[str, Any]]:
-    """在 A100 内联执行原 A105 的标准笔记与回流逻辑。"""
+    """在 A170 内联执行原 A105 的标准笔记与回流逻辑。"""
 
     auto_dispatch_feedback_requests = bool(raw_cfg.get("auto_dispatch_feedback_requests_to_a040", True))
     allow_unparsed_critical_read = bool(raw_cfg.get("allow_unparsed_critical_read", False))
@@ -235,7 +235,7 @@ def _run_critical_reading_merged(
                     parse_level="non_review_deep",
                     uid_literature=uid_literature,
                     cite_key=cite_key,
-                    source_stage="A100",
+                    source_stage="A170",
                     overwrite_existing=False,
                 )
             else:
@@ -244,7 +244,7 @@ def _run_critical_reading_merged(
                     parse_level="non_review_deep",
                     uid_literature=uid_literature,
                     cite_key=cite_key,
-                    source_stage="A100",
+                    source_stage="A170",
                     global_config_path=workspace_root / "config" / "config.json",
                     overwrite_existing=False,
                     model="auto",
@@ -266,7 +266,7 @@ def _run_critical_reading_merged(
                 title=title,
                 note_type="literature_standard_note",
                 status="draft",
-                tags=["aok/critical_read", "a100", "a105_merged"],
+                tags=["aok/critical_read", "a170", "a105_merged"],
                 aliases=[cite_key],
                 evidence_uids=[uid_literature],
                 uid_literature=uid_literature,
@@ -323,7 +323,7 @@ def _run_critical_reading_merged(
                     if decision.get("route_to_a040"):
                         retrieval_feedback_requests.append(
                             build_retrieval_feedback_request(
-                                source_stage="A100",
+                                source_stage="A170",
                                 source_task_uid=output_dir.name,
                                 source_note_path=str(note_path),
                                 source_uid_literature=uid_literature,
@@ -340,10 +340,10 @@ def _run_critical_reading_merged(
                     candidate_row = build_followup_candidate_state_row(
                         uid_literature=target_uid,
                         cite_key=target_cite_key,
-                        source_stage="A100",
+                        source_stage="A170",
                         source_uid_literature=uid_literature,
                         source_cite_key=cite_key,
-                        recommended_reason=f"A100 从 {cite_key} 批判性研读参考文献发现新候选",
+                        recommended_reason=f"A170 从 {cite_key} 批判性研读参考文献发现新候选",
                         theme_relation="a100_reference_discovery",
                         existing_state=existing_state_by_uid.get(target_uid),
                     )
@@ -366,7 +366,7 @@ def _run_critical_reading_merged(
                     "deep_read_count": deep_read_count,
                     "deep_read_note_path": str(note_path),
                     "deep_read_decision": "completed",
-                    "deep_read_reason": f"A100 已在同一事务内完成批判性研读与标准笔记。阅读目标={reading_objective or '未指定'}；提示语={manual_guidance or '未指定'}",
+                    "deep_read_reason": f"A170 已在同一事务内完成批判性研读与标准笔记。阅读目标={reading_objective or '未指定'}；提示语={manual_guidance or '未指定'}",
                     "deep_read_without_parse_done": 1 if is_unparsed_critical_read else int(row.get("deep_read_without_parse_done") or 0),
                     "require_reread_after_parse": 1 if is_unparsed_critical_read else int(row.get("require_reread_after_parse") or 0),
                 }
@@ -384,7 +384,7 @@ def _run_critical_reading_merged(
                         uid_literature=uid_literature,
                         cite_key=cite_key,
                         source_note_path=note_path,
-                        affair_name="A100",
+                        affair_name="A170",
                         config_path=workspace_root / "config" / "config.json",
                     )
                 except Exception as translation_exc:
@@ -441,12 +441,12 @@ def _run_critical_reading_merged(
         registered_feedback_requests = register_a040_requests_from_feedback(
             workspace_root=workspace_root,
             feedback_requests=merged_feedback_requests,
-            source_node="A100",
+            source_node="A170",
             priority="高" if need_download_feedback else "中",
             creator_type="affair",
             creator_id="A100_文献研读与正式知识回写",
             attribute_vector={
-                "source_stage": "A100",
+                "source_stage": "A170",
                 "need_download_feedback": need_download_feedback,
                 "request_count": len(merged_feedback_requests),
             },
@@ -472,7 +472,7 @@ def _run_critical_reading_merged(
     affair_request_result_path = output_dir / "affair_request_dispatch_A100.json"
     feedback_summary = {
         "task_uid": output_dir.name,
-        "source_stage": "A100",
+        "source_stage": "A170",
         "request_count": len(merged_feedback_requests),
         "critical_read_count": len(result_rows),
         "need_retrieval_feedback": len(merged_feedback_requests) > 0,
@@ -498,9 +498,9 @@ def _run_critical_reading_merged(
     )
 
     gate_review = build_gate_review(
-        node_uid="A100",
+        node_uid="A170",
         node_name="文献精读链整合事务",
-        summary=f"完成批判性研读 {len(result_rows)} 篇；失败 {len(failures)} 篇；在 A100 内联收口 A105。",
+        summary=f"完成批判性研读 {len(result_rows)} 篇；失败 {len(failures)} 篇；在 A170 内联收口 A105。",
         checks=[
             {"name": "critical_read_count", "value": len(result_rows)},
             {"name": "failure_count", "value": len(failures)},
@@ -563,7 +563,7 @@ def _load_deep_parse_pool(
 ) -> tuple[pd.DataFrame, str]:
     queue_df = load_reading_queue_df(
         content_db,
-        stage="A100",
+        stage="A170",
         only_current=True,
         queue_statuses=["queued", "candidate", "in_progress"],
     )
@@ -667,7 +667,7 @@ def _write_related_literature_items(output_dir: Path, frame: pd.DataFrame) -> li
         "postprocess_markdown_path": "后处理 Markdown",
         "parse_translation_status": "译文状态",
     }
-    lines = ["# A100 相关文献条目", "", f"共 {len(snapshot_df)} 条。", ""]
+    lines = ["# A170 相关文献条目", "", f"共 {len(snapshot_df)} 条。", ""]
     if snapshot_df.empty:
         lines.append("当前任务没有产出可记录的相关文献条目。")
     else:
@@ -684,12 +684,12 @@ def _write_related_literature_items(output_dir: Path, frame: pd.DataFrame) -> li
     return [csv_path, md_path]
 
 
-@affair_auto_git_commit("A100")
+@affair_auto_git_commit("A170")
 def execute(config_path: Path) -> List[Path]:
     raw_cfg = load_json_or_py(config_path)
     workspace_root = _resolve_workspace_root(config_path, raw_cfg)
     legacy_output_dir = _resolve_output_dir(config_path, raw_cfg)
-    output_dir = _build_task_instance_dir(workspace_root, "A100")
+    output_dir = _build_task_instance_dir(workspace_root, "A170")
     content_db, _ = resolve_content_db_config(
         raw_cfg,
         default_path=workspace_root / "database" / CONTENT_DB_DIRECTORY_NAME / DEFAULT_CONTENT_DB_NAME,
@@ -761,7 +761,7 @@ def execute(config_path: Path) -> List[Path]:
                     "in_deep_read": 0,
                     "deep_read_done": 0,
                     "deep_read_decision": "pdf_fallback_ready",
-                    "deep_read_reason": "A100 在未解析先读开关下跳过 MonkeyOCR，按未解析旁路移交 A105。",
+                    "deep_read_reason": "A170 在未解析先读开关下跳过 MonkeyOCR，按未解析旁路移交 A105。",
                     "deep_read_without_parse_done": 1,
                     "require_reread_after_parse": 1,
                     "unparsed_read_in_effect": 1,
@@ -792,8 +792,8 @@ def execute(config_path: Path) -> List[Path]:
         content_db=content_db,
         source_df=parse_df,
         output_dir=output_dir,
-        source_stage="A100",
-        upstream_stage="A080",
+        source_stage="A170",
+        upstream_stage="A150",
         downstream_stage="A105",
         parse_level="non_review_deep",
         literature_scope="non_review",
@@ -836,7 +836,7 @@ def execute(config_path: Path) -> List[Path]:
                     "deep_read_done": 0 if should_force_redeep else int(row.get("deep_read_done") or 0),
                     "deep_read_decision": "parse_ready",
                     "deep_read_reason": (
-                        "A100 已完成 non_review_deep 解析资产准备，"
+                        "A170 已完成 non_review_deep 解析资产准备，"
                         "等待 A105 执行批判性研读与标准笔记写回。"
                     ),
                     "allow_unparsed_read": 0,
@@ -879,7 +879,7 @@ def execute(config_path: Path) -> List[Path]:
                         uid_literature=uid_literature,
                         cite_key=cite_key,
                         parse_level="non_review_deep",
-                        affair_name="A100",
+                        affair_name="A170",
                         config_path=workspace_root / "config" / "config.json",
                     )
                     result_rows[-1]["parse_translation_status"] = str(translation_result.get("status") or "SKIP")
@@ -900,7 +900,7 @@ def execute(config_path: Path) -> List[Path]:
                         parse_level="non_review_deep",
                         uid_literature=uid_literature,
                         cite_key=cite_key,
-                        source_stage="A100",
+                        source_stage="A170",
                         overwrite_existing=False,
                     )
                 except Exception as fallback_error:
@@ -916,7 +916,7 @@ def execute(config_path: Path) -> List[Path]:
                         "in_deep_read": 0,
                         "deep_read_done": 0,
                         "deep_read_decision": "pdf_fallback_ready",
-                        "deep_read_reason": f"A100 多模态解析失败，已切换为原文 PDF 直读旁路。原始错误：{exc}",
+                        "deep_read_reason": f"A170 多模态解析失败，已切换为原文 PDF 直读旁路。原始错误：{exc}",
                     }
                 )
                 result_rows.append(
@@ -959,7 +959,7 @@ def execute(config_path: Path) -> List[Path]:
     completed_df = manifest_df.loc[
         manifest_df.get("manifest_status", pd.Series(dtype=str)).astype(str).str.lower().isin(["succeeded", "skipped"])
     ].copy() if not manifest_df.empty else pd.DataFrame()
-    consumed_a100_queue_count = _consume_current_stage_queue_rows(content_db, stage="A100", completed_df=completed_df)
+    consumed_a100_queue_count = _consume_current_stage_queue_rows(content_db, stage="A170", completed_df=completed_df)
 
     result_df = pd.DataFrame(result_rows)
     index_path = output_dir / OUTPUT_INDEX
@@ -967,12 +967,12 @@ def execute(config_path: Path) -> List[Path]:
     related_item_paths = _write_related_literature_items(output_dir, result_df)
 
     gate_review = build_gate_review(
-        node_uid="A100",
+        node_uid="A170",
         node_name="文献批判性研读",
         summary=(
             f"完成 deep parse 准备 {len(result_rows)} 篇（mode={input_mode}）；"
             f"后处理成功 {postprocess_success_count} 篇；失败 {len(failures)} 篇；"
-            f"消费 A100 队列 {consumed_a100_queue_count} 条。"
+            f"消费 A170 队列 {consumed_a100_queue_count} 条。"
         ),
         checks=[
             {"name": "deep_parse_ready_count", "value": len(result_rows)},
@@ -1028,11 +1028,11 @@ def execute(config_path: Path) -> List[Path]:
         append_aok_log_event(
             event_type="A100_DEEP_READING_COMPLETED",
             project_root=workspace_root,
-            affair_code="A100",
+            affair_code="A170",
             handler_name="文献批判性研读",
             agent_names=["ar_A100_文献批判性研读事务智能体_v7"],
             skill_names=[],
-            reasoning_summary="在同一存活节点内完成深读准备、批判性研读与正式知识回写，并向 A110 推进。",
+            reasoning_summary="在同一存活节点内完成深读准备、批判性研读与正式知识回写，并向 A180 推进。",
             gate_review=gate_review,
             gate_review_path=gate_path,
             artifact_paths=[str(index_path), *[str(path) for path in related_item_paths], str(manifest_result["manifest_path"]), str(manifest_result["management_table_path"]), str(manifest_result["handoff_path"])],

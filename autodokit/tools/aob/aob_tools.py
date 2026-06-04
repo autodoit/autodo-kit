@@ -561,3 +561,61 @@ def run_aob_workspace_convert(
     if dry_run:
         args.append("--dry-run")
     return run_aob_deploy(args)
+
+
+def run_aob_undo_sync(
+    *,
+    session_id: str,
+    repo_root: str = "",
+    db_path: str = "",
+    dry_run: bool = True,
+) -> int:
+    """执行同步撤销 CLI。
+
+    Args:
+        session_id: 要撤销的会话 ID。
+        repo_root: AOB 仓库根目录。
+        db_path: 撤销数据库路径。
+        dry_run: 是否仅预览。
+
+    Returns:
+        int: 退出码。
+    """
+
+    from autodokit.tools.atomic.aob_runtime.aob_sync_undo import 执行撤销, 撤销数据库文件名
+
+    if str(db_path).strip():
+        target_db = Path(str(db_path).strip()).expanduser().resolve()
+    else:
+        root = _resolve_aob_repo_root(repo_root)
+        target_db = root / "datastore" / "sync_undo" / 撤销数据库文件名
+
+    result = 执行撤销(target_db, session_id=session_id, dry_run=dry_run)
+    import json as _json
+    print(_json.dumps(result, ensure_ascii=False, indent=2))
+    return 0 if result.get("status") in {"PASS", "DRY_RUN"} else 1
+
+
+def run_aob_list_undo_sessions(*, repo_root: str = "", db_path: str = "") -> int:
+    """列出所有可撤销会话 CLI。
+
+    Args:
+        repo_root: AOB 仓库根目录。
+        db_path: 撤销数据库路径。
+
+    Returns:
+        int: 退出码。
+    """
+
+    from autodokit.tools.atomic.aob_runtime.aob_sync_undo import 列出撤销会话
+
+    if str(db_path).strip():
+        target_db = Path(str(db_path).strip()).expanduser().resolve()
+    else:
+        root = _resolve_aob_repo_root(repo_root)
+        target_db = root / "datastore" / "sync_undo" / "sync_undo.sqlite3"
+
+    sessions = 列出撤销会话(target_db)
+    import json as _json
+    print(_json.dumps(sessions, ensure_ascii=False, indent=2))
+    return 0

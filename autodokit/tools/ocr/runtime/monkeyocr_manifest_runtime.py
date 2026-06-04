@@ -1,7 +1,7 @@
 ﻿"""MonkeyOCR 清单驱动解析运行时。
 
 本模块用于在不改动既有 MonkeyOCR tools 的前提下，把
-文献清单驱动的批量解析能力接入 A060、A080、A100。
+文献清单驱动的批量解析能力接入 A110、A150、A170。
 """
 
 from __future__ import annotations
@@ -160,7 +160,7 @@ def _update_preprocess_runtime_state(
     preprocess_finished_at: str | None = None,
     parse_state: str = "",
 ) -> None:
-    """把 A055 运行态和解析状态写回文献主表摘要列。"""
+    """把 A070 运行态和解析状态写回文献主表摘要列。"""
 
     uid_literature = _stringify(uid_literature)
     cite_key = _stringify(cite_key)
