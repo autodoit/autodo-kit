@@ -75,6 +75,14 @@
 - `migrate_workspace_paths`
 - `PathMapping`
 
+### CrossRef 题录验证
+
+- `crossref_search` — CrossRef API 按标题/作者检索
+- `crossref_match_score` — bib 条目与 CrossRef 结果匹配评分（0-100）
+- `crossref_verify_single` — 单条文献 CrossRef 验证
+- `crossref_batch_verify` — 批量 CrossRef 验证（支持进度回调）
+- `crossref_verify_tracker` — 直接读取 JSONL 追踪文件批量验证
+
 ### 直接查源码
 
 当需要精确签名或示例时，优先查看：

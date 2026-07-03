@@ -679,6 +679,12 @@ _用户公开工具 = [
     "detect_and_clean_literature_title_braces",
     "isolate_unmatched_attachments",
     "manage_online_retrieval_daily_usage",
+    # ── CrossRef 验证工具 ──
+    "crossref_search",
+    "crossref_match_score",
+    "crossref_verify_single",
+    "crossref_batch_verify",
+    "crossref_verify_tracker",
 ]
 
 _开发者工具 = [
@@ -994,6 +1000,44 @@ def get_tool(tool_name: str, *, scope: str = "user") -> Callable[..., Any]:
     if not callable(symbol):
         raise KeyError(f"目标不是可调用工具：{target}")
     return symbol
+
+
+# ── CrossRef 验证工具（懒加载） ──────────────────────────────────────
+
+
+def crossref_search(*args: Any, **kwargs: Any) -> Any:
+    """延迟加载 CrossRef 检索工具，避免入口模块循环导入。"""
+    module = importlib.import_module("autodokit.tools.atomic.crossref.crossref_client")
+    impl = getattr(module, "crossref_search")
+    return impl(*args, **kwargs)
+
+
+def crossref_match_score(*args: Any, **kwargs: Any) -> Any:
+    """延迟加载 CrossRef 匹配评分工具。"""
+    module = importlib.import_module("autodokit.tools.atomic.crossref.verification")
+    impl = getattr(module, "crossref_match_score")
+    return impl(*args, **kwargs)
+
+
+def crossref_verify_single(*args: Any, **kwargs: Any) -> Any:
+    """延迟加载 CrossRef 单条验证工具。"""
+    module = importlib.import_module("autodokit.tools.atomic.crossref.verification")
+    impl = getattr(module, "crossref_verify_single")
+    return impl(*args, **kwargs)
+
+
+def crossref_batch_verify(*args: Any, **kwargs: Any) -> Any:
+    """延迟加载 CrossRef 批量验证工具。"""
+    module = importlib.import_module("autodokit.tools.atomic.crossref.verification")
+    impl = getattr(module, "crossref_batch_verify")
+    return impl(*args, **kwargs)
+
+
+def crossref_verify_tracker(*args: Any, **kwargs: Any) -> Any:
+    """延迟加载 CrossRef 追踪文件验证工具。"""
+    module = importlib.import_module("autodokit.tools.atomic.crossref.verification")
+    impl = getattr(module, "crossref_verify_tracker")
+    return impl(*args, **kwargs)
 
 
 def __getattr__(name: str) -> Any:

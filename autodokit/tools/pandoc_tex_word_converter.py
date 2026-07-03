@@ -13,6 +13,8 @@
 from __future__ import annotations
 
 from .docx_postprocess import add_heading_numbering, highlight_tokens_in_docx
+from .docx2tex_converter import convert_word_to_latex_via_docx2tex
+from .docx2tex_runner import Docx2TexResult, check_docx2tex_available
 from .latex_subfile_merger import merge_latex_subfiles
 from .latex_to_word import convert_latex_to_word
 from .pandoc_runner import PandocResult, run_pandoc
@@ -20,6 +22,7 @@ from .word_to_latex import (
     DEFAULT_XELATEX_LATEX_TEMPLATE,
     PANDOC_TABLE_SUPPORT_BLOCK,
     PANDOC_TABLE_SUPPORT_MARKER,
+    ConversionResult,
     _ensure_pandoc_latex_table_support,
     _needs_pandoc_table_support,
     convert_word_to_latex,
@@ -27,6 +30,8 @@ from .word_to_latex import (
 
 __all__ = [
     "PandocResult",
+    "Docx2TexResult",
+    "ConversionResult",
     "DEFAULT_XELATEX_LATEX_TEMPLATE",
     "PANDOC_TABLE_SUPPORT_MARKER",
     "PANDOC_TABLE_SUPPORT_BLOCK",
@@ -34,6 +39,8 @@ __all__ = [
     "run_pandoc",
     "convert_latex_to_word",
     "convert_word_to_latex",
+    "convert_word_to_latex_via_docx2tex",
+    "check_docx2tex_available",
     "add_heading_numbering",
     "highlight_tokens_in_docx",
     "_needs_pandoc_table_support",
