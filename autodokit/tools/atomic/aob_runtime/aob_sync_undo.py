@@ -161,7 +161,10 @@ class 撤销账本:
         parts = resolved.parts
         for part in parts:
             name = part.lower().lstrip(".")
-            if name in {"copilot", "claude", "codex", "gemini", "opencode", "cursor", "lingma", "qoder", "qwen"}:
+            if name in {"copilot", "claude", "codex", "gemini", "opencode", "cursor", "lingma", "qoder", "qwen", "zed", "agents"}:
+                # .agents 目录映射到 zed 标签
+                if name == "agents":
+                    return "zed"
                 return name
         if len(parts) >= 2:
             return parts[-2].lstrip(".")

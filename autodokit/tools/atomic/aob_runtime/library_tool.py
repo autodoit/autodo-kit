@@ -123,17 +123,32 @@ except Exception:  # pragma: no cover
     ".claude",
     ".codex",
     ".gemini",
-    ".opencode",
     ".cursor",
     ".lingma",
     ".qoder",
     ".qwen",
+    ".agents",
 ]
+
+# 用户级 structured_root 路径片段映射。
+# 键为 target_label，值为相对于用户主目录的路径片段元组。
+# 未在此表中列出的 target 仍按 `~/.<target_label>` 回退解析。
+默认用户级路径片段映射: dict[str, tuple[str, ...]] = {
+    "opencode": (".config", "opencode"),
+    "zed": (".agents",),
+    "opencode_zed": (".agents",),
+}
 
 默认提示词目录候选 = [
     ("Code", "User", "prompts"),
     ("Cursor", "User", "prompts"),
     ("Lingma", "User", "prompts"),
+]
+
+# macOS 提示词目录候选（相对于用户主目录）
+默认macOS提示词目录候选 = [
+    ("Library", "Application Support", "Code", "User", "prompts"),
+    ("Library", "Application Support", "Cursor", "User", "prompts"),
 ]
 
 默认项目级载体目录名 = {
@@ -252,11 +267,16 @@ def 序列化标签单元格(tags: list[str]) -> str:
     {"folder_name": ".claude", "target_label": "claude", "layout": "structured_root", "engine_vendor": "claude", "ide_vendor": "claude", "scope": "user"},
     {"folder_name": ".codex", "target_label": "codex", "layout": "structured_root", "engine_vendor": "codex", "ide_vendor": "codex", "scope": "user"},
     {"folder_name": ".gemini", "target_label": "gemini", "layout": "structured_root", "engine_vendor": "gemini", "ide_vendor": "gemini", "scope": "user"},
-    {"folder_name": ".opencode", "target_label": "opencode", "layout": "structured_root", "engine_vendor": "opencode", "ide_vendor": "opencode", "scope": "user"},
     {"folder_name": ".cursor", "target_label": "cursor", "layout": "structured_root", "engine_vendor": "claude", "ide_vendor": "cursor", "scope": "user"},
     {"folder_name": ".lingma", "target_label": "lingma", "layout": "structured_root", "engine_vendor": "lingma", "ide_vendor": "lingma", "scope": "user"},
     {"folder_name": ".qoder", "target_label": "qoder", "layout": "structured_root", "engine_vendor": "qoder", "ide_vendor": "qoder", "scope": "user"},
     {"folder_name": ".qwen", "target_label": "qwen", "layout": "structured_root", "engine_vendor": "qwen", "ide_vendor": "qwen", "scope": "user"},
+    # opencode 使用路径片段映射（~/.config/opencode）
+    {"path_parts": (".config", "opencode"), "target_label": "opencode", "layout": "structured_root", "engine_vendor": "opencode", "ide_vendor": "opencode", "scope": "user"},
+    # zed 使用路径片段映射（~/.agents）
+    {"path_parts": (".agents",), "target_label": "zed", "layout": "structured_root", "engine_vendor": "zed", "ide_vendor": "zed", "scope": "user"},
+    # opencode_zed 组合（engine=opencode, ide=zed）- 待核验，暂用 ~/.agents
+    {"path_parts": (".agents",), "target_label": "opencode_zed", "layout": "structured_root", "engine_vendor": "opencode", "ide_vendor": "zed", "scope": "user"},
 ]
 
 默认提示词发布目标候选 = [
@@ -1214,6 +1234,44 @@ def 是否包含可聚合内容(source_path: Path, *, layout: str, scope: str = 
     return False
 
 
+def 解析用户级聚合路径(home: Path, folder_name: str) -> tuple[Path, str, str]:
+    """根据文件夹名解析用户级聚合路径与引擎/IDE 供应商。
+
+    优先使用 `默认用户级路径片段映射` 中的映射；未命中时回退到 `~/.<folder_name>`。
+
+    Args:
+        home: 用户主目录。
+        folder_name: 聚合根目录名（如 `.opencode`、`.agents`）。
+
+    Returns:
+        tuple[Path, str, str]: (source_path, engine_vendor, ide_vendor)
+    """
+
+    vendor = folder_name.lstrip(".").lower()
+
+    # 特殊映射：cursor 使用 claude 引擎
+    if vendor == "cursor":
+        engine_vendor = "claude"
+        ide_vendor = "cursor"
+    # 特殊映射：.agents 目录对应 zed（原生 Agent）
+    elif vendor == "agents":
+        engine_vendor = "zed"
+        ide_vendor = "zed"
+    else:
+        engine_vendor = vendor
+        ide_vendor = vendor
+
+    # 检查是否有路径片段映射
+    target_label = vendor if vendor != "agents" else "zed"
+    if target_label in 默认用户级路径片段映射:
+        parts = 默认用户级路径片段映射[target_label]
+        source_path = home.joinpath(*parts)
+    else:
+        source_path = home / folder_name
+
+    return source_path, engine_vendor, ide_vendor
+
+
 def 发现用户级聚合来源(*, home_dir: str = "") -> list[聚合来源]:
     """自动发现当前用户的 AI 内容来源目录。"""
 
@@ -1222,18 +1280,15 @@ def 发现用户级聚合来源(*, home_dir: str = "") -> list[聚合来源]:
     candidates: list[聚合来源] = []
 
     for folder_name in 默认用户级聚合根目录:
-        source_path = home / folder_name
-        vendor = folder_name.lstrip(".").lower()
-        if vendor == "cursor":
-            engine_vendor = "claude"
-            ide_vendor = "cursor"
-        else:
-            engine_vendor = vendor
-            ide_vendor = vendor
+        source_path, engine_vendor, ide_vendor = 解析用户级聚合路径(home, folder_name)
+        label = folder_name.lstrip(".")
+        # .agents 目录的标签使用 zed
+        if label == "agents":
+            label = "zed"
         candidates.append(
             聚合来源(
                 source_path=source_path,
-                source_label=规范来源标签(folder_name.lstrip(".")),
+                source_label=规范来源标签(label),
                 layout="structured_root",
                 engine_vendor=engine_vendor,
                 ide_vendor=ide_vendor,
@@ -1376,8 +1431,14 @@ def 发现用户级发布目标(
     candidates: list[发布目标] = []
 
     for item in 默认用户级发布目标:
+        # 支持 path_parts 字段（优先）或 folder_name 字段
+        if "path_parts" in item:
+            target_path = home.joinpath(*tuple(item["path_parts"]))
+        else:
+            target_path = home / str(item["folder_name"])
+        
         target = 发布目标(
-            target_path=home / str(item["folder_name"]),
+            target_path=target_path,
             target_label=str(item["target_label"]),
             layout=str(item["layout"]),
             engine_vendor=str(item["engine_vendor"]),
