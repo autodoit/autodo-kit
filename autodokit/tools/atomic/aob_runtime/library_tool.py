@@ -2866,6 +2866,11 @@ def 构建解析器() -> argparse.ArgumentParser:
     sub.add_parser("update-user-content", help="按范围执行 参与方反编译 -> logical key 决策 -> canonical 回写 -> 定向发布 的同步")
     sub.add_parser("generate-zh-index", help="扫描技能/智能体的 metadata.display_zh 并生成中文索引（yaml + md）")
     sub.add_parser("query-zh-index", help="按中文关键词或分类查询技能/智能体索引")
+    sub.add_parser("flow-backup-aggregate", help="【流程】备份 → 聚合")
+    sub.add_parser("flow-backup-publish", help="【流程】备份 → 发布")
+    sub.add_parser("flow-backup-update", help="【流程】备份 → 同步")
+    sub.add_parser("flow-aggregate-publish", help="【流程】聚合 → 发布")
+    sub.add_parser("flow-full-sync", help="【流程】备份 → 聚合 → 发布 → 中文索引（一键全流程）")
     return parser
 
 
@@ -2897,6 +2902,21 @@ def main() -> int:
             return _执行生成中文索引(list(passthrough), paths)
         if args.command == "query-zh-index":
             return _执行查询中文索引(list(passthrough), paths)
+        if args.command == "flow-backup-aggregate":
+            from .aob_flow_pipeline import _execute_flow_backup_aggregate
+            return _execute_flow_backup_aggregate(list(passthrough), paths)
+        if args.command == "flow-backup-publish":
+            from .aob_flow_pipeline import _execute_flow_backup_publish
+            return _execute_flow_backup_publish(list(passthrough), paths)
+        if args.command == "flow-backup-update":
+            from .aob_flow_pipeline import _execute_flow_backup_update
+            return _execute_flow_backup_update(list(passthrough), paths)
+        if args.command == "flow-aggregate-publish":
+            from .aob_flow_pipeline import _execute_flow_aggregate_publish
+            return _execute_flow_aggregate_publish(list(passthrough), paths)
+        if args.command == "flow-full-sync":
+            from .aob_flow_pipeline import _execute_flow_full_sync
+            return _execute_flow_full_sync(list(passthrough), paths)
         return 2
     except Exception as exc:  # noqa: BLE001
         print(f"[ERROR] {exc}", file=sys.stderr)
