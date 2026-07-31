@@ -112,7 +112,7 @@ def flow_backup_then_aggregate(
     # Step 1: 备份
     t0 = time.monotonic()
     try:
-        from .library_tool import 备份用户级内容 as _备份
+        from .aob_backup import 备份用户级内容 as _备份
         backup_result = _备份(
             paths, target_paths=target_paths or [], home_dir=home_dir,
             engine_vendors=engine_vendors or [], ide_vendors=ide_vendors or [],
@@ -128,7 +128,7 @@ def flow_backup_then_aggregate(
     # Step 2: 聚合
     t0 = time.monotonic()
     try:
-        from .library_tool import 聚合用户级内容 as _聚合
+        from .aob_aggregate import 聚合用户级内容 as _聚合
         agg_result = _聚合(
             paths, source_paths=source_paths or [], home_dir=home_dir,
             scopes=scopes, project_dirs=project_dirs, dry_run=dry_run,
@@ -172,7 +172,7 @@ def flow_backup_then_publish(
     # Step 1: 备份
     t0 = time.monotonic()
     try:
-        from .library_tool import 备份用户级内容 as _备份
+        from .aob_backup import 备份用户级内容 as _备份
         backup_result = _备份(
             paths, target_paths=target_paths or [], home_dir=home_dir,
             engine_vendors=engine_vendors or [], ide_vendors=ide_vendors or [],
@@ -188,7 +188,7 @@ def flow_backup_then_publish(
     # Step 2: 发布
     t0 = time.monotonic()
     try:
-        from .library_tool import 发布用户级内容 as _发布
+        from .aob_publish import 发布用户级内容 as _发布
         pub_result = _发布(
             paths, target_paths=target_paths or [], home_dir=home_dir,
             engine_vendors=engine_vendors or [], ide_vendors=ide_vendors or [],
@@ -239,7 +239,7 @@ def flow_backup_then_update(
     # Step 1: 备份
     t0 = time.monotonic()
     try:
-        from .library_tool import 备份用户级内容 as _备份
+        from .aob_backup import 备份用户级内容 as _备份
         backup_result = _备份(
             paths, target_paths=target_paths or [], home_dir=home_dir,
             engine_vendors=engine_vendors or [], ide_vendors=ide_vendors or [],
@@ -255,7 +255,7 @@ def flow_backup_then_update(
     # Step 2: 同步（调用 update 但 skip_backup=True，因为已经备份过了）
     t0 = time.monotonic()
     try:
-        from .library_tool import 更新用户级内容 as _更新
+        from .aob_update import 更新用户级内容 as _更新
         update_result = _更新(
             paths, target_paths=target_paths or [], home_dir=home_dir,
             engine_vendors=engine_vendors or [], ide_vendors=ide_vendors or [],
@@ -307,7 +307,7 @@ def flow_aggregate_then_publish(
     # Step 1: 聚合
     t0 = time.monotonic()
     try:
-        from .library_tool import 聚合用户级内容 as _聚合
+        from .aob_aggregate import 聚合用户级内容 as _聚合
         agg_result = _聚合(
             paths, source_paths=source_paths or [], home_dir=home_dir,
             scopes=scopes, project_dirs=project_dirs, dry_run=dry_run,
@@ -322,7 +322,7 @@ def flow_aggregate_then_publish(
     # Step 2: 发布
     t0 = time.monotonic()
     try:
-        from .library_tool import 发布用户级内容 as _发布
+        from .aob_publish import 发布用户级内容 as _发布
         pub_result = _发布(
             paths, target_paths=target_paths or [], home_dir=home_dir,
             engine_vendors=engine_vendors or [], ide_vendors=ide_vendors or [],
@@ -373,7 +373,7 @@ def flow_full_sync(
     # Step 1: 备份
     t0 = time.monotonic()
     try:
-        from .library_tool import 备份用户级内容 as _备份
+        from .aob_backup import 备份用户级内容 as _备份
         backup_result = _备份(
             paths, target_paths=target_paths or [], home_dir=home_dir,
             engine_vendors=engine_vendors or [], ide_vendors=ide_vendors or [],
@@ -389,7 +389,7 @@ def flow_full_sync(
     # Step 2: 聚合
     t0 = time.monotonic()
     try:
-        from .library_tool import 聚合用户级内容 as _聚合
+        from .aob_aggregate import 聚合用户级内容 as _聚合
         agg_result = _聚合(
             paths, source_paths=source_paths or [], home_dir=home_dir,
             scopes=scopes, project_dirs=project_dirs, dry_run=dry_run,
@@ -404,7 +404,7 @@ def flow_full_sync(
     # Step 3: 发布
     t0 = time.monotonic()
     try:
-        from .library_tool import 发布用户级内容 as _发布
+        from .aob_publish import 发布用户级内容 as _发布
         pub_result = _发布(
             paths, target_paths=target_paths or [], home_dir=home_dir,
             engine_vendors=engine_vendors or [], ide_vendors=ide_vendors or [],
