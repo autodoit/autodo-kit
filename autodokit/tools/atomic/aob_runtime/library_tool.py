@@ -34,6 +34,16 @@ except Exception:  # pragma: no cover
         创建撤销账本 = None
 
 try:
+    from .aob_zh_index import 生成中文索引, 查询中文索引, 默认输出目录 as _默认zh输出目录
+except Exception:  # pragma: no cover
+    try:
+        from aob_zh_index import 生成中文索引, 查询中文索引, 默认输出目录 as _默认zh输出目录
+    except Exception:  # pragma: no cover
+        生成中文索引 = None
+        查询中文索引 = None
+        _默认zh输出目录 = None
+
+try:
     from .aoc_tool import (
         AOL定义,
         从libs构建_aol,
@@ -5593,6 +5603,67 @@ def 执行更新用户级内容(argv: list[str], paths: 路径配置) -> int:
     return 0
 
 
+def _执行生成中文索引(argv: list[str], paths: 路径配置) -> int:
+    """执行 generate-zh-index 子命令。"""
+    parser = argparse.ArgumentParser(description="扫描技能/智能体的 metadata.display_zh 并生成中文索引")
+    parser.add_argument("--source-root", action="append", default=[], help="源根目录（可重复）")
+    parser.add_argument("--output-dir", default="", help="输出目录，默认 autodo-lib/datastore")
+    parser.add_argument("--dry-run", action="store_true", help="仅显示统计，不写文件")
+    args = parser.parse_args(argv)
+
+    if 生成中文索引 is None:
+        print("[ERROR] aob_zh_index 模块不可用", file=sys.stderr)
+        return 2
+
+    from pathlib import Path
+    source_roots = [Path(p) for p in args.source_root] if args.source_root else None
+    output_dir = Path(args.output_dir) if args.output_dir else (_默认zh输出目录 or Path("."))
+    result = 生成中文索引(source_roots=source_roots, output_dir=output_dir, dry_run=bool(args.dry_run))
+    print(f"索引{'预览' if args.dry_run else '已生成'}:")
+    print(f"  技能: {result['skills_count']}, 智能体: {result['agents_count']}, 合计: {result['total']}")
+    if not args.dry_run:
+        print(f"  YAML: {result.get('output_yaml', 'N/A')}")
+        print(f"  MD:   {result.get('output_md', 'N/A')}")
+    return 0
+
+
+def _执行查询中文索引(argv: list[str], paths: 路径配置) -> int:
+    """执行 query-zh-index 子命令。"""
+    parser = argparse.ArgumentParser(description="按中文关键词或分类查询技能/智能体索引")
+    parser.add_argument("--source-root", action="append", default=[], help="源根目录（可重复）")
+    parser.add_argument("--keyword", default="", help="关键词搜索")
+    parser.add_argument("--category", default="", help="按分类筛选")
+    parser.add_argument("--all", action="store_true", help="列出全部条目")
+    parser.add_argument("--json", action="store_true", help="以 JSON 格式输出")
+    args = parser.parse_args(argv)
+
+    if 查询中文索引 is None:
+        print("[ERROR] aob_zh_index 模块不可用", file=sys.stderr)
+        return 2
+
+    from pathlib import Path
+    source_roots = [Path(p) for p in args.source_root] if args.source_root else None
+    results = 查询中文索引(
+        source_roots=source_roots,
+        keyword=args.keyword,
+        category=args.category,
+        list_all=bool(args.all),
+    )
+    if args.json:
+        print(json.dumps(results, ensure_ascii=False, indent=2))
+    else:
+        print(f"\n查询结果: {len(results)} 条")
+        for r in results:
+            display = r.get("display_zh", "") or r["name"]
+            typ = "技能" if r["type"] == "skill" else "智能体"
+            aliases = ", ".join(r.get("aliases_zh", [])[:3])
+            cat = f" [{r.get('category_zh', '')}]" if r.get("category_zh") else ""
+            print(f"  {display}{cat}  ({typ})  `{r['name']}`")
+            if aliases:
+                print(f"    触发词: {aliases}")
+    return 0
+
+
 def 构建解析器() -> argparse.ArgumentParser:
     """构建顶层解析器。
 
@@ -5608,6 +5679,8 @@ def 构建解析器() -> argparse.ArgumentParser:
     sub.add_parser("publish-user-content", help="按范围把 libs 中的 AI 内容发布到当前设备、项目或显式目标")
     sub.add_parser("backup-user-content", help="按范围备份当前设备或项目 AI 内容（libs + 参与目标）")
     sub.add_parser("update-user-content", help="按范围执行 参与方反编译 -> logical key 决策 -> canonical 回写 -> 定向发布 的同步")
+    sub.add_parser("generate-zh-index", help="扫描技能/智能体的 metadata.display_zh 并生成中文索引（yaml + md）")
+    sub.add_parser("query-zh-index", help="按中文关键词或分类查询技能/智能体索引")
     return parser
 
 
@@ -5635,6 +5708,10 @@ def main() -> int:
             return 执行备份用户级内容(list(passthrough), paths)
         if args.command == "update-user-content":
             return 执行更新用户级内容(list(passthrough), paths)
+        if args.command == "generate-zh-index":
+            return _执行生成中文索引(list(passthrough), paths)
+        if args.command == "query-zh-index":
+            return _执行查询中文索引(list(passthrough), paths)
         return 2
     except Exception as exc:  # noqa: BLE001
         print(f"[ERROR] {exc}", file=sys.stderr)
