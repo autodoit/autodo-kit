@@ -2815,3 +2815,73 @@ def 清理目标未跟踪文件(
     return deleted
 
 
+
+
+def 默认用户内容备份根目录(paths: 路径配置) -> Path:
+    """获取用户内容备份根目录。"""
+
+    sibling_root = paths.repo_root.parent / "autodo-lib"
+    return (sibling_root / "datastore").resolve()
+
+
+def 构造备份快照目录(*, backup_root: Path, prefix: str = "aob-user-content-backup") -> Path:
+    """构造不冲突的备份快照目录。"""
+
+    stamp = time.strftime("%Y%m%d-%H%M%S", time.localtime())
+    base = backup_root / f"{prefix}-{stamp}"
+    candidate = base
+    index = 2
+    while candidate.exists():
+        candidate = backup_root / f"{prefix}-{stamp}-{index}"
+        index += 1
+    return candidate
+
+
+def 统计文件数量(path: Path) -> int:
+    """统计路径内文件数量。"""
+
+    if not path.exists():
+        return 0
+    if path.is_file():
+        return 1
+    return sum(1 for item in path.rglob("*") if item.is_file())
+
+
+def 复制到备份快照(*, source: Path, destination: Path) -> None:
+    """复制来源到备份快照。"""
+
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    if source.is_file():
+        shutil.copy2(source, destination)
+        return
+    shutil.copytree(source, destination)
+
+
+def 复制到沙盒镜像(*, source: Path, destination: Path) -> None:
+    """把来源复制到沙盒镜像路径，允许目标目录已存在（合并复制）。
+
+    与 `复制到备份快照` 不同，本函数在目标已存在时进行合并复制，
+    以支持多个共享同一镜像树的目标（如同一项目根下的多个 carrier 根）。
+
+    Args:
+        source: 来源文件或目录。
+        destination: 沙盒镜像目标路径。
+    """
+
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    if source.is_file():
+        shutil.copy2(source, destination)
+        return
+    # copytree with dirs_exist_ok, ignoring socket/pipe files
+    import stat as _stat
+    def _ignore_unreadable(adir: str, names: list[str]) -> set[str]:
+        ignored: set[str] = set()
+        for name in names:
+            p = Path(adir) / name
+            try:
+                if p.is_socket() or p.is_fifo():
+                    ignored.add(name)
+            except OSError:
+                ignored.add(name)
+        return ignored
+    shutil.copytree(source, destination, dirs_exist_ok=True, ignore=_ignore_unreadable)

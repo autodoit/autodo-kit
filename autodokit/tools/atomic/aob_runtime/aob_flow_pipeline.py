@@ -109,21 +109,25 @@ def flow_backup_then_aggregate(
         paths = 默认路径()
     steps: list[dict[str, Any]] = []
 
-    # Step 1: 备份
-    t0 = time.monotonic()
-    try:
-        from .aob_backup import 备份用户级内容 as _备份
-        backup_result = _备份(
-            paths, target_paths=target_paths or [], home_dir=home_dir,
-            engine_vendors=engine_vendors or [], ide_vendors=ide_vendors or [],
-            include_missing=include_missing, backup_dir=backup_dir,
-            scopes=scopes, project_dirs=project_dirs, dry_run=dry_run,
-        )
-        steps.append(_步骤结果("backup", "ok" if backup_result.get("status") != "error" else "error",
-                               backup_result, time.monotonic() - t0))
-    except Exception as e:
-        steps.append(_步骤结果("backup", "error", {"error": str(e)}, time.monotonic() - t0))
-        return _流程结果(steps, dry_run=dry_run, simulate_only=simulate_only, repo_root=str(paths.repo_root))
+    # Step 1: 备份（沙盒模拟时跳过——备份模块不支持 simulate_only）
+    if simulate_only:
+        steps.append(_步骤结果("backup", "skipped", {}, 0.0,
+                               跳过原因="沙盒模拟模式下跳过备份（数据已在 update 沙盒中）"))
+    else:
+        t0 = time.monotonic()
+        try:
+            from .aob_backup import 备份用户级内容 as _备份
+            backup_result = _备份(
+                paths, target_paths=target_paths or [], home_dir=home_dir,
+                engine_vendors=engine_vendors or [], ide_vendors=ide_vendors or [],
+                include_missing=include_missing, backup_dir=backup_dir,
+                scopes=scopes, project_dirs=project_dirs, dry_run=dry_run,
+            )
+            steps.append(_步骤结果("backup", "ok" if backup_result.get("status") != "error" else "error",
+                                   backup_result, time.monotonic() - t0))
+        except Exception as e:
+            steps.append(_步骤结果("backup", "error", {"error": str(e)}, time.monotonic() - t0))
+            return _流程结果(steps, dry_run=dry_run, simulate_only=simulate_only, repo_root=str(paths.repo_root))
 
     # Step 2: 聚合
     t0 = time.monotonic()
@@ -169,21 +173,25 @@ def flow_backup_then_publish(
         paths = 默认路径()
     steps: list[dict[str, Any]] = []
 
-    # Step 1: 备份
-    t0 = time.monotonic()
-    try:
-        from .aob_backup import 备份用户级内容 as _备份
-        backup_result = _备份(
-            paths, target_paths=target_paths or [], home_dir=home_dir,
-            engine_vendors=engine_vendors or [], ide_vendors=ide_vendors or [],
-            include_missing=include_missing, backup_dir=backup_dir,
-            scopes=scopes, project_dirs=project_dirs, dry_run=dry_run,
-        )
-        steps.append(_步骤结果("backup", "ok" if backup_result.get("status") != "error" else "error",
-                               backup_result, time.monotonic() - t0))
-    except Exception as e:
-        steps.append(_步骤结果("backup", "error", {"error": str(e)}, time.monotonic() - t0))
-        return _流程结果(steps, dry_run=dry_run, simulate_only=simulate_only, repo_root=str(paths.repo_root))
+    # Step 1: 备份（沙盒模拟时跳过——备份模块不支持 simulate_only）
+    if simulate_only:
+        steps.append(_步骤结果("backup", "skipped", {}, 0.0,
+                               跳过原因="沙盒模拟模式下跳过备份（数据已在 update 沙盒中）"))
+    else:
+        t0 = time.monotonic()
+        try:
+            from .aob_backup import 备份用户级内容 as _备份
+            backup_result = _备份(
+                paths, target_paths=target_paths or [], home_dir=home_dir,
+                engine_vendors=engine_vendors or [], ide_vendors=ide_vendors or [],
+                include_missing=include_missing, backup_dir=backup_dir,
+                scopes=scopes, project_dirs=project_dirs, dry_run=dry_run,
+            )
+            steps.append(_步骤结果("backup", "ok" if backup_result.get("status") != "error" else "error",
+                                   backup_result, time.monotonic() - t0))
+        except Exception as e:
+            steps.append(_步骤结果("backup", "error", {"error": str(e)}, time.monotonic() - t0))
+            return _流程结果(steps, dry_run=dry_run, simulate_only=simulate_only, repo_root=str(paths.repo_root))
 
     # Step 2: 发布
     t0 = time.monotonic()
@@ -236,21 +244,25 @@ def flow_backup_then_update(
         paths = 默认路径()
     steps: list[dict[str, Any]] = []
 
-    # Step 1: 备份
-    t0 = time.monotonic()
-    try:
-        from .aob_backup import 备份用户级内容 as _备份
-        backup_result = _备份(
-            paths, target_paths=target_paths or [], home_dir=home_dir,
-            engine_vendors=engine_vendors or [], ide_vendors=ide_vendors or [],
-            include_missing=include_missing, backup_dir=backup_dir,
-            scopes=scopes, project_dirs=project_dirs, dry_run=dry_run,
-        )
-        steps.append(_步骤结果("backup", "ok" if backup_result.get("status") != "error" else "error",
-                               backup_result, time.monotonic() - t0))
-    except Exception as e:
-        steps.append(_步骤结果("backup", "error", {"error": str(e)}, time.monotonic() - t0))
-        return _流程结果(steps, dry_run=dry_run, simulate_only=simulate_only, repo_root=str(paths.repo_root))
+    # Step 1: 备份（沙盒模拟时跳过——备份模块不支持 simulate_only）
+    if simulate_only:
+        steps.append(_步骤结果("backup", "skipped", {}, 0.0,
+                               跳过原因="沙盒模拟模式下跳过备份（数据已在 update 沙盒中）"))
+    else:
+        t0 = time.monotonic()
+        try:
+            from .aob_backup import 备份用户级内容 as _备份
+            backup_result = _备份(
+                paths, target_paths=target_paths or [], home_dir=home_dir,
+                engine_vendors=engine_vendors or [], ide_vendors=ide_vendors or [],
+                include_missing=include_missing, backup_dir=backup_dir,
+                scopes=scopes, project_dirs=project_dirs, dry_run=dry_run,
+            )
+            steps.append(_步骤结果("backup", "ok" if backup_result.get("status") != "error" else "error",
+                                   backup_result, time.monotonic() - t0))
+        except Exception as e:
+            steps.append(_步骤结果("backup", "error", {"error": str(e)}, time.monotonic() - t0))
+            return _流程结果(steps, dry_run=dry_run, simulate_only=simulate_only, repo_root=str(paths.repo_root))
 
     # Step 2: 同步（调用 update 但 skip_backup=True，因为已经备份过了）
     t0 = time.monotonic()
@@ -370,21 +382,25 @@ def flow_full_sync(
         paths = 默认路径()
     steps: list[dict[str, Any]] = []
 
-    # Step 1: 备份
-    t0 = time.monotonic()
-    try:
-        from .aob_backup import 备份用户级内容 as _备份
-        backup_result = _备份(
-            paths, target_paths=target_paths or [], home_dir=home_dir,
-            engine_vendors=engine_vendors or [], ide_vendors=ide_vendors or [],
-            include_missing=include_missing, backup_dir=backup_dir,
-            scopes=scopes, project_dirs=project_dirs, dry_run=dry_run,
-        )
-        steps.append(_步骤结果("backup", "ok" if backup_result.get("status") != "error" else "error",
-                               backup_result, time.monotonic() - t0))
-    except Exception as e:
-        steps.append(_步骤结果("backup", "error", {"error": str(e)}, time.monotonic() - t0))
-        return _流程结果(steps, dry_run=dry_run, simulate_only=simulate_only, repo_root=str(paths.repo_root))
+    # Step 1: 备份（沙盒模拟时跳过——备份模块不支持 simulate_only）
+    if simulate_only:
+        steps.append(_步骤结果("backup", "skipped", {}, 0.0,
+                               跳过原因="沙盒模拟模式下跳过备份（数据已在 update 沙盒中）"))
+    else:
+        t0 = time.monotonic()
+        try:
+            from .aob_backup import 备份用户级内容 as _备份
+            backup_result = _备份(
+                paths, target_paths=target_paths or [], home_dir=home_dir,
+                engine_vendors=engine_vendors or [], ide_vendors=ide_vendors or [],
+                include_missing=include_missing, backup_dir=backup_dir,
+                scopes=scopes, project_dirs=project_dirs, dry_run=dry_run,
+            )
+            steps.append(_步骤结果("backup", "ok" if backup_result.get("status") != "error" else "error",
+                                   backup_result, time.monotonic() - t0))
+        except Exception as e:
+            steps.append(_步骤结果("backup", "error", {"error": str(e)}, time.monotonic() - t0))
+            return _流程结果(steps, dry_run=dry_run, simulate_only=simulate_only, repo_root=str(paths.repo_root))
 
     # Step 2: 聚合
     t0 = time.monotonic()

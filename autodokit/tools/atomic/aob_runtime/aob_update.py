@@ -21,6 +21,12 @@ try:
 except Exception:
     备份用户级内容 = None
 
+# update 在同步阶段需调用聚合模块内的 AOL 构建
+try:
+    from .aob_aggregate import 来源构建AOL
+except Exception:
+    来源构建AOL = None
+
 # update 在发布阶段需调用发布模块
 try:
     from .aob_publish import 发布到单个目标并同步删除
