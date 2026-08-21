@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from autodokit.tools.llm_clients import _resolve_model_and_backend, load_api_key_from_config
+from autodokit.tools.atomic.llm.llm_clients import _resolve_model_and_backend, load_api_key_from_config
 
 
 def test_load_api_key_from_config_should_accept_env_var_alias_and_secrets_file(tmp_path: Path, monkeypatch) -> None:
