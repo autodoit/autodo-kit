@@ -31,7 +31,7 @@ from autodokit.tools.contentdb_sqlite import (
     upsert_knowledge_literature_link,
     upsert_translation_asset_rows,
 )
-from autodokit.tools.llm_clients import ModelRoutingIntent, invoke_aliyun_llm
+from autodokit.tools.atomic.llm import ModelRoutingIntent, invoke_aliyun_llm
 from autodokit.tools.storage_backend import load_knowledge_tables, persist_knowledge_tables
 
 

@@ -20,8 +20,8 @@ from typing import Any, Dict, List, Tuple
 import pandas as pd
 
 from autodokit.tools.atomic.log_aok import append_aok_log_event, resolve_aok_log_db_path
-from autodokit.tools.llm_clients import AliyunLLMClient, build_aliyun_llm_runtime_payload, load_aliyun_llm_config
-from autodokit.tools.llm_parsing import parse_json_object_from_text
+from autodokit.tools.atomic.llm import AliyunLLMClient, build_aliyun_llm_runtime_payload, load_aliyun_llm_config
+from autodokit.tools.atomic.llm import parse_json_object_from_text
 from autodokit.tools.old.bibliodb_csv_compat import (
     build_cite_key,
     clean_title_text,

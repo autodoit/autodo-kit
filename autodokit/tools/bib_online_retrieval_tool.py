@@ -10,7 +10,7 @@ from typing import Any
 
 import bibtexparser
 
-from autodokit.tools.llm_clients import ModelRoutingIntent, invoke_aliyun_llm
+from autodokit.tools.atomic.llm import ModelRoutingIntent, invoke_aliyun_llm
 
 from .online_retrieval_literatures.online_retrieval_router import route
 

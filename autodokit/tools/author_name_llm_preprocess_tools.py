@@ -19,8 +19,8 @@ from autodokit.tools.contentdb_sqlite import (
     resolve_content_physical_column,
     sync_author_entities_from_literature_rows,
 )
-from autodokit.tools.llm_clients import ModelRoutingIntent, invoke_aliyun_llm
-from autodokit.tools.llm_parsing import parse_json_object_from_text
+from autodokit.tools.atomic.llm import ModelRoutingIntent, invoke_aliyun_llm
+from autodokit.tools.atomic.llm import parse_json_object_from_text
 
 
 def _quote_identifier(identifier: str) -> str:
