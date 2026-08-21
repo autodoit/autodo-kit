@@ -912,13 +912,45 @@ from autodokit.tools import scan_tex_graph, export_tex_graph, rewire_tex_referen
 
 ### 2.20 MonkeyOCR 工具
 
-仅支持 Windows + CUDA。
+多后端文档解析工具，支持二维正交执行架构：
+
+| | 本地 (local) | 远端 (remote) |
+|---|---|---|
+| **CUDA** | Windows + NVIDIA GPU | SSH 远端 |
+| **MLX** | macOS Apple Silicon GPU | SSH 远端 |
+| **CPU** | 纯 CPU（需人工确认） | SSH 远端 |
+
+#### 统一入口: run_monkeyocr_single_pdf
+
+```python
+from autodokit.tools import run_monkeyocr_single_pdf
+
+def run_monkeyocr_single_pdf(
+    input_pdf: str | Path,
+    output_dir: str | Path,
+    *,
+    runtime_settings: dict,
+    execution_mode: Literal["auto", "local", "remote"] = "auto",
+    compute_backend: Literal["auto", "cuda", "mlx", "cpu"] = "auto",
+    output_name: str | None = None,
+    timeout: int = 3600,
+    poll_interval: int = 10,
+    allow_local_fallback: bool = True,
+) -> dict
+```
+
+全自动解析单篇 PDF。默认 `execution_mode="auto"` 优先远端，失败回退本地。
+本地模式下默认 `compute_backend="auto"` 自动检测：CUDA → MLX → CPU（需人工确认）。
+
+返回字段：`status`、`backend`、`gpu_name`、`input_pdf`、`output_dir`、`artifacts`。
+
+#### CUDA 后端: prepare_monkeyocr_windows_runtime / run_monkeyocr_windows_single_pdf
+
+仅限 Windows + NVIDIA GPU。
 
 ```python
 from autodokit.tools import prepare_monkeyocr_windows_runtime, run_monkeyocr_windows_single_pdf
 ```
-
-#### prepare_monkeyocr_windows_runtime
 
 ```python
 def prepare_monkeyocr_windows_runtime(
@@ -933,8 +965,6 @@ def prepare_monkeyocr_windows_runtime(
 ```
 
 安装依赖并下载模型权重。返回字段：`model_dir`、`weights_ready`、`steps`。
-
-#### run_monkeyocr_windows_single_pdf
 
 ```python
 def run_monkeyocr_windows_single_pdf(
@@ -954,6 +984,79 @@ def run_monkeyocr_windows_single_pdf(
 ```
 
 以 GPU 路线解析单篇 PDF。返回字段：`status`、`device`、`gpu_name`、`input_pdf`、`output_dir`、`artifacts`。
+
+#### MLX 后端: prepare_monkeyocr_mlx_runtime / run_monkeyocr_mlx_single_pdf
+
+仅限 macOS Apple Silicon (ARM64)。使用 MLX-VLM 调用 Metal GPU。
+
+```python
+from autodokit.tools import prepare_monkeyocr_mlx_runtime, run_monkeyocr_mlx_single_pdf
+```
+
+```python
+def prepare_monkeyocr_mlx_runtime(
+    monkeyocr_root: str | Path,
+    model_name: str = "MonkeyOCR-pro-1.2B",
+    download_source: str = "huggingface",
+    python_executable: str | Path | None = None,
+    pip_index_url: str | None = None,
+    models_dir: str | Path | None = None,
+) -> dict
+```
+
+安装 mlx、mlx-vlm 等依赖并下载模型权重。返回字段：`model_dir`、`mlx_ready`、`steps`。
+
+```python
+def run_monkeyocr_mlx_single_pdf(
+    input_pdf: str | Path,
+    output_dir: str | Path,
+    monkeyocr_root: str | Path,
+    models_dir: str | Path | None = None,
+    config_path: str | Path | None = None,
+    device: str | None = None,
+    ensure_runtime: bool = False,
+    download_source: str = "huggingface",
+    pip_index_url: str | None = None,
+    log_path: str | Path | None = None,
+    stream_output: bool = False,
+) -> dict
+```
+
+以 MLX/Apple GPU 路线解析单篇 PDF。返回字段同上。
+
+#### 设备检测工具
+
+```python
+from autodokit.tools import detect_cuda, detect_mlx, detect_available_backends, get_best_backend, get_gpu_name
+```
+
+| 函数 | 返回 | 说明 |
+| --- | --- | --- |
+| `detect_cuda()` | `bool` | PyTorch CUDA 是否可用 |
+| `detect_mlx()` | `bool` | Apple MLX 是否可用 |
+| `detect_available_backends()` | `list[str]` | 按优先级排列的可用后端 |
+| `get_best_backend()` | `str` | 最优后端 (`"cuda"` / `"mlx"` / `"cpu"`) |
+| `get_gpu_name()` | `str \| None` | GPU 名称 |
+
+#### CPU 回退确认
+
+```python
+from autodokit.tools import confirm_cpu_fallback
+```
+
+当自动检测无 GPU 可用时，`confirm_cpu_fallback(reason=...)` 会在 stderr 打印警告并通过 `input()` 等待用户确认。不确认则 `SystemExit(1)`。在 CI 环境中可设置环境变量 `MONKEYOCR_CPU_AUTO_CONFIRM=1` 跳过交互。
+
+#### 远端管理
+
+```python
+from autodokit.tools import run_monkeyocr_remote, stop_remote_monkeyocr_jobs, launch_remote_tmux_command
+```
+
+| 函数 | 说明 |
+| --- | --- |
+| `run_monkeyocr_remote(...)` | 显式远端运行（兼容旧入口） |
+| `stop_remote_monkeyocr_jobs(settings)` | 停止远端遗留的 tmux/parse.py |
+| `launch_remote_tmux_command(settings, remote_command=...)` | 在远端 tmux 中执行命令 |
 
 ---
 
@@ -983,6 +1086,105 @@ def convert_zotero_rdf_to_a020_incremental_package(
 ```
 
 将 Zotero 导出的 RDF 转为 A020 增量导入输入包。
+
+#### Zotero 标签提取
+
+```python
+def extract_zotero_all_tags(
+    endpoint: str | None = None,
+    concurrency: int = 20,
+    progress_callback: Any = None,
+) -> dict
+```
+
+通过 cookjohn MCP 从 Zotero 提取所有条目的标签，去重统计。
+
+- `endpoint`: MCP HTTP 端点，默认 `http://127.0.0.1:23120/mcp`。
+- `concurrency`: 并发线程数。
+- `progress_callback`: 可选进度回调 `(done, total, tags_found) -> None`。
+
+返回统一结果字典，`data.tags` 为 `[{tag, count, type}]` 格式。
+
+```python
+def save_zotero_tags_to_jsonl(
+    output_path: str | Path,
+    endpoint: str | None = None,
+    concurrency: int = 20,
+) -> dict
+```
+
+提取并保存为 JSONL 文件，每条记录包含 `tag`、`count`、`type`（auto/manual）字段。
+
+---
+
+### 2.14 会议转写工具（third_party）
+
+**部署位置**：`third_party/meeting-transcriber-whispercpp/`
+
+跨平台通用会议录音转写调度器，按设备自动选择最优后端。
+
+#### 统一入口 CLI
+
+```bash
+python scripts/transcribe_meeting.py \
+    --backend auto \
+    --audio meeting.m4a \
+    --output-dir ./output \
+    --language zh --threads 8
+```
+
+| 参数 | 类型 | 默认 | 说明 |
+| --- | --- | --- | --- |
+| `--backend` | `auto\|apple-whispercpp\|cuda-funasr` | `auto` | 转写后端。`auto` 自动检测 Apple Silicon → apple-whispercpp |
+| `--audio` | `str` | **必填** | 音频文件路径（m4a/mp3/wav/flac/ogg） |
+| `--output-dir` | `str` | `.` | 输出目录 |
+| `--model` | `str` | `small` | whisper 模型 (tiny/base/small/medium/large)，仅 apple-whispercpp |
+| `--language` | `str` | `auto` | 语言代码 (zh/en/ja/auto) |
+| `--threads` | `int` | `4` | CPU 线程数 |
+| `--vad` | flag | 否 | 启用 VAD 过滤静音段 |
+| `--prompt` | `str` | 无 | 初始提示文本辅助识别 |
+| `--no-gpu` | flag | 否 | 禁用 GPU 加速 |
+
+以下参数仅 `cuda-funasr` 后端生效：
+
+| 参数 | 类型 | 默认 | 说明 |
+| --- | --- | --- | --- |
+| `--thesis` | `str` | 无 | 论文 TeX 路径（CUDA 后端必需） |
+| `--n-speakers` | `int` | `4` | 预估说话人数 |
+| `--speaker-aliases` | `str` | `导师,我,LH,WX` | 说话人别名 |
+| `--diarization-backend` | `str` | `auto` | 说话人分离后端 (pyannote/kmeans) |
+
+#### 后端架构
+
+```
+transcribe_meeting.py (统一调度入口)
+├── apple-whispercpp → third_party/meeting-transcriber-whispercpp/bin/transcribe_meeting_apple.py
+│    └── whisper.cpp + Metal GPU（macOS Apple Silicon，本地离线）
+└── cuda-funasr → scripts/transcribe_meeting_cuda_legacy.py
+     └── FunASR + pyannote/kmeans（Windows/NVIDIA GPU，含说话人分离）
+```
+
+#### 输出格式
+
+**apple-whispercpp**：TXT（纯文本）、JSON（分段+时间戳）、CSV、`_会议记录.md`（带时间戳分段）
+
+**cuda-funasr**：完整会议记录（成稿版）+ 会议记录整理稿（纪要版），含说话人标注
+
+#### Python 直接调用
+
+```python
+# 通过 subprocess 调用 Apple wrapper
+import subprocess, sys
+from pathlib import Path
+
+wrapper = Path("third_party/meeting-transcriber-whispercpp/bin/transcribe_meeting_apple.py")
+subprocess.run([
+    sys.executable, str(wrapper),
+    "--audio", "meeting.m4a",
+    "--output-dir", "output/",
+    "--language", "zh", "--threads", "8",
+], check=True)
+```
 
 ---
 
@@ -1266,6 +1468,127 @@ def check_docx2tex_available() -> bool
 | `run_pandoc(command)` | 执行 Pandoc 命令并返回结果。 |
 | `add_heading_numbering(input_docx, output_docx)` | Word 标题编号后处理。 |
 | `highlight_tokens_in_docx(input_docx, output_docx)` | Word 内容高亮后处理。 |
+
+### 2.21 大模型 Provider 与密钥安全工具（统一入口）
+
+所有大模型相关工具统一收口在 `autodokit/tools/atomic/llm/` 子域，只提供一个入口：
+
+```python
+from autodokit.tools.atomic.llm import invoke_llm, invoke_aliyun_llm, mask_api_key
+```
+
+子模块：`llm_clients`（客户端 + 模型路由 + 阿里百炼）、`llm_providers`（多后端抽象）、
+`llm_parsing`（输出解析）、`secrets_manager`（密钥与脱敏）。
+
+「大模型调用」抽象为独立维度：`LLMProvider` 是一级概念，阿里百炼只是 provider 之一，
+LM Studio 是第二个内置 provider。密钥统一存放于 `~/.config/autodo-suite/secrets/`
+（权限 600 / 700），任何 provider 的密钥均不落代码、文档、日志。
+
+#### 密钥安全
+
+| 函数 | 说明 |
+| --- | --- |
+| `mask_api_key(key, keep_head=3, keep_tail=4)` | 密钥脱敏，返回 `sk-***末尾4位`。 |
+| `secrets_dir()` | 统一密钥仓库目录（默认 `~/.config/autodo-suite/secrets/`，可用 `AUTODO_SUITE_SECRETS_DIR` 覆盖）。 |
+| `secret_path(name)` | 逻辑密钥名 → 密钥文件路径（如 `bailian` → `bailian-api-key.txt`）。 |
+| `ensure_secrets_layout()` | 初始化密钥仓库目录（权限 700）。 |
+| `iter_secret_candidates(name)` | 密钥候选路径列表（按优先级）。 |
+
+#### Provider 管理
+
+```python
+from autodokit.tools import list_providers, get_provider, resolve_provider, is_local_online
+```
+
+| 函数 | 说明 |
+| --- | --- |
+| `list_providers()` | 已注册 provider 名列表（`["bailian", "lmstudio"]`）。 |
+| `get_provider(name)` | 按名称获取 `LLMProvider` 定义（含 base_url / 默认模型 / 密钥名 / 是否本地）。 |
+| `resolve_provider(name="auto")` | 解析 provider：`auto` 时本地（lmstudio）在线则优先，否则回退 bailian。 |
+| `is_local_online(provider, timeout=1.5)` | 探测本地 provider 服务是否在线（GET `/v1/models`）。 |
+
+#### 统一调用
+
+```python
+def invoke_llm(
+    *,
+    prompt: str,
+    system: str | None = None,
+    provider: str = "auto",
+    model: str = "",
+    base_url: str = "",
+    max_tokens: int = 2048,
+    temperature: float = 0.2,
+    config_path=None,
+    route_hints=None,
+) -> dict
+```
+
+统一调用入口，返回 `status` / `provider` / `selected_model` / `response` / `error`。
+
+```python
+def build_llm_client(provider="auto", *, model="", base_url="", ...) -> tuple[AliyunLLMClient, str]
+```
+
+按 provider 构造客户端（复用 `AliyunLLMClient`），返回（客户端、解析后的 provider 名）。
+
+#### 配置扩展（config.json）
+
+```jsonc
+{
+  "llm": {
+    "default_provider": "auto",
+    "providers": {
+      "bailian":  { "model": "qwen-plus" },
+      "lmstudio": { "model": "<本地模型名>", "base_url": "http://127.0.0.1:1234/v1" }
+    }
+  }
+}
+```
+
+`load_provider_config(config_path)` 读取 providers 覆盖配置；老配置（无 `providers` 字段）
+自动回退为 `bailian` 单 provider，保持兼容。
+
+#### 模型路由派发事务（provider 维度）
+
+`autodokit.affairs.模型路由派发` 的配置新增 `provider` 字段（默认 `auto`）：
+决策结果包含 `provider`、`provider_display`、`provider_base_url`、`provider_is_local`；
+`run_inference=true` 时按选定 provider 实际调用。
+
+---
+
+### 2.22 超长会话批量读取工具
+
+```python
+from autodokit.tools import batch_read_pairs_by_llm
+```
+
+```python
+def batch_read_pairs_by_llm(
+    store_root,
+    *,
+    pair_ids=None,
+    provider="auto",
+    model="",
+    prompt_template="...",
+    system_prompt=None,
+    max_tokens=2048,
+    temperature=0.2,
+    result_path=None,
+    resume=True,
+) -> dict
+```
+
+逐 Pair 调用大模型批量读取会话：每个 Pair（一组问答）单独调用一次大模型，
+天然规避超长上下文问题。`resume=True` 时跳过已处理 Pair（断点续跑，
+结果逐条落盘到 `<store>/index_db/pair_llm_results.json`）。
+
+返回：`total` / `processed` / `skipped` / `failed` / `result_path` / `results`。
+
+```python
+# 配套检索入口（既有）
+from autodokit.tools import import_chat_session_markdown, get_chat_pair_info, repair_exported_chat_markdown
+```
 
 ---
 
