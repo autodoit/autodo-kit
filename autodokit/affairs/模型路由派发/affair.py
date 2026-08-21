@@ -6,7 +6,8 @@ from pathlib import Path
 from typing import Any
 
 from autodokit.tools import append_flow_trace_event, load_json_or_py, write_affair_json_result
-from autodokit.tools.llm_clients import ModelRoutingIntent, invoke_aliyun_llm, resolve_model_plan
+from autodokit.tools.atomic.llm import ModelRoutingIntent, invoke_aliyun_llm, resolve_model_plan
+from autodokit.tools.atomic.llm import get_provider, invoke_llm, resolve_provider
 
 
 def _normalize_budget_tier(budget_level: str) -> str:
@@ -61,9 +62,12 @@ def _build_model_routing_decision(
     region: str,
     input_chars: int,
     explicit_model: str,
+    provider: str = "auto",
 ) -> dict[str, Any]:
     """生成可执行的统一路由决策。"""
 
+    resolved_provider = resolve_provider(provider)
+    provider_def = get_provider(resolved_provider)
     normalized_region = "cn-beijing" if mainland_only else (str(region or "cn-beijing").strip() or "cn-beijing")
     intent = ModelRoutingIntent(
         task_type=(task_type if task_type in {"general", "vision", "long_text", "math_reasoning", "coding"} else "general"),
@@ -79,6 +83,10 @@ def _build_model_routing_decision(
     plan = resolve_model_plan(intent)
 
     return {
+        "provider": resolved_provider,
+        "provider_display": provider_def.display_name,
+        "provider_base_url": provider_def.default_base_url,
+        "provider_is_local": provider_def.is_local,
         "task_type": plan.task_type,
         "quality_tier": plan.quality_tier,
         "budget_level": budget_level,
@@ -116,6 +124,7 @@ def run_model_routing_affair(
     api_key_file: str | None = None,
     config_path: str | Path | None = None,
     workspace_root: str | Path | None = None,
+    provider: str = "auto",
 ) -> dict[str, Any]:
     """执行模型路由决策。"""
 
@@ -129,6 +138,7 @@ def run_model_routing_affair(
         region=region,
         input_chars=input_chars,
         explicit_model=explicit_model,
+        provider=provider,
     )
 
     if run_inference and not str(prompt or "").strip():
@@ -136,27 +146,46 @@ def run_model_routing_affair(
 
     invocation = {"status": "SKIPPED", "selected_model": "", "attempts": [], "response": {}}
     if run_inference:
-        invocation = invoke_aliyun_llm(
-            prompt=str(prompt),
-            system=str(system_prompt or "") or None,
-            intent=ModelRoutingIntent(
-                task_type=decision["task_type"],
-                quality_tier=decision["quality_tier"],
-                budget_tier=decision["budget_tier"],
-                latency_tier=decision["latency_tier"],
-                risk_level=decision["risk_level"],
-                region=decision["region"],
-                input_chars=max(0, int(input_chars or 0)),
-                model=str(explicit_model or "").strip(),
+        resolved_provider = decision["provider"]
+        if resolved_provider == "bailian":
+            invocation = invoke_aliyun_llm(
+                prompt=str(prompt),
+                system=str(system_prompt or "") or None,
+                intent=ModelRoutingIntent(
+                    task_type=decision["task_type"],
+                    quality_tier=decision["quality_tier"],
+                    budget_tier=decision["budget_tier"],
+                    latency_tier=decision["latency_tier"],
+                    risk_level=decision["risk_level"],
+                    region=decision["region"],
+                    input_chars=max(0, int(input_chars or 0)),
+                    model=str(explicit_model or "").strip(),
+                    affair_name="模型路由派发",
+                ),
+                max_tokens=int(max_tokens),
+                temperature=float(temperature),
+                env_api_key_name=str(env_api_key_name or "DASHSCOPE_API_KEY"),
+                api_key_file=api_key_file,
+                config_path=config_path,
                 affair_name="模型路由派发",
-            ),
-            max_tokens=int(max_tokens),
-            temperature=float(temperature),
-            env_api_key_name=str(env_api_key_name or "DASHSCOPE_API_KEY"),
-            api_key_file=api_key_file,
-            config_path=config_path,
-            affair_name="模型路由派发",
-        )
+            )
+        else:
+            local_result = invoke_llm(
+                prompt=str(prompt),
+                system=str(system_prompt or "") or None,
+                provider=resolved_provider,
+                model=str(explicit_model or "").strip(),
+                max_tokens=int(max_tokens),
+                temperature=float(temperature),
+                config_path=config_path,
+            )
+            invocation = {
+                "status": local_result.get("status", "FAIL"),
+                "selected_model": local_result.get("selected_model", ""),
+                "attempts": [],
+                "response": local_result.get("response", {}),
+                "error": local_result.get("error", ""),
+            }
 
     trace_root = Path(workspace_root).expanduser().resolve() if workspace_root else Path(".").resolve()
     append_flow_trace_event(
@@ -166,7 +195,7 @@ def run_model_routing_affair(
             "command": "aok-model-routing",
             "agent": "orchestrator",
             "skill": "model-routing-dispatch",
-            "provider": "aliyun-bailian",
+            "provider": decision["provider"],
             "task_uid": "",
             "transaction_uid": "",
             "status": "PASS",
@@ -214,5 +243,6 @@ def execute(config_path: Path) -> list[Path]:
         api_key_file=str(raw_cfg.get("api_key_file") or "") or None,
         config_path=raw_cfg.get("config_path"),
         workspace_root=raw_cfg.get("workspace_root"),
+        provider=str(raw_cfg.get("provider") or "auto"),
     )
     return write_affair_json_result(raw_cfg, config_path, "model_routing_dispatch_result.json", result)
