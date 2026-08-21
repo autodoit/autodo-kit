@@ -320,6 +320,22 @@ def convert_zotero_rdf_to_a020_incremental_package(*args: Any, **kwargs: Any) ->
     return impl(*args, **kwargs)
 
 
+def extract_zotero_all_tags(*args: Any, **kwargs: Any) -> dict[str, Any]:
+    """延迟加载 Zotero 标签批量提取工具。"""
+
+    module = importlib.import_module("autodokit.tools.zotero-tools.cookjohn-bridge.extract_tags")
+    impl = getattr(module, "extract_all_tags")
+    return impl(*args, **kwargs)
+
+
+def save_zotero_tags_to_jsonl(*args: Any, **kwargs: Any) -> dict[str, Any]:
+    """延迟加载 Zotero 标签 JSONL 保存工具。"""
+
+    module = importlib.import_module("autodokit.tools.zotero-tools.cookjohn-bridge.extract_tags")
+    impl = getattr(module, "save_tags_to_jsonl")
+    return impl(*args, **kwargs)
+
+
 def normalize_primary_fulltext_attachment_names(payload: dict[str, Any]) -> dict[str, Any]:
     """延迟加载主附件规范化命名工具。"""
 
@@ -481,9 +497,17 @@ _LAZY_TOOL_MODULES: tuple[str, ...] = (
     "autodokit.tools.ocr.babeldoc.pdf_structured_element_extractor_from_babeldoc",
     "autodokit.tools.ocr.classic.pdf_page_image_tools",
     "autodokit.tools.ocr.monkeyocr.monkeyocr_windows_tools",
+    "autodokit.tools.ocr.monkeyocr.monkeyocr_mlx_tools",
+    "autodokit.tools.ocr.monkeyocr.runner",
+    "autodokit.tools.ocr.monkeyocr.device_detector",
+    "autodokit.tools.ocr.monkeyocr.cpu_fallback_handler",
     "autodokit.tools.workspace_path_migration",
     "autodokit.tools.tex_dag_tools",
     "autodokit.tools.math_delimiter_converter",
+    "autodokit.tools.chat_session_index_tools",
+    "autodokit.tools.atomic.llm",
+    "autodokit.tools.lmstudio_download_tools",
+    "autodokit.tools.zotero-tools.cookjohn-bridge.extract_tags",
 )
 
 
@@ -522,7 +546,54 @@ def manage_online_retrieval_daily_usage(payload: dict[str, Any]) -> dict[str, An
     return runner(payload)
 
 
+def lmstudio_download_models(*args: Any, **kwargs: Any) -> dict[str, Any]:
+    """延迟加载 LM Studio 单模型下载工具，避免入口模块循环导入。"""
+
+    module = importlib.import_module("autodokit.tools.lmstudio_download_tools")
+    impl = getattr(module, "lmstudio_download_models")
+    return impl(*args, **kwargs)
+
+
+def lmstudio_download_from_list(*args: Any, **kwargs: Any) -> dict[str, Any]:
+    """延迟加载 LM Studio 清单批量下载工具，避免入口模块循环导入。"""
+
+    module = importlib.import_module("autodokit.tools.lmstudio_download_tools")
+    impl = getattr(module, "lmstudio_download_from_list")
+    return impl(*args, **kwargs)
+
+
+def lmstudio_download_list_models(*args: Any, **kwargs: Any) -> dict[str, Any]:
+    """延迟加载 LM Studio 模型清单查询工具，避免入口模块循环导入。"""
+
+    module = importlib.import_module("autodokit.tools.lmstudio_download_tools")
+    impl = getattr(module, "lmstudio_download_list_models")
+    return impl(*args, **kwargs)
+
+
+def lmstudio_download_ensure_curl(*args: Any, **kwargs: Any) -> bool:
+    """延迟加载 LM Studio 下载 curl 检测工具，避免入口模块循环导入。"""
+
+    module = importlib.import_module("autodokit.tools.lmstudio_download_tools")
+    impl = getattr(module, "lmstudio_download_ensure_curl")
+    return impl(*args, **kwargs)
+
+
 _用户公开工具 = [
+    "import_chat_session_markdown",
+    "get_chat_pair_info",
+    "batch_read_pairs_by_llm",
+    "repair_exported_chat_markdown",
+    "mask_api_key",
+    "secrets_dir",
+    "secret_path",
+    "ensure_secrets_layout",
+    "list_providers",
+    "get_provider",
+    "resolve_provider",
+    "is_local_online",
+    "build_llm_client",
+    "invoke_llm",
+    "load_provider_config",
     "parse_reference_text",
     "insert_placeholder_from_reference",
     "literature_upsert",
@@ -555,6 +626,8 @@ _用户公开工具 = [
     "dispatch_affair_request",
     "dispatch_pending_affair_requests",
     "convert_zotero_rdf_to_a020_incremental_package",
+    "extract_zotero_all_tags",
+    "save_zotero_tags_to_jsonl",
     "generate_knowledge_uid",
     "init_empty_knowledge_index_table",
     "init_empty_knowledge_attachments_table",
@@ -679,6 +752,11 @@ _用户公开工具 = [
     "detect_and_clean_literature_title_braces",
     "isolate_unmatched_attachments",
     "manage_online_retrieval_daily_usage",
+    # ── LM Studio 模型下载工具 ──
+    "lmstudio_download_models",
+    "lmstudio_download_from_list",
+    "lmstudio_download_list_models",
+    "lmstudio_download_ensure_curl",
     # ── CrossRef 验证工具 ──
     "crossref_search",
     "crossref_match_score",
@@ -695,6 +773,8 @@ _开发者工具 = [
     "resolve_path_with_workspace_root",
     "resolve_paths_to_absolute",
     "resolve_workflow_config_path",
+    "iter_secret_candidates",
+    "iter_secret_candidates",
     "build_adjacency_matrix_df",
     "build_inverted_from_adjacency",
     "build_inverted_index",
@@ -923,6 +1003,18 @@ _开发者工具 = [
     "prepare_monkeyocr_windows_runtime",
     "run_monkeyocr_windows_single_pdf",
     "update_monkeyocr_batch_status_csv",
+    "prepare_monkeyocr_mlx_runtime",
+    "run_monkeyocr_mlx_single_pdf",
+    "run_monkeyocr_mlx_batch_folder",
+    "run_monkeyocr_single_pdf",
+    "run_monkeyocr_remote",
+    "stop_remote_monkeyocr_jobs",
+    "detect_cuda",
+    "detect_mlx",
+    "detect_available_backends",
+    "get_best_backend",
+    "get_gpu_name",
+    "confirm_cpu_fallback",
     "run_online_retrieval_router",
     "run_online_retrieval_from_bib",
     "manage_online_retrieval_daily_usage",
@@ -1051,4 +1143,3 @@ def __dir__() -> list[str]:
 
 
 __all__ = list(_用户公开工具)
-
