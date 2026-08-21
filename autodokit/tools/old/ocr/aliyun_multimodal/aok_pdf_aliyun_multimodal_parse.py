@@ -14,8 +14,8 @@ from pathlib import Path
 from time import sleep
 from typing import Any, Dict, Iterable, List, Optional, Sequence
 
-from autodokit.tools.llm_clients import AliyunDashScopeClient, LLMConfigError, load_aliyun_llm_config
-from autodokit.tools.llm_parsing import LLMOutputParseError, parse_json_object_from_text
+from autodokit.tools.atomic.llm import AliyunDashScopeClient, LLMConfigError, load_aliyun_llm_config
+from autodokit.tools.atomic.llm import LLMOutputParseError, parse_json_object_from_text
 from autodokit.tools.ocr.classic.pdf_elements_extractors import extract_images_with_pymupdf, extract_references_from_full_text
 from autodokit.tools.old.ocr.aliyun_multimodal.pdf_multimodal_tree_builder import (
     build_elements_payload,

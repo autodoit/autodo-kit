@@ -206,9 +206,13 @@ def prepare_monkeyocr_mlx_runtime(
         _run_command(pip_cmd + ["mlx-vlm"], cwd=root)
         results["steps"].append({"action": "pip_install", "package": "mlx-vlm"})
 
-    # 安装 huggingface_hub 用于下载模型
-    _run_command(pip_cmd + ["huggingface_hub>=0.30.0,<1.0"], cwd=root)
-    results["steps"].append({"action": "pip_install", "package": "huggingface_hub"})
+    # 安装 huggingface_hub 用于下载模型（不强制版本，避免降级已有环境）
+    try:
+        import huggingface_hub  # type: ignore[import-untyped]  # noqa: F401
+        results["steps"].append({"action": "pip_install_skip", "package": "huggingface_hub", "note": "已安装"})
+    except ImportError:
+        _run_command(pip_cmd + ["huggingface_hub"], cwd=root)
+        results["steps"].append({"action": "pip_install", "package": "huggingface_hub"})
 
     if download_source.lower() == "modelscope":
         _run_command(pip_cmd + ["modelscope"], cwd=root)
@@ -273,16 +277,16 @@ def _build_mlx_config_text(models_dir: Path) -> str:
     return f"""device: mlx
 weights:
     doclayout_yolo: Structure/doclayout_yolo_docstructbench_imgsz1280_2501.pt
-  layoutreader: Relation
+    layoutreader: Relation
 models_dir: {models_dir.as_posix()}
 layout_config:
     model: doclayout_yolo
-  reader:
-    name: layoutreader
+    reader:
+        name: layoutreader
 chat_config:
-  weight_path: Recognition
-  backend: mlx
-  batch_size: 1
+    weight_path: Recognition
+    backend: mlx
+    batch_size: 1
 """
 
 
@@ -517,8 +521,151 @@ def _rename_output_tree_to_original_stem(
     return original_output_dir
 
 
+def run_monkeyocr_mlx_batch_folder(
+    input_dir: str | Path,
+    output_dir: str | Path,
+    *,
+    monkeyocr_root: str | Path,
+    models_dir: str | Path | None = None,
+    config_path: str | Path | None = None,
+    model_name: str = DEFAULT_MODEL_NAME,
+    ensure_runtime: bool = False,
+    download_source: str = "huggingface",
+    pip_index_url: str | None = None,
+    python_executable: str | Path | None = None,
+    file_list: Path | None = None,
+    runtime_dir: Path | None = None,
+    stream_output: bool = False,
+    skip_existing: bool = True,
+    max_retries: int = 2,
+    log_path: str | Path | None = None,
+) -> dict[str, Any]:
+    """批量解析文件夹内所有 PDF（MLX / Apple Silicon GPU）。
+
+    Args:
+        input_dir: PDF 输入目录。
+        output_dir: 解析输出根目录。
+        monkeyocr_root: MonkeyOCR 仓库根目录。
+        models_dir: 模型权重目录。
+        config_path: MLX 配置文件路径（device: mlx, backend: mlx）。
+        file_list: 可选的 JSON 文件列表（用于优先级排序），格式为 [[candidates...], ...]。
+        skip_existing: 是否跳过输出目录中已有 .md 的条目。
+        max_retries: 每篇 PDF 的最大重试次数。
+
+    Returns:
+        dict: 包含 succeeded、failed、skipped 计数与明细。
+    """
+
+    input_path = _resolve_path(input_dir)
+    out_dir = _resolve_path(output_dir)
+    root = _resolve_monkeyocr_root_dir(monkeyocr_root)
+    out_dir.mkdir(parents=True, exist_ok=True)
+    python = str(python_executable or sys.executable)
+
+    target_models_dir = _resolve_path(models_dir or (root / "model_weight"))
+    target_config_path = _resolve_path(config_path or (out_dir.parent / "model_configs.mlx.local.yaml"))
+    target_log_path = _resolve_path(log_path or (out_dir / "batch_mlx_run.log"))
+
+    # 构建待解析列表
+    pdf_candidates: list[tuple[Path, list[str]]] = []
+    if file_list and file_list.exists():
+        try:
+            groups = json.loads(file_list.read_text(encoding="utf-8"))
+            for group in groups:
+                matched = False
+                for candidate in group:
+                    for pdf in input_path.glob("*.pdf"):
+                        if candidate.lower() in pdf.name.lower():
+                            pdf_candidates.append((pdf, group))
+                            matched = True
+                            break
+                    if matched:
+                        break
+        except Exception:
+            pass
+
+    if not pdf_candidates:
+        for pdf in sorted(input_path.glob("*.pdf")):
+            pdf_candidates.append((pdf, [pdf.name]))
+
+    # 跳过已解析
+    pending: list[tuple[Path, list[str]]] = []
+    skipped = 0
+    for pdf, group in pdf_candidates:
+        result_dir = out_dir / pdf.stem
+        if skip_existing and result_dir.exists() and (result_dir / f"{pdf.stem}.md").exists():
+            skipped += 1
+            continue
+        pending.append((pdf, group))
+
+    print(f"[MLX BATCH] Total: {len(pdf_candidates)}, Skipped: {skipped}, Pending: {len(pending)}")
+
+    # 每个 PDF 的详细解析结果
+    per_pdf_results: list[dict[str, Any]] = []
+    succeeded_count = 0
+    failed_count = 0
+    total = len(pending)
+
+    for idx, (pdf, _group) in enumerate(pending, 1):
+        print(f"\n[MLX BATCH {idx}/{total}] {pdf.name}")
+        last_error = None
+        last_result = None
+
+        for attempt in range(max_retries + 1):
+            try:
+                result = run_monkeyocr_mlx_single_pdf(
+                    pdf, out_dir,
+                    monkeyocr_root=root,
+                    models_dir=target_models_dir,
+                    config_path=target_config_path,
+                    model_name=model_name,
+                    ensure_runtime=ensure_runtime and attempt == 0,
+                    download_source=download_source,
+                    pip_index_url=pip_index_url,
+                    python_executable=python,
+                    stream_output=stream_output,
+                )
+                if result.get("status") == "SUCCEEDED":
+                    last_result = result
+                    succeeded_count += 1
+                    print(f"  ✅ OK ({result.get('artifacts', {}).get('markdown', '')})")
+                    break
+                else:
+                    last_error = result.get("error", "unknown")
+                    print(f"  ⚠️ Attempt {attempt+1}: {last_error}")
+            except Exception as e:
+                last_error = str(e)
+                print(f"  ⚠️ Attempt {attempt+1}: {e}")
+
+        else:
+            failed_count += 1
+            print(f"  ❌ FAILED after {max_retries+1} attempts: {last_error}")
+
+        per_pdf_results.append({
+            "pdf_path": str(pdf),
+            "pdf_stem": pdf.stem,
+            "status": "SUCCEEDED" if last_result else "FAILED",
+            "result": last_result,           # 完整的 run_monkeyocr_mlx_single_pdf 结果
+            "error": last_error,
+            "attempts": attempt + 1 if last_result else max_retries + 1,
+        })
+
+    return {
+        "status": "COMPLETED" if failed_count == 0 else "PARTIAL",
+        "backend": "mlx",
+        "total": len(pdf_candidates),
+        "skipped": skipped,
+        "succeeded": succeeded_count,
+        "failed": failed_count,
+        "per_pdf_results": per_pdf_results,
+        "output_dir": str(out_dir),
+        "log_path": str(target_log_path),
+    }
+
+
 __all__ = [
     "prepare_monkeyocr_mlx_runtime",
     "run_monkeyocr_mlx_single_pdf",
+    "run_monkeyocr_mlx_batch_folder",
     "_check_mlx_available",
 ]
