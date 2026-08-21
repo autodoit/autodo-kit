@@ -83,6 +83,26 @@
 - `crossref_batch_verify` — 批量 CrossRef 验证（支持进度回调）
 - `crossref_verify_tracker` — 直接读取 JSONL 追踪文件批量验证
 
+### 密钥安全（autodo-suite 统一密钥仓库）
+
+- `mask_api_key` — 密钥脱敏（`sk-***末尾4位`）
+- `secrets_dir` / `ensure_secrets_layout` — 统一密钥仓库 `~/.config/autodo-suite/secrets/`
+- `secret_path` / `iter_secret_candidates` — 逻辑密钥名 → 文件路径
+- 完整安全条款见 `~/.config/autodo-suite/security-policy.md`
+
+### 大模型 Provider（多后端调用）
+
+- `list_providers` / `get_provider` / `resolve_provider` — provider 注册与解析（`auto` 本地优先）
+- `is_local_online` — 本地 provider（LM Studio）在线探测
+- `build_llm_client` — 按 provider 构造客户端（复用 `AliyunLLMClient`）
+- `invoke_llm` — 统一调用入口（百炼 / LM Studio / 未来更多后端）
+- `load_provider_config` — 读取 config.json `llm.providers` 覆盖
+
+### 超长会话索引与批量读取
+
+- `import_chat_session_markdown` / `get_chat_pair_info` / `repair_exported_chat_markdown`
+- `batch_read_pairs_by_llm` — 逐 Pair 调用大模型（断点续跑）
+
 ### 直接查源码
 
 当需要精确签名或示例时，优先查看：
@@ -91,4 +111,4 @@
 2. `autodokit/tools/__init__.py`
 3. 各工具模块的函数 docstring 与 `demos/scripts/` 示例
 
-上次更新: 2026-04-22
+上次更新: 2026-08-14
