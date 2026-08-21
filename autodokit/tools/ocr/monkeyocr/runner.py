@@ -1,27 +1,50 @@
 """MonkeyOCR 统一运行入口。
 
-提供本地与远端两种执行模式：
-- local: 直接调用 Windows 本地解析工具。
-- remote: 通过 remote_transfer 与 SSH 触发远端执行。
+支持二维正交执行架构：
 
-该入口保持上层调用契约稳定，避免业务层直接依赖远端传输细节。
+本地端 × 计算后端：
+- local + cuda  → monkeyocr_windows_tools (NVIDIA GPU)
+- local + mlx   → monkeyocr_mlx_tools (Apple Silicon GPU)
+- local + cpu   → monkeyocr_windows_tools (device="cpu") + 人工确认
+
+远端 × 传输模式：
+- remote + ssh     → SSH + tmux 远端调度
+- remote + mapped  → 共享目录 + trigger 文件
+
+自动检测优先级（本地模式）：
+CUDA (torch.cuda.is_available)
+  → MLX (import mlx.core)
+    → CPU (暂停 + 人工确认)
+
+该入口保持上层调用契约稳定，避免业务层直接依赖远端传输或设备检测细节。
 """
 
 from __future__ import annotations
 
 import json
+import logging
 import shlex
 import shutil
 import subprocess
 import time
 from pathlib import Path
-from typing import Any, Dict, Literal
+from typing import Any, Dict
 
 from autodokit.tools import remote_transfer
-from autodokit.tools.ocr.monkeyocr.monkeyocr_windows_tools import run_monkeyocr_windows_single_pdf
+from autodokit.tools.ocr.monkeyocr.cpu_fallback_handler import confirm_cpu_fallback
+from autodokit.tools.ocr.monkeyocr.device_detector import (
+    detect_available_backends,
+    get_best_backend,
+    get_gpu_name,
+)
+from autodokit.tools.ocr.monkeyocr.schemes import ComputeBackend, ExecutionMode
+
+logger = logging.getLogger(__name__)
 
 
-ExecutionMode = Literal["auto", "local", "remote"]
+# ═══════════════════════════════════════════════════════════
+# 工具函数
+# ═══════════════════════════════════════════════════════════
 
 
 def _now_ts() -> str:
@@ -55,13 +78,25 @@ def _first_existing(paths: list[Path]) -> str:
     return ""
 
 
-def _build_remote_parse_result(output_dir: Path, markdown_path: Path, *, mode: str, job_id: str) -> Dict[str, Any]:
-    """构造与本地 MonkeyOCR 一致的解析结果结构。"""
+# ═══════════════════════════════════════════════════════════
+# 解析结果构造
+# ═══════════════════════════════════════════════════════════
 
+
+def _build_remote_parse_result(
+    output_dir: Path,
+    markdown_path: Path,
+    *,
+    mode: str,
+    job_id: str,
+) -> Dict[str, Any]:
     output_dir = output_dir.resolve()
     default_md = output_dir / "reconstructed_content.md"
-    md_path = markdown_path.resolve() if markdown_path and markdown_path.exists() else default_md.resolve()
-
+    md_path = (
+        markdown_path.resolve()
+        if markdown_path and markdown_path.exists()
+        else default_md.resolve()
+    )
     return {
         "status": "SUCCEEDED",
         "mode": mode,
@@ -80,22 +115,19 @@ def _build_remote_parse_result(output_dir: Path, markdown_path: Path, *, mode: s
 
 
 def _resolve_remote_output_name(input_pdf: Path, output_name: str | None) -> str:
-    """解析远端输出目录名，默认使用输入文件 stem。"""
-
     candidate = _stringify(output_name)
     if candidate:
         return Path(candidate).stem or input_pdf.stem
     return input_pdf.stem
 
 
-def _ensure_remote_compat_artifacts(parse_output_dir: Path, *, output_name: str, markdown_path: str | Path | None, job_id: str) -> None:
-    """补齐远端旧格式输出，确保满足上层完整性判定。
-
-    旧版远端输出常见为: `{output_name}.md` 与 `{output_name}_middle.json`。
-    上层 A070 需要 `reconstructed_content.md`、`normalized_structured.json`
-    以及 `parse_record.json`、`quality_report.json`。
-    """
-
+def _ensure_remote_compat_artifacts(
+    parse_output_dir: Path,
+    *,
+    output_name: str,
+    markdown_path: str | Path | None,
+    job_id: str,
+) -> None:
     parse_output_dir = parse_output_dir.resolve()
     parse_output_dir.mkdir(parents=True, exist_ok=True)
 
@@ -133,7 +165,10 @@ def _ensure_remote_compat_artifacts(parse_output_dir: Path, *, output_name: str,
             "output_name": output_name,
             "source": "remote_monkeyocr_compat",
         }
-        parse_record_path.write_text(json.dumps(parse_record_payload, ensure_ascii=False, indent=2), encoding="utf-8")
+        parse_record_path.write_text(
+            json.dumps(parse_record_payload, ensure_ascii=False, indent=2),
+            encoding="utf-8",
+        )
 
     quality_report_path = parse_output_dir / "quality_report.json"
     if not quality_report_path.exists():
@@ -142,20 +177,24 @@ def _ensure_remote_compat_artifacts(parse_output_dir: Path, *, output_name: str,
             "source": "remote_monkeyocr_compat",
             "message": "generated compatibility report for legacy remote output layout",
         }
-        quality_report_path.write_text(json.dumps(quality_payload, ensure_ascii=False, indent=2), encoding="utf-8")
+        quality_report_path.write_text(
+            json.dumps(quality_payload, ensure_ascii=False, indent=2),
+            encoding="utf-8",
+        )
+
+
+# ═══════════════════════════════════════════════════════════
+# SSH 工具
+# ═══════════════════════════════════════════════════════════
 
 
 def _load_ssh_connection(ssh_cfg: Dict[str, Any]) -> Dict[str, Any]:
-    """从 connection_file + profile 解析 SSH 连接参数。"""
-
     merged = dict(ssh_cfg)
     connection_file = _stringify(ssh_cfg.get("connection_file"))
     if not connection_file:
         return merged
-
     payload = json.loads(Path(connection_file).expanduser().resolve().read_text(encoding="utf-8"))
     profile = _stringify(ssh_cfg.get("profile")) or "default"
-
     if isinstance(payload, dict) and isinstance(payload.get("profiles"), dict):
         profile_cfg = payload.get("profiles", {}).get(profile) or {}
     elif isinstance(payload, dict) and isinstance(payload.get(profile), dict):
@@ -164,7 +203,6 @@ def _load_ssh_connection(ssh_cfg: Dict[str, Any]) -> Dict[str, Any]:
         profile_cfg = payload
     else:
         profile_cfg = {}
-
     resolved = dict(profile_cfg)
     resolved.update(merged)
     return resolved
@@ -201,12 +239,9 @@ def _ssh_run(ssh_cfg: Dict[str, Any], remote_command: str, *, timeout: int) -> D
     user = _stringify(ssh_cfg.get("user"))
     if not host or not user:
         raise ValueError("ssh mode requires host and user")
-
     cmd = _build_ssh_base_cmd(ssh_cfg)
     cmd.append(f"{user}@{host}")
     cmd.append(remote_command)
-
-    # 远端输出可能包含 UTF-8 字节；在 Windows 默认 GBK 下会触发解码异常。
     completed = subprocess.run(
         cmd,
         text=True,
@@ -224,9 +259,53 @@ def _ssh_run(ssh_cfg: Dict[str, Any], remote_command: str, *, timeout: int) -> D
     }
 
 
-def stop_remote_monkeyocr_jobs(runtime_settings: Dict[str, Any]) -> Dict[str, Any]:
-    """停止远端遗留的 MonkeyOCR 任务。"""
+def _scp_upload(ssh_cfg: Dict[str, Any], local_path: Path, remote_target: str) -> None:
+    host = _stringify(ssh_cfg.get("host"))
+    user = _stringify(ssh_cfg.get("user"))
+    if not host or not user:
+        raise ValueError("ssh mode requires host and user")
+    cmd = _build_scp_base_cmd(ssh_cfg)
+    cmd.extend([str(local_path), f"{user}@{host}:{remote_target}"])
+    subprocess.run(cmd, check=True)
 
+
+def _scp_download_dir(ssh_cfg: Dict[str, Any], remote_dir: str, local_root: Path) -> None:
+    host = _stringify(ssh_cfg.get("host"))
+    user = _stringify(ssh_cfg.get("user"))
+    if not host or not user:
+        raise ValueError("ssh mode requires host and user")
+    cmd = _build_scp_base_cmd(ssh_cfg)
+    cmd.extend(["-r", f"{user}@{host}:{remote_dir}", str(local_root)])
+    subprocess.run(cmd, check=True)
+
+
+def _wait_remote_output_ready(
+    ssh_cfg: Dict[str, Any],
+    *,
+    remote_output_dir: str,
+    remote_output_name: str,
+    timeout: int,
+    poll_interval: int,
+) -> Dict[str, Any]:
+    md_a = f"{remote_output_dir}/{remote_output_name}/{remote_output_name}.md"
+    md_b = f"{remote_output_dir}/{remote_output_name}/reconstructed_content.md"
+    probe_cmd = f"test -f {shlex.quote(md_a)} || test -f {shlex.quote(md_b)}"
+    start = time.time()
+    last_result: Dict[str, Any] = {"returncode": 1, "stdout": "", "stderr": ""}
+    while time.time() - start < timeout:
+        last_result = _ssh_run(ssh_cfg, probe_cmd, timeout=max(poll_interval, 5))
+        if int(last_result.get("returncode", 1)) == 0:
+            return {"status": "ready", "probe": last_result}
+        time.sleep(max(poll_interval, 1))
+    return {"status": "timeout", "probe": last_result}
+
+
+# ═══════════════════════════════════════════════════════════
+# 远端运行管理
+# ═══════════════════════════════════════════════════════════
+
+
+def stop_remote_monkeyocr_jobs(runtime_settings: Dict[str, Any]) -> Dict[str, Any]:
     remote_cfg = runtime_settings.get("remote_processing") if isinstance(runtime_settings, dict) else {}
     if not isinstance(remote_cfg, dict) or not _normalize_bool(remote_cfg.get("enabled"), False):
         return {"enabled": False, "mode": "", "killed": False, "stdout": "", "stderr": ""}
@@ -268,23 +347,6 @@ def launch_remote_tmux_command(
     session_name: str = "",
     timeout: int = 60,
 ) -> Dict[str, Any]:
-    """通过 SSH 在远端 tmux 中启动命令。
-
-    Args:
-        runtime_settings: MonkeyOCR 运行时配置（需包含 remote_processing.ssh）。
-        remote_command: 远端要执行的 shell 命令。
-        session_prefix: 默认 tmux session 前缀。
-        session_name: 可选固定 session 名；为空时自动生成。
-        timeout: SSH 命令超时时间（秒）。
-
-    Returns:
-        启动结果，包含 session_name、stdout、stderr 与 returncode。
-
-    Raises:
-        ValueError: 配置缺失或 mode 非 ssh。
-        RuntimeError: 远端 tmux 启动失败。
-    """
-
     remote_cfg = runtime_settings.get("remote_processing") if isinstance(runtime_settings, dict) else {}
     if not isinstance(remote_cfg, dict) or not _normalize_bool(remote_cfg.get("enabled"), False):
         raise ValueError("remote_processing.enabled 必须为 true")
@@ -315,7 +377,6 @@ def launch_remote_tmux_command(
             "remote tmux launch failed: "
             + (_stringify(result.get("stderr")) or _stringify(result.get("stdout")) or "unknown")
         )
-
     return {
         "enabled": True,
         "mode": mode,
@@ -326,71 +387,32 @@ def launch_remote_tmux_command(
     }
 
 
-def _scp_upload(ssh_cfg: Dict[str, Any], local_path: Path, remote_target: str) -> None:
-    host = _stringify(ssh_cfg.get("host"))
-    user = _stringify(ssh_cfg.get("user"))
-    if not host or not user:
-        raise ValueError("ssh mode requires host and user")
-
-    cmd = _build_scp_base_cmd(ssh_cfg)
-    cmd.extend([str(local_path), f"{user}@{host}:{remote_target}"])
-    subprocess.run(cmd, check=True)
+# ═══════════════════════════════════════════════════════════
+# 本地后端执行
+# ═══════════════════════════════════════════════════════════
 
 
-def _scp_download_dir(ssh_cfg: Dict[str, Any], remote_dir: str, local_root: Path) -> None:
-    host = _stringify(ssh_cfg.get("host"))
-    user = _stringify(ssh_cfg.get("user"))
-    if not host or not user:
-        raise ValueError("ssh mode requires host and user")
-
-    cmd = _build_scp_base_cmd(ssh_cfg)
-    cmd.extend(["-r", f"{user}@{host}:{remote_dir}", str(local_root)])
-    subprocess.run(cmd, check=True)
-
-
-def _wait_remote_output_ready(
-    ssh_cfg: Dict[str, Any],
-    *,
-    remote_output_dir: str,
-    remote_output_name: str,
-    timeout: int,
-    poll_interval: int,
-) -> Dict[str, Any]:
-    """轮询远端输出目录，直到核心产物出现。"""
-
-    md_a = f"{remote_output_dir}/{remote_output_name}/{remote_output_name}.md"
-    md_b = f"{remote_output_dir}/{remote_output_name}/reconstructed_content.md"
-    probe_cmd = f"test -f {shlex.quote(md_a)} || test -f {shlex.quote(md_b)}"
-
-    start = time.time()
-    last_result: Dict[str, Any] = {"returncode": 1, "stdout": "", "stderr": ""}
-    while time.time() - start < timeout:
-        last_result = _ssh_run(ssh_cfg, probe_cmd, timeout=max(poll_interval, 5))
-        if int(last_result.get("returncode", 1)) == 0:
-            return {"status": "ready", "probe": last_result}
-        time.sleep(max(poll_interval, 1))
-
-    return {"status": "timeout", "probe": last_result}
-
-
-def _run_local_monkeyocr(
-    input_pdf: str | Path,
-    output_dir: str | Path,
+def _run_local_cuda(
+    input_pdf: Path,
+    output_dir: Path,
     *,
     output_name: str | None,
     runtime_settings: Dict[str, Any],
 ) -> Dict[str, Any]:
-    """运行本地 MonkeyOCR 单篇解析。"""
+    from autodokit.tools.ocr.monkeyocr.monkeyocr_windows_tools import (
+        run_monkeyocr_windows_single_pdf,
+    )
 
+    logger.info("使用 CUDA 后端运行本地 MonkeyOCR")
     result = run_monkeyocr_windows_single_pdf(
-        input_pdf=str(Path(input_pdf).expanduser().resolve()),
-        output_dir=str(Path(output_dir).expanduser().resolve()),
+        input_pdf=str(input_pdf),
+        output_dir=str(output_dir),
         output_name=output_name,
         monkeyocr_root=str(runtime_settings.get("monkeyocr_root") or ""),
         models_dir=runtime_settings.get("models_dir"),
         config_path=runtime_settings.get("config_path"),
         model_name=runtime_settings.get("model_name") or runtime_settings.get("monkeyocr_model") or None,
-        device=runtime_settings.get("device") or "cuda",
+        device="cuda",
         gpu_visible_devices=runtime_settings.get("gpu_visible_devices") or "0",
         ensure_runtime=runtime_settings.get("ensure_runtime", True),
         auto_install_triton_windows=runtime_settings.get("auto_install_triton_windows", False),
@@ -400,8 +422,162 @@ def _run_local_monkeyocr(
         local_package_dirs=runtime_settings.get("local_package_dirs"),
         stream_output=False,
     )
-    result["output_name"] = _resolve_remote_output_name(Path(input_pdf).expanduser().resolve(), output_name)
+    result["output_name"] = _resolve_remote_output_name(input_pdf, output_name)
+    result["backend"] = "cuda"
     return result
+
+
+def _run_local_mlx(
+    input_pdf: Path,
+    output_dir: Path,
+    *,
+    output_name: str | None,
+    runtime_settings: Dict[str, Any],
+) -> Dict[str, Any]:
+    from autodokit.tools.ocr.monkeyocr.monkeyocr_mlx_tools import (
+        run_monkeyocr_mlx_single_pdf,
+    )
+
+    logger.info("使用 MLX 后端运行本地 MonkeyOCR")
+    result = run_monkeyocr_mlx_single_pdf(
+        input_pdf=str(input_pdf),
+        output_dir=str(output_dir),
+        output_name=output_name,
+        monkeyocr_root=str(runtime_settings.get("monkeyocr_root") or ""),
+        models_dir=runtime_settings.get("models_dir"),
+        config_path=runtime_settings.get("config_path"),
+        model_name=runtime_settings.get("model_name") or runtime_settings.get("monkeyocr_model") or None,
+        ensure_runtime=runtime_settings.get("ensure_runtime", True),
+        download_source=runtime_settings.get("download_source", "huggingface"),
+        pip_index_url=runtime_settings.get("pip_index_url"),
+        python_executable=runtime_settings.get("python_executable"),
+        stream_output=False,
+    )
+    result["output_name"] = _resolve_remote_output_name(input_pdf, output_name)
+    result["backend"] = "mlx"
+    return result
+
+
+def _run_local_cpu(
+    input_pdf: Path,
+    output_dir: Path,
+    *,
+    output_name: str | None,
+    runtime_settings: Dict[str, Any],
+) -> Dict[str, Any]:
+    from autodokit.tools.ocr.monkeyocr.monkeyocr_windows_tools import (
+        run_monkeyocr_windows_single_pdf,
+    )
+
+    logger.warning("使用 CPU 后端运行本地 MonkeyOCR")
+    result = run_monkeyocr_windows_single_pdf(
+        input_pdf=str(input_pdf),
+        output_dir=str(output_dir),
+        output_name=output_name,
+        monkeyocr_root=str(runtime_settings.get("monkeyocr_root") or ""),
+        models_dir=runtime_settings.get("models_dir"),
+        config_path=runtime_settings.get("config_path"),
+        model_name=runtime_settings.get("model_name") or runtime_settings.get("monkeyocr_model") or None,
+        device="cpu",
+        gpu_visible_devices="",
+        ensure_runtime=runtime_settings.get("ensure_runtime", True),
+        auto_install_triton_windows=False,
+        download_source=runtime_settings.get("download_source", "huggingface"),
+        pip_index_url=runtime_settings.get("pip_index_url"),
+        python_executable=runtime_settings.get("python_executable"),
+        local_package_dirs=runtime_settings.get("local_package_dirs"),
+        stream_output=False,
+    )
+    result["output_name"] = _resolve_remote_output_name(input_pdf, output_name)
+    result["backend"] = "cpu"
+    return result
+
+
+def _resolve_local_backend(
+    compute_backend: ComputeBackend,
+    *,
+    runtime_settings: Dict[str, Any] | None = None,
+) -> ComputeBackend:
+    """解析本地计算后端。
+
+    Args:
+        compute_backend: 用户指定的后端偏好 ("auto" | "cuda" | "mlx" | "cpu")。
+        runtime_settings: 运行时配置，可含 device 字段做兼容回退。
+
+    Returns:
+        实际使用的后端标识。
+
+    Raises:
+        SystemExit: CPU 回退被用户拒绝。
+    """
+
+    # 1. 显式指定
+    if compute_backend != "auto":
+        if compute_backend == "cpu":
+            available = detect_available_backends()
+            confirm_cpu_fallback(
+                available_backends=available,
+                reason="用户显式指定了 cpu 后端",
+            )
+        return compute_backend
+
+    # 2. 兼容旧配置中的 device 字段
+    if runtime_settings:
+        legacy_device = _stringify(runtime_settings.get("device")).lower()
+        if legacy_device in ("cuda", "mlx", "cpu"):
+            if legacy_device == "cpu":
+                confirm_cpu_fallback(
+                    available_backends=detect_available_backends(),
+                    reason="运行时配置指定了 device=cpu",
+                )
+            return legacy_device  # type: ignore[return-value]
+
+    # 3. 自动检测
+    available = detect_available_backends()
+    best = get_best_backend()
+
+    if best == "cpu":
+        confirm_cpu_fallback(
+            available_backends=available,
+            reason="未检测到 CUDA 或 MLX GPU 加速后端",
+        )
+    else:
+        gpu = get_gpu_name() or best.upper()
+        logger.info("自动选择计算后端: %s (GPU: %s)", best, gpu)
+
+    return best
+
+
+# ═══════════════════════════════════════════════════════════
+# 本地综合入口
+# ═══════════════════════════════════════════════════════════
+
+
+def _run_local_monkeyocr(
+    input_pdf: str | Path,
+    output_dir: str | Path,
+    *,
+    output_name: str | None,
+    runtime_settings: Dict[str, Any],
+    compute_backend: ComputeBackend = "auto",
+) -> Dict[str, Any]:
+    pdf_path = Path(input_pdf).expanduser().resolve()
+    out_dir = Path(output_dir).expanduser().resolve()
+    resolved_backend = _resolve_local_backend(compute_backend, runtime_settings=runtime_settings)
+
+    if resolved_backend == "cuda":
+        return _run_local_cuda(pdf_path, out_dir, output_name=output_name, runtime_settings=runtime_settings)
+    elif resolved_backend == "mlx":
+        return _run_local_mlx(pdf_path, out_dir, output_name=output_name, runtime_settings=runtime_settings)
+    elif resolved_backend == "cpu":
+        return _run_local_cpu(pdf_path, out_dir, output_name=output_name, runtime_settings=runtime_settings)
+    else:
+        raise ValueError(f"不支持的后端: {resolved_backend}")
+
+
+# ═══════════════════════════════════════════════════════════
+# 远端执行
+# ═══════════════════════════════════════════════════════════
 
 
 def _run_remote_monkeyocr(
@@ -413,8 +589,6 @@ def _run_remote_monkeyocr(
     timeout: int,
     poll_interval: int,
 ) -> Dict[str, Any]:
-    """运行远端 MonkeyOCR 单篇解析。"""
-
     input_pdf = Path(input_pdf).expanduser().resolve()
     output_dir = Path(output_dir).expanduser().resolve()
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -542,7 +716,12 @@ def _run_remote_monkeyocr(
             job_id=job_id,
         )
         return {
-            **_build_remote_parse_result(parse_output_dir, Path(markdown_path) if markdown_path else parse_output_dir / "reconstructed_content.md", mode="ssh", job_id=job_id),
+            **_build_remote_parse_result(
+                parse_output_dir,
+                Path(markdown_path) if markdown_path else parse_output_dir / "reconstructed_content.md",
+                mode="ssh",
+                job_id=job_id,
+            ),
             "ssh_result": ssh_result,
             "artifacts": {
                 "output_dir_local": str(parse_output_dir),
@@ -554,12 +733,18 @@ def _run_remote_monkeyocr(
     raise ValueError(f"unsupported remote_processing mode: {mode}")
 
 
+# ═══════════════════════════════════════════════════════════
+# 统一入口
+# ═══════════════════════════════════════════════════════════
+
+
 def run_monkeyocr_single_pdf(
     input_pdf: str | Path,
     output_dir: str | Path,
     *,
     runtime_settings: Dict[str, Any],
     execution_mode: ExecutionMode = "auto",
+    compute_backend: ComputeBackend = "auto",
     output_name: str | None = None,
     timeout: int = 3600,
     poll_interval: int = 10,
@@ -567,46 +752,55 @@ def run_monkeyocr_single_pdf(
 ) -> Dict[str, Any]:
     """统一的 MonkeyOCR 单篇入口。
 
+    二维正交执行架构：
+    - local + cuda / mlx / cpu
+    - remote + ssh / mapped
+
+    自动模式：优先远端，失败回退本地。本地自动检测最优后端。
+
     Args:
-        input_pdf: 待解析 PDF 的绝对路径。
-        output_dir: 解析输出根目录。
-        runtime_settings: 运行时配置。
-        execution_mode: `auto`、`local` 或 `remote`。
-        output_name: 可选解析输出目录名。
-        timeout: 远端等待超时时间。
-        poll_interval: 远端轮询间隔。
-        allow_local_fallback: 当 `execution_mode='auto'` 且远端失败时是否回退本地。
+        input_pdf: 待解析 PDF 绝对路径。
+        output_dir: 输出根目录。
+        runtime_settings: 运行时配置（至少含 monkeyocr_root）。
+        execution_mode: "auto" | "local" | "remote"。
+        compute_backend: "auto" | "cuda" | "mlx" | "cpu"。
+        output_name: 可选输出目录名。
+        timeout: 远端超时（秒）。
+        poll_interval: 远端轮询间隔（秒）。
+        allow_local_fallback: 远端失败时是否回退本地。
 
     Returns:
-        MonkeyOCR 解析结果字典。
+        解析结果字典，含 status、backend、output_dir、artifacts。
     """
 
-    normalized_mode = execution_mode.lower()
+    normalized_mode: str = execution_mode.lower()
+
     if normalized_mode == "local":
         return _run_local_monkeyocr(
-            input_pdf,
-            output_dir,
+            input_pdf, output_dir,
             output_name=output_name,
             runtime_settings=runtime_settings,
+            compute_backend=compute_backend,
         )
+
     if normalized_mode == "remote":
         return _run_remote_monkeyocr(
-            input_pdf,
-            output_dir,
+            input_pdf, output_dir,
             output_name=output_name,
             runtime_settings=runtime_settings,
             timeout=timeout,
             poll_interval=poll_interval,
         )
+
     if normalized_mode != "auto":
         raise ValueError(f"unsupported execution_mode: {execution_mode}")
 
+    # auto: 远端优先
     remote_cfg = runtime_settings.get("remote_processing") if isinstance(runtime_settings, dict) else {}
     if isinstance(remote_cfg, dict) and _normalize_bool(remote_cfg.get("enabled"), False):
         try:
             return _run_remote_monkeyocr(
-                input_pdf,
-                output_dir,
+                input_pdf, output_dir,
                 output_name=output_name,
                 runtime_settings=runtime_settings,
                 timeout=timeout,
@@ -617,10 +811,10 @@ def run_monkeyocr_single_pdf(
                 raise
 
     return _run_local_monkeyocr(
-        input_pdf,
-        output_dir,
+        input_pdf, output_dir,
         output_name=output_name,
         runtime_settings=runtime_settings,
+        compute_backend=compute_backend,
     )
 
 
@@ -636,8 +830,7 @@ def run_monkeyocr_remote(
     """兼容旧入口：显式远端运行。"""
 
     return run_monkeyocr_single_pdf(
-        input_pdf,
-        output_dir,
+        input_pdf, output_dir,
         runtime_settings=runtime_settings,
         execution_mode="remote",
         output_name=output_name,
@@ -648,7 +841,6 @@ def run_monkeyocr_remote(
 
 
 __all__ = [
-    "ExecutionMode",
     "run_monkeyocr_single_pdf",
     "run_monkeyocr_remote",
     "stop_remote_monkeyocr_jobs",

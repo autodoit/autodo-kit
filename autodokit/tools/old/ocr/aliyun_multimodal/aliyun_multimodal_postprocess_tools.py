@@ -11,7 +11,7 @@ import re
 from pathlib import Path
 from typing import Any, Dict
 
-from autodokit.tools.llm_clients import (
+from autodokit.tools.atomic.llm import (
     AliyunDashScopeClient,
     ModelRoutingIntent,
     load_aliyun_llm_config,
@@ -496,7 +496,7 @@ def _classify_contamination_blocks_with_llm(
     )
 
     # 兼容历史单测：若调用对象被 monkeypatch，则沿用旧调用链。
-    if getattr(load_aliyun_llm_config, "__module__", "") != "autodokit.tools.llm_clients" or getattr(AliyunDashScopeClient, "__module__", "") != "autodokit.tools.llm_clients":
+    if getattr(load_aliyun_llm_config, "__module__", "") != "autodokit.tools.atomic.llm.llm_clients" or getattr(AliyunDashScopeClient, "__module__", "") != "autodokit.tools.atomic.llm.llm_clients":
         llm_config = load_aliyun_llm_config(
             model=llm_model or _DEFAULT_CONTAMINATION_MODEL,
             api_key_file=str(api_key_file) if api_key_file else None,

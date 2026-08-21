@@ -4,8 +4,11 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from autodokit.tools.llm_clients import ModelRoutingIntent, load_aliyun_llm_config, resolve_model_plan
+from autodokit.tools.atomic.llm import ModelRoutingIntent, load_aliyun_llm_config, resolve_model_plan
 from autodokit.tools import open_access_literature_retrieval as retrieval
+# 注意：tools/__init__.py 会暴露一个模块副本（autodokit.tools.open_access_literature_retrieval），
+# 与真实实现模块不是同一对象；monkeypatch 必须打在实际实现模块上才能命中函数体内的全局查找。
+import autodokit.tools.online_retrieval_literatures.open_access_literature_retrieval as retrieval_impl
 
 
 def test_resolve_model_plan_general_auto() -> None:
@@ -55,9 +58,9 @@ def test_open_access_barrier_analysis_uses_unified_invoke(monkeypatch) -> None:
         called["payload"] = kwargs
         return {"status": "PASS", "selected_model": "auto", "attempts": [], "response": {"text": "ok"}}
 
-    monkeypatch.setattr(retrieval, "invoke_aliyun_llm", _fake_invoke)
+    monkeypatch.setattr(retrieval_impl, "invoke_aliyun_llm", _fake_invoke)
 
-    result = retrieval.analyze_barrier_with_bailian("please login to continue", "dummy-key-file")
+    result = retrieval_impl.analyze_barrier_with_bailian("please login to continue", "dummy-key-file")
     assert called["count"] == 1
     assert called["payload"]["route_hints"]["budget_tier"] == "cheap"
     assert result["status"] == "PASS"
