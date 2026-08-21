@@ -28,6 +28,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Literal, Optional
 
 from autodokit.tools.config_contract_utils import normalize_to_legacy_contract
+from autodokit.tools.atomic.llm.secrets_manager import ensure_secrets_layout, iter_secret_candidates, mask_api_key, secret_path
 
 def get_global_config_path() -> Optional[Path]:
     """读取全局配置路径。
@@ -338,7 +339,7 @@ class AliyunLLMConfig:
     """
 
     api_key: str
-    model: str = "qwen-plus"
+    model: str = "qwen3.7-plus"
     base_url: Optional[str] = None
     sdk_backend: SdkBackend = "dashscope"
     region: str = "cn-beijing"
@@ -367,49 +368,100 @@ _CN_ONLY_MODEL_PREFIXES: tuple[str, ...] = (
 )
 
 #: 一些老型号在官方文档中已明确“后续不再更新”的替代关系。
+#: 更新依据：阿里云百炼 2026-10-10 模型下线公告
+#: （https://www.aliyun.com/notice/118177、118344、118345、118434 等）。
+#: 下线主线模型：qwen-turbo、qwen-vl-max、qwen-vl-plus、qwq-plus、qwen-max、
+#: qwen-plus、qwen-flash、qwen3-max、qwen3-vl-flash、qwen3-coder-plus、qwen-long 等；
+#: 官方推荐迁移到 Qwen3.6/Qwen3.7 系列最新模型。
 _DEPRECATED_MODEL_REPLACEMENTS: Dict[str, str] = {
-    "qwen-turbo": "qwen3.5-flash",
-    "qwen-vl-max": "qwen3-vl-plus",
-    "qwen-vl-plus": "qwen3-vl-plus",
-    "qwen-max": "qwen3-max",
-    "qwen-plus": "qwen3.5-plus",
-    "qwen-flash": "qwen3.5-flash",
+    "qwen-turbo": "qwen3.7-flash",
+    "qwen-turbo-realtime": "qwen3.7-flash",
+    "qwen-vl-max": "qwen3.7-plus",
+    "qwen-vl-plus": "qwen3.7-plus",
+    "qwen-max": "qwen3.7-max",
+    "qwen-plus": "qwen3.7-plus",
+    "qwen-flash": "qwen3.7-flash",
+    "qwen3-max": "qwen3.7-max",
+    "qwen3-max-preview": "qwen3.7-max",
+    "qwen3.6-max-preview": "qwen3.7-max",
+    "qwq-plus": "qwen3.7-plus",
+    "qwen-math-turbo": "qwen3.7-plus",
+    "qwen-math-plus": "qwen3.7-plus",
+    "qwen-coder-turbo": "qwen3.7-plus",
+    "qwen-coder-plus": "qwen3.7-plus",
+    "qwen3-coder-plus": "qwen3.7-plus",
+    "qwen-long": "qwen3.7-plus",
+    "qwen-long-latest": "qwen3.7-plus",
+    "qwen-vl-ocr": "qwen3.7-plus",
+    "qwen-vl-ocr-latest": "qwen3.7-plus",
+    "qwen3-vl-plus": "qwen3.7-plus",
+    "qwen3-vl-flash": "qwen3.7-flash",
 }
 
 _DEFAULT_MODEL_POOL: Dict[TaskType, Dict[BudgetTier, str]] = {
-    # 文本通用：优先使用官方“旗舰模型”的稳定版命名。
+    # 文本通用：优先使用官方当前主推的 Qwen3.7 稳定版命名。
     "general": {
-        "cheap": "qwen3.5-flash",
-        "balanced": "qwen3.5-plus",
-        "premium": "qwen3-max",
+        "cheap": "qwen3.7-flash",
+        "balanced": "qwen3.7-plus",
+        "premium": "qwen3.7-max",
     },
-    # 视觉理解：Flash/Plus 覆盖大多数 OCR、图像问答、图表理解。
+    # 视觉理解：Qwen3.7 系列已统一多模态能力，覆盖 OCR、图像问答、图表理解。
     "vision": {
-        "cheap": "qwen3-vl-flash",
-        "balanced": "qwen3-vl-plus",
-        "premium": "qwen3-vl-plus",
+        "cheap": "qwen3.7-flash",
+        "balanced": "qwen3.7-plus",
+        "premium": "qwen3.7-max",
     },
-    # 长文本：qwen-long 具备 10M 上下文（但常见为“仅中国内地”），无法使用时降级到 Plus/Max。
+    # 长文本：qwen-long 已下线，改由 Qwen3.7 系列（百万级上下文）承接。
     "long_text": {
-        "cheap": "qwen-long",
-        "balanced": "qwen-long",
-        "premium": "qwen3.5-plus",
+        "cheap": "qwen3.7-flash",
+        "balanced": "qwen3.7-plus",
+        "premium": "qwen3.7-max",
     },
-    # 数学/推理：优先路由到 QwQ 系列；低预算时允许用 Flash 做兜底。
+    # 数学/推理：QwQ 系列已下线，由 Qwen3.7 深度思考能力承接。
     "math_reasoning": {
-        "cheap": "qwen3.5-flash",
-        "balanced": "qwq-plus",
-        "premium": "qwq-plus",
+        "cheap": "qwen3.7-flash",
+        "balanced": "qwen3.7-plus",
+        "premium": "qwen3.7-max",
     },
-    # 代码：使用 Qwen3-Coder 系列。
+    # 代码：qwen3-coder-plus 已下线，Qwen3.7 系列具备同等代码能力。
     "coding": {
-        "cheap": "qwen3-coder-flash",
-        "balanced": "qwen3-coder-plus",
-        "premium": "qwen3-coder-plus",
+        "cheap": "qwen3.7-flash",
+        "balanced": "qwen3.7-plus",
+        "premium": "qwen3.7-max",
     },
 }
 
 _DEFAULT_MODEL_CATALOG: Dict[str, ModelCatalogEntry] = {
+    "qwen3.7-max": ModelCatalogEntry(
+        model="qwen3.7-max",
+        family="qwen-max",
+        task_types=("general", "long_text", "coding", "math_reasoning", "vision"),
+        supports_thinking=True,
+        supports_vision=True,
+        input_price_per_million_min=3.0,
+        output_price_per_million_min=12.0,
+        context_limit=1000000,
+    ),
+    "qwen3.7-plus": ModelCatalogEntry(
+        model="qwen3.7-plus",
+        family="qwen-plus",
+        task_types=("general", "long_text", "coding", "math_reasoning", "vision"),
+        supports_thinking=True,
+        supports_vision=True,
+        input_price_per_million_min=2.0,
+        output_price_per_million_min=8.0,
+        context_limit=1000000,
+    ),
+    "qwen3.7-flash": ModelCatalogEntry(
+        model="qwen3.7-flash",
+        family="qwen-flash",
+        task_types=("general", "long_text", "coding", "math_reasoning", "vision"),
+        supports_thinking=True,
+        supports_vision=True,
+        input_price_per_million_min=0.5,
+        output_price_per_million_min=3.0,
+        context_limit=1000000,
+    ),
     "qwen3-max": ModelCatalogEntry(
         model="qwen3-max",
         family="qwen-max",
@@ -418,6 +470,8 @@ _DEFAULT_MODEL_CATALOG: Dict[str, ModelCatalogEntry] = {
         input_price_per_million_min=2.5,
         output_price_per_million_min=10.0,
         context_limit=262144,
+        status="deprecated",
+        replacement="qwen3.7-max",
     ),
     "qwen3.6-plus": ModelCatalogEntry(
         model="qwen3.6-plus",
@@ -457,6 +511,8 @@ _DEFAULT_MODEL_CATALOG: Dict[str, ModelCatalogEntry] = {
         input_price_per_million_min=1.0,
         output_price_per_million_min=10.0,
         context_limit=262144,
+        status="deprecated",
+        replacement="qwen3.7-plus",
     ),
     "qwen3-vl-flash": ModelCatalogEntry(
         model="qwen3-vl-flash",
@@ -467,6 +523,8 @@ _DEFAULT_MODEL_CATALOG: Dict[str, ModelCatalogEntry] = {
         input_price_per_million_min=1.0,
         output_price_per_million_min=10.0,
         context_limit=262144,
+        status="deprecated",
+        replacement="qwen3.7-flash",
     ),
     "qwen-vl-ocr": ModelCatalogEntry(
         model="qwen-vl-ocr",
@@ -477,6 +535,8 @@ _DEFAULT_MODEL_CATALOG: Dict[str, ModelCatalogEntry] = {
         input_price_per_million_min=0.3,
         output_price_per_million_min=0.5,
         context_limit=38192,
+        status="deprecated",
+        replacement="qwen3.7-plus",
     ),
     "qwen3-coder-plus": ModelCatalogEntry(
         model="qwen3-coder-plus",
@@ -486,6 +546,8 @@ _DEFAULT_MODEL_CATALOG: Dict[str, ModelCatalogEntry] = {
         input_price_per_million_min=4.0,
         output_price_per_million_min=16.0,
         context_limit=1000000,
+        status="deprecated",
+        replacement="qwen3.7-plus",
     ),
     "qwen3-coder-flash": ModelCatalogEntry(
         model="qwen3-coder-flash",
@@ -504,6 +566,8 @@ _DEFAULT_MODEL_CATALOG: Dict[str, ModelCatalogEntry] = {
         input_price_per_million_min=1.6,
         output_price_per_million_min=4.0,
         context_limit=131072,
+        status="deprecated",
+        replacement="qwen3.7-plus",
     ),
     "qwen-long": ModelCatalogEntry(
         model="qwen-long",
@@ -514,6 +578,8 @@ _DEFAULT_MODEL_CATALOG: Dict[str, ModelCatalogEntry] = {
         input_price_per_million_min=0.5,
         output_price_per_million_min=2.0,
         context_limit=10000000,
+        status="deprecated",
+        replacement="qwen3.7-plus",
     ),
 }
 
@@ -634,7 +700,7 @@ def resolve_model_plan(
         reasons.append("主模型不在目录内，按自定义模型处理")
 
     if _is_cn_only_model(primary) and region != "cn-beijing":
-        replacement = _DEFAULT_MODEL_POOL.get("general", {}).get(intent.budget_tier, "qwen3.5-plus")
+        replacement = _DEFAULT_MODEL_POOL.get("general", {}).get(intent.budget_tier, "qwen3.7-plus")
         primary = _normalize_model_name(replacement)
         reasons.append(f"主模型仅支持中国内地，自动切换为 {primary}")
 
@@ -744,6 +810,9 @@ def _parse_api_key_text(text: str, *, env_api_key_name: str = "DASHSCOPE_API_KEY
 def _iter_default_api_key_file_candidates() -> List[Path]:
     """生成默认 API Key 文件候选路径。
 
+    统一密钥仓库（``~/.config/autodo-suite/secrets/``）优先级最高，
+    仓库内旧候选路径仅作兼容回退。
+
     Returns:
         候选路径列表（按优先级顺序）。
 
@@ -753,8 +822,11 @@ def _iter_default_api_key_file_candidates() -> List[Path]:
         True
     """
 
+    ensure_secrets_layout()
     repo_root = Path(__file__).resolve().parents[2]
     return [
+        *iter_secret_candidates("bailian"),
+        *iter_secret_candidates("dashscope"),
         repo_root / "demos" / "settings" / "配置文件" / "bailian_api_key.txt",
         repo_root / "config" / "bailian_api_key.txt",
         repo_root / "demos" / "settings" / "配置文件" / "dashscope_api_key.txt",
@@ -782,6 +854,23 @@ def _load_api_key_from_file(file_path: Path, *, env_api_key_name: str = "DASHSCO
     if not text:
         return ""
     return _parse_api_key_text(text, env_api_key_name=env_api_key_name).strip()
+
+
+def _masked_text(text: str, key: str) -> str:
+    """把文本中可能出现的密钥明文替换为脱敏形式。
+
+    Args:
+        text: 待清洗文本（异常消息、日志等）。
+        key: 需要隐藏的密钥明文。
+
+    Returns:
+        脱敏后的文本。
+    """
+
+    if not text or not key:
+        return text or ""
+    masked = mask_api_key(key)
+    return str(text).replace(str(key), masked)
 
 
 def _normalize_region(region: str | None) -> str:
@@ -956,18 +1045,18 @@ def route_aliyun_model(
         budget_tier = _upgrade_budget_tier(budget_tier)
         reasons.append(f"prefer_quality=True，提升档位为 {budget_tier}")
 
-    model = pool.get(inferred_type, pool["general"]).get(budget_tier, "qwen3.5-plus")
+    model = pool.get(inferred_type, pool["general"]).get(budget_tier, "qwen3.7-plus")
 
-    # OCR 任务尽量使用专用模型（比通用 VL 更聚焦文字提取）。
+    # OCR 任务优先使用通用多模态 Plus（qwen-vl-ocr 已于 2026-10-10 下线）。
     if inferred_type == "vision" and _infer_is_ocr_affair(request.affair_name):
-        model = "qwen-vl-ocr"
-        reasons.append("OCR 任务：优先选择 qwen-vl-ocr")
+        model = "qwen3.7-plus"
+        reasons.append("OCR 任务：优先选择 qwen3.7-plus")
 
     model = _normalize_model_name(model)
 
     # 若模型仅支持中国内地，但用户选择了国际/美国节点，则自动降级。
     if _is_cn_only_model(model) and region != "cn-beijing":
-        fallback = pool.get("general", {}).get(budget_tier, "qwen3.5-plus")
+        fallback = pool.get("general", {}).get(budget_tier, "qwen3.7-plus")
         fallback = _normalize_model_name(fallback)
         reasons.append(f"模型 {model} 仅支持中国内地，region={region}，降级为 {fallback}")
         model = fallback
@@ -1135,7 +1224,7 @@ def _resolve_model_and_backend(
 
 def load_aliyun_llm_config(
     *,
-    model: str = "qwen-plus",
+    model: str = "qwen3.7-plus",
     env_api_key_name: str = "DASHSCOPE_API_KEY",
     api_key_file: str | None = None,
     base_url: str | None = None,
@@ -1386,6 +1475,12 @@ class AliyunLLMClient:
         first = resp.choices[0]
         content = getattr(first.message, "content", "")
         if isinstance(content, str):
+            if content.strip():
+                return content
+            # thinking 模型：content 为空时回退 reasoning_content，避免丢信息。
+            reasoning = getattr(first.message, "reasoning_content", None)
+            if isinstance(reasoning, str) and reasoning.strip():
+                return reasoning
             return content
         if isinstance(content, list):
             texts = [str(x.get("text") or "") for x in content if isinstance(x, dict)]
@@ -1606,6 +1701,7 @@ def invoke_aliyun_llm(
 
     attempts: List[Dict[str, Any]] = []
     for candidate in candidates:
+        cfg: Optional[AliyunLLMConfig] = None
         try:
             cfg = load_aliyun_llm_config(
                 model=candidate,
@@ -1649,7 +1745,10 @@ def invoke_aliyun_llm(
                 },
             }
         except Exception as exc:
-            attempts.append({"model": candidate, "status": "FAIL", "error": str(exc)})
+            message = str(exc)
+            if cfg is not None:
+                message = _masked_text(message, cfg.api_key)
+            attempts.append({"model": candidate, "status": "FAIL", "error": message})
 
     return {
         "status": "FAIL",
