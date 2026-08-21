@@ -30,7 +30,7 @@ from html.parser import HTMLParser
 from pathlib import Path
 from typing import Any
 
-from autodokit.tools.llm_clients import ModelRoutingIntent, invoke_aliyun_llm
+from autodokit.tools.atomic.llm import ModelRoutingIntent, invoke_aliyun_llm
 
 USER_AGENT = (
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
