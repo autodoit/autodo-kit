@@ -4,5 +4,5 @@
     "workflows/workflow_20260309_switches_demo/workflow.json"
   ],
   "skip": [],
-  "secrets_file": "/home/ethan/CoreFiles/ProjectsFile/autodo-kit/.github/config/bailian-api-key.txt"
+  "secrets_file": "~/.config/autodo-suite/secrets/bailian-api-key.txt"
 }
