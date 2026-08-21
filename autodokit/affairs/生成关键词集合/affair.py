@@ -42,8 +42,8 @@ from autodokit.tools.atomic.task_aok.post_affair_git_commit import affair_auto_g
 from autodokit.tools.atomic.task_aok.task_instance_dir import create_task_instance_dir, mirror_artifacts_to_legacy, resolve_legacy_output_dir
 from autodokit.tools import bibliodb_sqlite
 
-from autodokit.tools.llm_clients import invoke_aliyun_llm
-from autodokit.tools.llm_parsing import (
+from autodokit.tools.atomic.llm import invoke_aliyun_llm
+from autodokit.tools.atomic.llm import (
     LLMOutputParseError,
     extract_output_text_from_response_like_blob,
     is_likely_sdk_response_blob,

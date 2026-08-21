@@ -14,10 +14,12 @@ import logging
 import os
 import shlex
 import shutil
+import sqlite3
 import subprocess
 import sys
 import tempfile
 import time
+from datetime import datetime, timezone
 from pathlib import Path, PureWindowsPath
 from typing import Any, Mapping
 
@@ -27,6 +29,7 @@ if str(REPO_ROOT) not in sys.path:
 
 from autodokit.tools import (
     run_monkeyocr_windows_batch_folder,
+    run_monkeyocr_mlx_batch_folder,
     update_monkeyocr_batch_status_csv,
 )
 
@@ -286,6 +289,165 @@ def _launch_tmux_job(config_payload: dict[str, Any], *, runtime_root: Path) -> d
     }
 
 
+def _now_iso() -> str:
+    return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S+08:00")
+
+
+def _load_parsed_pdf_set(content_db: Path, backend: str = "monkeyocr_mlx") -> set[str]:
+    """从 content.db 加载已解析 PDF 路径集合。"""
+    if not content_db or not content_db.exists():
+        return set()
+    try:
+        conn = sqlite3.connect(str(content_db))
+        cur = conn.cursor()
+        cur.execute(
+            "SELECT PDF路径 FROM 文献主表 WHERE 当前解析状态='success' AND 当前解析后端=?",
+            (backend,),
+        )
+        result = {r[0] for r in cur.fetchall() if r[0]}
+        conn.close()
+        return result
+    except Exception:
+        return set()
+
+
+def _update_db_after_parse(
+    *,
+    content_db: Path | None,
+    tasks_db: Path | None,
+    pdf_path: str,
+    pdf_stem: str,
+    result_dir: str,
+    backend: str,
+    success: bool,
+    timing: dict[str, Any],
+    task_uid: str,
+    batch_uid: str,
+    workspace_root: str,
+    node_code: str = "A070",
+) -> None:
+    """解析后更新 content.db (文献主表 + 附件表) 和 tasks.db。"""
+    now = _now_iso()
+
+    # tasks.db
+    if tasks_db and tasks_db.exists():
+        try:
+            conn_t = sqlite3.connect(str(tasks_db))
+            conn_t.execute(
+                """INSERT INTO 任务运行
+                   (task_uid, workflow_uid, 节点编码, 运行状态, 工作区根路径,
+                    输入摘要JSON, 输出摘要JSON, 开始时间, 结束时间, 操作人)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                (task_uid, batch_uid, node_code,
+                 "completed" if success else "failed",
+                 workspace_root,
+                 json.dumps({"pdf": pdf_path, "backend": backend}, ensure_ascii=False),
+                 json.dumps(timing, ensure_ascii=False),
+                 now, now, "AOK-affair"),
+            )
+            conn_t.commit()
+            conn_t.close()
+        except Exception as e:
+            logging.warning(f"tasks.db update failed: {e}")
+
+    # content.db
+    if not content_db or not content_db.exists():
+        return
+
+    try:
+        conn_c = sqlite3.connect(str(content_db))
+        cur = conn_c.cursor()
+
+        if success:
+            md_path = f"{result_dir}/{pdf_stem}.md"
+            cl_path = f"{result_dir}/{pdf_stem}_content_list.json"
+
+            # 验证产物确实存在，否则不算 success
+            if not Path(md_path).exists():
+                logging.warning(f"Markdown not found at {md_path}, marking as failed")
+                success = False
+            elif not Path(cl_path).exists():
+                logging.warning(f"content_list not found at {cl_path}")
+                # content_list 缺失不致命，继续
+
+        if success:
+            cur.execute(
+                """UPDATE 文献主表 SET
+                    当前解析状态='success', 当前解析路径=?, 当前解析Markdown路径=?,
+                    当前解析后端=?, 当前解析层级='full_fine_grained',
+                    当前解析更新时间=?,
+                    结构化状态='ready', 结构化正文路径=?,
+                    结构化后端=?, 结构化任务类型='full_fine_grained',
+                    结构化更新时间=?, 结构化Schema版本='aok.pdf_structured.v3'
+                   WHERE PDF路径=?""",
+                (result_dir, md_path, backend, now,
+                 cl_path, backend, now, pdf_path),
+            )
+            lit_affected = cur.rowcount
+
+            # 附件表
+            cur.execute(
+                """UPDATE 附件表 SET
+                    当前解析状态='success',
+                    当前解析后端=?,
+                    当前解析层级='full_fine_grained',
+                    当前解析路径=?,
+                    当前解析Markdown路径=?,
+                    当前解析更新时间=?
+                   WHERE uid_附件 IN (
+                       SELECT uid_附件 FROM 文献附件关联
+                       WHERE uid_文献 = (SELECT uid_文献 FROM 文献主表 WHERE PDF路径=?)
+                   )""",
+                (backend, result_dir, md_path, now, pdf_path),
+            )
+            attach_affected = cur.rowcount
+            logging.info(f"  DB updated: lit={lit_affected}, attach={attach_affected}")
+        else:
+            cur.execute(
+                "UPDATE 文献主表 SET 当前解析状态='failed', 当前解析更新时间=? WHERE PDF路径=?",
+                (now, pdf_path),
+            )
+
+        conn_c.commit()
+        conn_c.close()
+    except Exception as e:
+        logging.warning(f"content.db update failed: {e}")
+
+
+def _update_node_status(
+    content_db: Path | None,
+    node_code: str,
+    status: str,
+    *,
+    batch_uid: str = "",
+    summary: str = "",
+) -> None:
+    """更新 content.db 的工作区节点状态。"""
+    if not content_db or not content_db.exists():
+        return
+    now = _now_iso()
+    try:
+        conn = sqlite3.connect(str(content_db))
+        if status == "running":
+            conn.execute(
+                """UPDATE 工作区节点状态 SET 执行中=1, 已完成=0, 闸门状态='running',
+                   uid_当前任务=?, 最近执行时间=?, 更新时间=?
+                   WHERE 节点编码=?""",
+                (batch_uid, now, now, node_code),
+            )
+        else:
+            conn.execute(
+                """UPDATE 工作区节点状态 SET 执行中=0, 已完成=1, 闸门状态='passed',
+                   完成时间=?, 更新时间=?, 摘要=?
+                   WHERE 节点编码=?""",
+                (now, now, summary, node_code),
+            )
+        conn.commit()
+        conn.close()
+    except Exception:
+        pass
+
+
 def run_from_payload(raw_cfg: Mapping[str, Any]) -> dict[str, Any]:
     input_dir = Path(str(raw_cfg.get("input_dir") or "")).expanduser().resolve()
     output_dir = Path(str(raw_cfg.get("output_dir") or "")).expanduser().resolve()
@@ -295,6 +457,27 @@ def run_from_payload(raw_cfg: Mapping[str, Any]) -> dict[str, Any]:
     output_dir.mkdir(parents=True, exist_ok=True)
     runtime_root = _resolve_runtime_root(output_dir, str(raw_cfg.get("runtime_dir") or ""))
     runtime_root.mkdir(parents=True, exist_ok=True)
+
+    # ── DB 路径 ──
+    content_db_raw = str(raw_cfg.get("content_db") or "").strip()
+    content_db = Path(content_db_raw).expanduser().resolve() if content_db_raw else None
+    tasks_db_raw = str(raw_cfg.get("tasks_db") or "").strip()
+    tasks_db = Path(tasks_db_raw).expanduser().resolve() if tasks_db_raw else None
+    workspace_root = str(raw_cfg.get("workspace_root") or raw_cfg.get("workspace_root") or "")
+    node_code = str(raw_cfg.get("node_code") or "A070")
+    batch_uid = str(raw_cfg.get("batch_uid") or f"batch-{int(time.time())}")
+
+    # 检测后端
+    use_mlx = False
+    try:
+        from autodokit.tools.ocr.monkeyocr.device_detector import detect_mlx
+        use_mlx = detect_mlx()
+    except Exception:
+        pass
+    backend = "monkeyocr_mlx" if use_mlx else "monkeyocr_cuda"
+
+    # ── 加载已解析列表（DB 优先）──
+    already_parsed = _load_parsed_pdf_set(content_db, backend) if content_db else set()
 
     priority_csv_raw = str(raw_cfg.get("priority_csv") or "").strip()
     priority_csv = Path(priority_csv_raw).expanduser().resolve() if priority_csv_raw else None
@@ -314,13 +497,10 @@ def run_from_payload(raw_cfg: Mapping[str, Any]) -> dict[str, Any]:
     if launch_mode == "tmux" and not _normalize_bool(os.environ.get("AOK_MONKEYOCR_TMUX_CHILD"), default=False):
         tmux_result = _launch_tmux_job(dict(raw_cfg), runtime_root=runtime_root)
         tmux_result.setdefault("launch_mode", "tmux")
-        tmux_result.update(
-            {
-                "input_dir": str(input_dir),
-                "output_dir": str(output_dir),
-                "runtime_dir": str(runtime_root),
-            }
-        )
+        tmux_result.update({
+            "input_dir": str(input_dir), "output_dir": str(output_dir),
+            "runtime_dir": str(runtime_root),
+        })
         return tmux_result
 
     file_list: Path | None = None
@@ -328,51 +508,97 @@ def run_from_payload(raw_cfg: Mapping[str, Any]) -> dict[str, Any]:
         if priority_csv is None or not priority_csv.exists():
             raise FileNotFoundError(f"priority csv not found: {priority_csv}")
         file_list = _build_priority_file_list(
-            priority_csv,
-            runtime_root,
+            priority_csv, runtime_root,
             rank_column=str(raw_cfg.get("priority_rank_column") or "priority_rank"),
             pdf_path_column=str(raw_cfg.get("priority_pdf_column") or "pdf_path"),
         )
 
+    skip_existing = _normalize_bool(raw_cfg.get("skip_existing"), default=True)
+    max_retries = int(raw_cfg.get("max_retries") or 2)
+
+    # ── 标记节点启动 ──
+    _update_node_status(content_db, node_code, "running", batch_uid=batch_uid)
+
+    # ── 过滤已解析 ──
     logging.info("Running MonkeyOCR batch via autodokit.tools route")
-    result = run_monkeyocr_windows_batch_folder(
-        input_dir=input_dir,
-        output_dir=output_dir,
-        monkeyocr_root=monkey_root,
-        models_dir=models_dir,
-        config_path=config_path,
-        model_name=str(raw_cfg.get("model_name") or DEFAULT_MODEL_NAME),
-        device=str(raw_cfg.get("device") or "cuda"),
-        gpu_visible_devices=str(raw_cfg.get("gpu") or raw_cfg.get("gpu_visible_devices") or "0"),
-        ensure_runtime=_normalize_bool(raw_cfg.get("ensure_runtime"), default=False),
-        auto_install_triton_windows=_normalize_bool(raw_cfg.get("auto_install_triton_windows"), default=False),
-        download_source=str(raw_cfg.get("download_source") or "huggingface"),
-        pip_index_url=str(raw_cfg.get("pip_index_url") or "").strip() or None,
-        python_executable=_resolve_python_executable(str(raw_cfg.get("python_executable") or "")),
-        local_package_dirs=_normalize_local_package_dirs(raw_cfg.get("local_package_dirs")),
-        file_list=file_list,
-        runtime_dir=runtime_root,
-        stream_output=_normalize_bool(raw_cfg.get("stream_output"), default=False),
-        skip_existing=_normalize_bool(raw_cfg.get("skip_existing"), default=True),
-        max_retries=int(raw_cfg.get("max_retries") or 2),
+    logging.info(f"后端: {backend}, 已解析: {len(already_parsed)} 篇")
+
+    # ── 运行批量解析 ──
+    if use_mlx:
+        logging.info("检测到 Apple Silicon MLX，使用 MLX-VLM GPU 路线")
+        result = run_monkeyocr_mlx_batch_folder(
+            input_dir=input_dir, output_dir=output_dir,
+            monkeyocr_root=monkey_root, models_dir=models_dir,
+            config_path=config_path,
+            model_name=str(raw_cfg.get("model_name") or DEFAULT_MODEL_NAME),
+            ensure_runtime=_normalize_bool(raw_cfg.get("ensure_runtime"), default=False),
+            download_source=str(raw_cfg.get("download_source") or "huggingface"),
+            pip_index_url=str(raw_cfg.get("pip_index_url") or "").strip() or None,
+            python_executable=_resolve_python_executable(str(raw_cfg.get("python_executable") or "")),
+            file_list=file_list, runtime_dir=runtime_root,
+            stream_output=_normalize_bool(raw_cfg.get("stream_output"), default=False),
+            skip_existing=skip_existing, max_retries=max_retries,
+        )
+    else:
+        logging.info("使用 CUDA/CPU 路线（Windows 兼容）")
+        result = run_monkeyocr_windows_batch_folder(
+            input_dir=input_dir, output_dir=output_dir,
+            monkeyocr_root=monkey_root, models_dir=models_dir,
+            config_path=config_path,
+            model_name=str(raw_cfg.get("model_name") or DEFAULT_MODEL_NAME),
+            device=str(raw_cfg.get("device") or "cuda"),
+            gpu_visible_devices=str(raw_cfg.get("gpu") or raw_cfg.get("gpu_visible_devices") or "0"),
+            ensure_runtime=_normalize_bool(raw_cfg.get("ensure_runtime"), default=False),
+            auto_install_triton_windows=_normalize_bool(raw_cfg.get("auto_install_triton_windows"), default=False),
+            download_source=str(raw_cfg.get("download_source") or "huggingface"),
+            pip_index_url=str(raw_cfg.get("pip_index_url") or "").strip() or None,
+            python_executable=_resolve_python_executable(str(raw_cfg.get("python_executable") or "")),
+            local_package_dirs=_normalize_local_package_dirs(raw_cfg.get("local_package_dirs")),
+            file_list=file_list, runtime_dir=runtime_root,
+            stream_output=_normalize_bool(raw_cfg.get("stream_output"), default=False),
+            skip_existing=skip_existing, max_retries=max_retries,
+        )
+
+    # ── 更新 DB ──
+    per_pdf = result.get("per_pdf_results", [])
+    if per_pdf and content_db:
+        for entry in per_pdf:
+            pdf_stem = entry["pdf_stem"]
+            pdf_path = entry["pdf_path"]
+            rdir = entry.get("result", {}).get("output_dir") or str(output_dir / pdf_stem)
+            task_uid = f"task-{pdf_stem[:20]}-{int(time.time())}"
+            _update_db_after_parse(
+                content_db=content_db, tasks_db=tasks_db,
+                pdf_path=pdf_path, pdf_stem=pdf_stem,
+                result_dir=str(rdir), backend=backend,
+                success=(entry["status"] == "SUCCEEDED"),
+                timing=entry.get("result") or {},
+                task_uid=task_uid, batch_uid=batch_uid,
+                workspace_root=workspace_root, node_code=node_code,
+            )
+
+    # ── 标记节点完成 ──
+    succeeded = result.get("succeeded", 0)
+    failed = result.get("failed", 0)
+    total = result.get("total", 0)
+    _update_node_status(
+        content_db, node_code, "done",
+        batch_uid=batch_uid,
+        summary=f"MonkeyOCR批量完成: {succeeded}/{total}成功{f'/{failed}失败' if failed else ''}",
     )
 
+    # ── CSV 同步 ──
     if priority_csv is not None:
         result["status_sync"] = update_monkeyocr_batch_status_csv(priority_csv, output_dir, backup=True)
 
-    result.update(
-        {
-            "launch_mode": "foreground",
-            "input_dir": str(input_dir),
-            "output_dir": str(output_dir),
-            "runtime_dir": str(runtime_root),
-            "monkey_root": str(monkey_root),
-            "models_dir": str(models_dir),
-            "config_path": str(config_path),
-            "priority_csv": str(priority_csv) if priority_csv is not None else "",
-            "priority_file_list": str(file_list) if file_list is not None else "",
-        }
-    )
+    result.update({
+        "launch_mode": "foreground",
+        "input_dir": str(input_dir), "output_dir": str(output_dir),
+        "runtime_dir": str(runtime_root), "monkey_root": str(monkey_root),
+        "models_dir": str(models_dir), "config_path": str(config_path),
+        "backend": backend, "batch_uid": batch_uid,
+        "db_updated": bool(content_db and per_pdf),
+    })
     return result
 
 
@@ -407,6 +633,10 @@ def _build_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument("--stream-output", action="store_true")
     parser.add_argument("--no-skip-existing", action="store_true")
     parser.add_argument("--max-retries", type=int, default=2)
+    parser.add_argument("--content-db", type=Path, default=None)
+    parser.add_argument("--tasks-db", type=Path, default=None)
+    parser.add_argument("--workspace-root", default="")
+    parser.add_argument("--node-code", default="A070")
     return parser
 
 
@@ -444,6 +674,10 @@ def _cli_payload(args: argparse.Namespace) -> dict[str, Any]:
         "stream_output": bool(args.stream_output),
         "skip_existing": not bool(args.no_skip_existing),
         "max_retries": int(args.max_retries),
+        "content_db": str(args.content_db.expanduser().resolve()) if args.content_db else "",
+        "tasks_db": str(args.tasks_db.expanduser().resolve()) if args.tasks_db else "",
+        "workspace_root": args.workspace_root or "",
+        "node_code": args.node_code,
     }
 
 

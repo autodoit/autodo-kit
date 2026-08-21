@@ -28,10 +28,10 @@ from typing import Any, Dict, List, Optional
 
 import pandas as pd
 
-from autodokit.tools.llm_clients import AliyunDashScopeClient, load_aliyun_llm_config
+from autodokit.tools.atomic.llm import AliyunDashScopeClient, load_aliyun_llm_config
 from autodokit.tools import load_json_or_py
 from autodokit.tools.bibliodb import init_empty_table, insert_placeholder_from_reference
-from autodokit.tools.llm_clients import postprocess_aliyun_multimodal_parse_outputs
+from autodokit.tools.atomic.llm import postprocess_aliyun_multimodal_parse_outputs
 from autodokit.tools.contentdb_sqlite import infer_workspace_root_from_content_db, resolve_content_db_config
 from autodokit.tools.ocr.classic.pdf_parse_asset_manager import ensure_multimodal_parse_asset
 from autodokit.tools.ocr.classic.pdf_structured_data_tools import load_single_document_record
