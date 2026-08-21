@@ -99,7 +99,7 @@ def test_process_reference_citation_should_match_existing_record(monkeypatch, tm
         )
 
     def _fake_load_config(**kwargs):
-        from autodokit.tools.llm_clients import AliyunLLMConfig
+        from autodokit.tools.atomic.llm import AliyunLLMConfig
 
         return AliyunLLMConfig(
             api_key="fake",
@@ -196,7 +196,7 @@ def test_process_reference_citation_should_fallback_when_llm_returns_empty_field
         )
 
     def _fake_load_config(**kwargs):
-        from autodokit.tools.llm_clients import AliyunLLMConfig
+        from autodokit.tools.atomic.llm import AliyunLLMConfig
 
         return AliyunLLMConfig(
             api_key="fake",
@@ -260,7 +260,7 @@ def test_process_reference_citation_should_fallback_for_chinese_journal_referenc
         )
 
     def _fake_load_config(**kwargs):
-        from autodokit.tools.llm_clients import AliyunLLMConfig
+        from autodokit.tools.atomic.llm import AliyunLLMConfig
 
         return AliyunLLMConfig(
             api_key="fake",
@@ -365,7 +365,7 @@ def test_process_reference_citation_should_accept_integer_typed_history_columns(
         )
 
     def _fake_load_config(**kwargs):
-        from autodokit.tools.llm_clients import AliyunLLMConfig
+        from autodokit.tools.atomic.llm import AliyunLLMConfig
 
         return AliyunLLMConfig(
             api_key="fake",
