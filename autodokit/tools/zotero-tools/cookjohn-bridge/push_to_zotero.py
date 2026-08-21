@@ -7,7 +7,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from mcp_http_client import build_default_client
+from .mcp_http_client import build_default_client
 
 
 def write_tags(item_key: str, tags: list[str], action: str = "add") -> dict[str, Any]:

@@ -5,6 +5,7 @@
 ## 目录结构
 
 - `cookjohn-bridge/`: 对接 `third_party/zotero-mcp-cookjohn` 的基础程序（HTTP MCP）。
+  - `extract_tags.py`: 标签批量提取工具，通过 `autodokit.tools.extract_zotero_all_tags` 调用。
 - `54yyyu-bridge/`: 对接 `third_party/zotero-mcp-54yyyu` 的基础程序（MCP 服务探活 + HTTP 调用骨架）。
 
 ## 设计原则

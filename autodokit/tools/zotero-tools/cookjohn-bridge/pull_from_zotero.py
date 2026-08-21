@@ -7,7 +7,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from mcp_http_client import build_default_client
+from .mcp_http_client import build_default_client
 
 
 def pull_items(query: str, limit: int = 20) -> dict[str, Any]:
