@@ -1,4 +1,4 @@
-# support advice: autodo-kit -> academic-research-kit
+# support advice (out-down): autodo-kit -> academic-research-kit
 
 ## Context
 

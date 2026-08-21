@@ -1792,3 +1792,17 @@ output/logs/
 /sandbox
 
 
+
+# ===== 密钥与 API Key（autodo-suite 统一安全策略）=====
+*api_key*.txt
+*API-Key*
+*API-key*
+*API-Keys*
+*bailian*.txt
+*.secret
+.env
+.env.*
+
+# mailbox/relay — 运行时状态与归档（不入库）
+.mailbox/
+docs/mailbox/relay/archive/
