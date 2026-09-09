@@ -1060,7 +1060,107 @@ from autodokit.tools import run_monkeyocr_remote, stop_remote_monkeyocr_jobs, la
 
 ---
 
-### 2.21 通用辅助工具
+### 2.21 MinerU 文档解析工具
+
+MinerU 是与 MonkeyOCR 并列的完整文档解析工具后端，封装为 CLI 运行 + 结构化转换两层。
+
+#### CLI 运行: run_mineru_single_pdf
+
+```python
+from autodokit.tools import run_mineru_single_pdf
+
+def run_mineru_single_pdf(
+    pdf_path: str | Path,
+    output_dir: str | Path,
+    *,
+    backend: str = "hybrid-engine",
+    effort: str = "medium",
+    method: str = "auto",
+    lang: str = "ch",
+    formula: bool = True,
+    table: bool = True,
+    image_analysis: bool = True,
+    start_page: int | None = None,
+    end_page: int | None = None,
+    client_side_output: bool = True,
+    cli_path: str | Path | None = None,
+    timeout_seconds: int = 7200,
+    env: dict | None = None,
+) -> MineruRunResult
+```
+
+对单个 PDF 运行 MinerU 解析。返回 `MineruRunResult`（`command`、`returncode`、`output_dir`、`stdout_tail`、`stderr_tail`）。
+
+后端选择：
+- `pipeline`：传统版面+OCR 流水线，支持纯 CPU 与 Apple Silicon/MPS。
+- `hybrid-engine`（默认）：VLM + 小模型混合后端，`effort` 可选 `medium`/`high`。
+- `vlm-engine`：纯 VLM 后端。
+- `vlm-http-client` / `hybrid-http-client`：对接 OpenAI 兼容服务。
+
+#### CLI 探测: resolve_mineru_cli
+
+```python
+from autodokit.tools import resolve_mineru_cli
+
+def resolve_mineru_cli(explicit_path: str | Path | None = None) -> str
+```
+
+解析 mineru CLI 可执行文件路径。查找顺序：显式路径 → `MINERU_CLI_PATH` / `AUTODOKIT_MINERU_CLI` 环境变量 → `PATH`。未找到时抛出带安装提示的 `RuntimeError`。
+
+#### 产物发现: discover_mineru_output_files
+
+```python
+from autodokit.tools import discover_mineru_output_files
+
+def discover_mineru_output_files(output_dir: str | Path) -> list[dict]
+```
+
+发现 MinerU 输出目录中的产物文件，返回按名称排序的文件信息字典列表。
+
+#### 结构化转换: convert_pdf_to_structured_data_mineru / convert_pdf_to_structured_data_file_mineru
+
+```python
+from autodokit.tools import convert_pdf_to_structured_data_mineru, convert_pdf_to_structured_data_file_mineru
+
+def convert_pdf_to_structured_data_mineru(
+    pdf_path: Path,
+    *,
+    mineru: dict | None = None,
+    task_type: str = "full_fine_grained",
+    uid_literature: str = "",
+    cite_key: str = "",
+    source_metadata: dict | None = None,
+) -> PdfToStructuredDataResult
+
+def convert_pdf_to_structured_data_file_mineru(
+    pdf_path: Path,
+    output_path: Path,
+    *,
+    mineru: dict | None = None,
+    encoding: str = "utf-8",
+    task_type: str = "full_fine_grained",
+    uid_literature: str = "",
+    cite_key: str = "",
+    source_metadata: dict | None = None,
+) -> Path
+```
+
+把单个 PDF 转为统一 `aok.pdf_structured.v3` 结构化结果。`mineru` 配置字典透传给 runner，常用字段：`backend`、`effort`、`method`、`lang`、`formula`、`table`、`image_analysis`、`cli_path`、`timeout_seconds`。
+
+输出映射：
+- `text` / `title` / `list` / `index` → 全文（按阅读顺序拼接）
+- `table` → `tables`（HTML body + 标题/脚注）
+- `equation` / `equation_interline` → `formulas`（LaTeX）
+- `image` / `chart` → `images`
+- `header` / `footer` / `page_number` / `page_footnote` → `layout.aux`
+
+#### 事务接入
+
+在事务配置中设置 `structured_converter: "mineru"` 与 `structured_mineru` 配置块即可启用。已接入事务：`候选文献视图构建`（A110/A130）、`PDF文件转结构化数据文件`、`统一文献预处理解析`（配置预留）、`综述预处理`（配置预留）。
+
+---
+
+### 2.22 通用辅助工具
 
 | 函数 | 说明 |
 | --- | --- |

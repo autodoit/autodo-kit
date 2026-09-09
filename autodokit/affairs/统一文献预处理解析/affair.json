@@ -10,6 +10,15 @@
   "structured_generation_required": true,
   "strict_structured_only": true,
   "parse_model": "auto",
+  "structured_mineru": {
+    "backend": "hybrid-engine",
+    "effort": "medium",
+    "method": "auto",
+    "lang": "ch",
+    "formula": true,
+    "table": true,
+    "image_analysis": true
+  },
   "is_auto_git_commit": "是",
   "自动提交前是否询问人类": "是"
 }

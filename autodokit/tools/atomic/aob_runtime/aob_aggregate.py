@@ -8,6 +8,7 @@ from __future__ import annotations
 
 from .aob_common import *
 
+import re
 import shutil
 import tempfile
 import json
@@ -87,6 +88,13 @@ def 来源构建AOL(paths: 路径配置, *, source: 聚合来源) -> tuple[Any |
             title=f"{source.source_label} canonical AOL",
         )
     except Exception as exc:  # noqa: BLE001
+        message = str(exc)
+        # 空目录或结构无法识别：降级为 empty（不阻断同步），而非 error
+        if "未找到可转换内容" in message or "no convertible" in message.lower():
+            stats["status"] = "empty"
+            stats["empty_reason"] = message
+            warnings.append(f"来源 {source.source_label} 无可转换内容：{message}")
+            return None, stats, warnings
         stats["errors"].append(f"来源 AOL 转换失败：{exc}")
         return None, stats, warnings
     finally:
@@ -181,6 +189,13 @@ def 合并来源AOL(paths: 路径配置, *, aol_entries: list[tuple[聚合来源
     used_rules: set[str] = set()
     used_commands: set[str] = set()
 
+    # 跨引擎派生副本去重：同一真实 skill（sourceName 相同）只保留第一个来源。
+    # 各引擎目录（.gemini/.claude/.codex 等）是 copilot 的派生副本，发布时
+    # 中文名被 kebab 化（如 ao_Drawio图表生成_v1 -> ao-drawio-v1-2），若全部
+    # 聚合会膨胀 canonical 并产生畸形条目。copilot 在来源列表中排第一，
+    # 因此按 sourceName 去重后天然保留 copilot 的原始中文名。
+    skill_source_paths: dict[str, str] = {}
+
     for source, aol in aol_entries:
         for item in list(aol.instructions or []):
             text = str(item).strip()
@@ -207,6 +222,23 @@ def 合并来源AOL(paths: 路径配置, *, aol_entries: list[tuple[聚合来源
         for agent in list(aol.agents or []):
             payload = 代理对象转payload(agent)
             base = str(payload["id"]).strip() or "agent"
+            # 跨引擎派生副本去重：同一真实 agent 只保留第一个来源（copilot
+            # 优先）。agents 的 metadata 无 sourceName，但 display_zh 保留
+            # 中文显示名（真实身份）；无 display_zh 时退化为 id 去 vendor
+            # 后缀（如 mlms-claude -> mlms）。
+            agent_metadata = payload.get("metadata") or {}
+            agent_display_zh = str(agent_metadata.get("display_zh") or "").strip()
+            if agent_display_zh:
+                agent_source_key = f"zh:{agent_display_zh}"
+            else:
+                agent_source_key = f"id:{re.sub(r'-(claude|codex|copilot|cursor|gemini|lingma|qoder|qwen|opencode|zed)$', '', base)}"
+            existing_agent_source = skill_source_paths.get(agent_source_key)
+            if existing_agent_source is not None:
+                warnings.append(
+                    f"跳过跨引擎派生副本：{base}（agent 已由 {existing_agent_source} 收录）"
+                )
+                continue
+            skill_source_paths[agent_source_key] = base
             signature = json.dumps(payload, ensure_ascii=False, sort_keys=True)
             existing_sig = agent_signatures.get(base)
             if existing_sig == signature:
@@ -223,6 +255,47 @@ def 合并来源AOL(paths: 路径配置, *, aol_entries: list[tuple[聚合来源
         for skill in list(aol.skills or []):
             payload = 技能对象转payload(skill)
             base = str(payload["name"]).strip() or "skill"
+            # 畸形 skill 过滤：sourceName 与规范化 name 相同且为 kebab（如
+            # ar-a020-v1），说明原始中文名在反编译/发布链路中丢失，是旧同步
+            # bug 的污染产物；此类条目无法还原中文目录名，合并时应跳过，
+            # 避免再次被发布到各引擎目录造成冗余 kebab 目录。
+            #
+            # 判定信号：sourceEngine=unknown 或 sourcePath 指向中文目录。
+            # 注意 sourceEngine 在发布后会被重写为真实引擎（如 copilot），
+            # 单独依赖它会失效；sourcePath 保留原始目录名，含中文即说明
+            # 原始中文名已丢失，是更可靠的信号。独立英文 skill（arxiv/
+            # commit/pdf 等）的 sourceName 天然等于 name，但 sourcePath 指向
+            # 英文目录且 sourceEngine 为真实引擎，不会被误判。
+            metadata = payload.get("metadata") or {}
+            source_name = str(metadata.get("sourceName") or "").strip()
+            source_path = str(metadata.get("sourcePath") or "")
+            source_engine = str(metadata.get("sourceEngine") or "")
+            is_malformed = (
+                source_name == base
+                and re.fullmatch(r"[a-z0-9]+(-[a-z0-9]+)*", base)
+                and not re.search(r"[\u4e00-\u9fff]", base)
+                and (
+                    source_engine == "unknown"
+                    or re.search(r"[\u4e00-\u9fff]", source_path)
+                )
+            )
+            if is_malformed:
+                warnings.append(f"跳过畸形 skill（sourceName 丢失）：{base}")
+                continue
+            # 跨引擎派生副本去重：同一真实 skill（sourceName 相同）只保留
+            # 第一个来源（copilot 优先）。gemini/claude/codex 的 skill 是
+            # copilot 的派生副本，sourcePath 指向各自引擎目录（路径不同），
+            # 但 sourceName 保留原始中文名（真实身份）；若不去重，canonical
+            # 会膨胀并混入 kebab 化副本。
+            if source_name:
+                source_name_key = 规范路径(source_name).replace("\\", "/")
+                existing_source = skill_source_paths.get(source_name_key)
+                if existing_source is not None:
+                    warnings.append(
+                        f"跳过跨引擎派生副本：{base}（sourceName 已由 {existing_source} 收录）"
+                    )
+                    continue
+                skill_source_paths[source_name_key] = base
             signature = json.dumps(payload, ensure_ascii=False, sort_keys=True)
             existing_sig = skill_signatures.get(base)
             if existing_sig == signature:

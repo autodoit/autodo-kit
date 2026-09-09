@@ -501,10 +501,18 @@ _LAZY_TOOL_MODULES: tuple[str, ...] = (
     "autodokit.tools.ocr.monkeyocr.runner",
     "autodokit.tools.ocr.monkeyocr.device_detector",
     "autodokit.tools.ocr.monkeyocr.cpu_fallback_handler",
+    "autodokit.tools.ocr.mineru.mineru_runner",
+    "autodokit.tools.ocr.mineru.pdf_to_structure_data_converter_use_mineru",
+    "autodokit.tools.ocr.unlimited_ocr.unlimited_ocr_engine",
+    "autodokit.tools.ocr.unlimited_ocr.quality_gates",
+    "autodokit.tools.ocr.unlimited_ocr.equation_backfill",
+    "autodokit.tools.ocr.unlimited_ocr.table_repair",
+    "autodokit.tools.ocr.unlimited_ocr.runner",
     "autodokit.tools.workspace_path_migration",
     "autodokit.tools.tex_dag_tools",
     "autodokit.tools.math_delimiter_converter",
     "autodokit.tools.chat_session_index_tools",
+    "autodokit.tools.chat_session_index_tools_v2",
     "autodokit.tools.atomic.llm",
     "autodokit.tools.lmstudio_download_tools",
     "autodokit.tools.zotero-tools.cookjohn-bridge.extract_tags",
@@ -554,6 +562,22 @@ def lmstudio_download_models(*args: Any, **kwargs: Any) -> dict[str, Any]:
     return impl(*args, **kwargs)
 
 
+def convert_pdf_to_structured_data_mineru(*args: Any, **kwargs: Any) -> Any:
+    """延迟加载 MinerU PDF 转结构化数据工具，避免入口模块循环导入。"""
+
+    module = importlib.import_module("autodokit.tools.ocr.mineru.pdf_to_structure_data_converter_use_mineru")
+    impl = getattr(module, "convert_pdf_to_structured_data")
+    return impl(*args, **kwargs)
+
+
+def convert_pdf_to_structured_data_file_mineru(*args: Any, **kwargs: Any) -> Any:
+    """延迟加载 MinerU PDF 转结构化数据文件工具，避免入口模块循环导入。"""
+
+    module = importlib.import_module("autodokit.tools.ocr.mineru.pdf_to_structure_data_converter_use_mineru")
+    impl = getattr(module, "convert_pdf_to_structured_data_file")
+    return impl(*args, **kwargs)
+
+
 def lmstudio_download_from_list(*args: Any, **kwargs: Any) -> dict[str, Any]:
     """延迟加载 LM Studio 清单批量下载工具，避免入口模块循环导入。"""
 
@@ -581,6 +605,8 @@ def lmstudio_download_ensure_curl(*args: Any, **kwargs: Any) -> bool:
 _用户公开工具 = [
     "import_chat_session_markdown",
     "get_chat_pair_info",
+    "import_chat_session_markdown_v2",
+    "get_chat_pair_info_v2",
     "batch_read_pairs_by_llm",
     "repair_exported_chat_markdown",
     "mask_api_key",
@@ -1009,6 +1035,26 @@ _开发者工具 = [
     "run_monkeyocr_single_pdf",
     "run_monkeyocr_remote",
     "stop_remote_monkeyocr_jobs",
+    # ── MinerU 文档解析后端 ──
+    "resolve_mineru_cli",
+    "run_mineru_single_pdf",
+    "discover_mineru_output_files",
+    "convert_pdf_to_structured_data_mineru",
+    "convert_pdf_to_structured_data_file_mineru",
+    "resolve_unlimited_ocr_model_path",
+    "load_unlimited_ocr_model",
+    "ocr_image",
+    "parse_detections",
+    "match_by_normalized_y",
+    "normalize_source_y",
+    "normalize_det_y",
+    "clean_latex",
+    "is_degenerate",
+    "is_valid_latex",
+    "is_valid_table_html",
+    "fill_empty_equations",
+    "repair_invalid_tables",
+    "run_unlimited_ocr_postprocess",
     "detect_cuda",
     "detect_mlx",
     "detect_available_backends",

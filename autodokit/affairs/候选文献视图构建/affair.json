@@ -33,5 +33,14 @@
   "structured_generation_required": true,
   "structured_extractors": {
     "enable_images": false
+  },
+  "structured_mineru": {
+    "backend": "hybrid-engine",
+    "effort": "medium",
+    "method": "auto",
+    "lang": "ch",
+    "formula": true,
+    "table": true,
+    "image_analysis": true
   }
 }

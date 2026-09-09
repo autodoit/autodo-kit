@@ -150,6 +150,7 @@ class ChatSessionStore:
             "fork_at_pair_id": fork_at_pair_id or "",
             "inherit_rule": "snapshot",
             "children_session_ids": [],
+            "attachments": [],
         }
         if parent_session_id:
             sessions[parent_session_id]["children_session_ids"] = sorted(
@@ -213,7 +214,7 @@ class ChatSessionStore:
     def rebuild_indexes(self) -> dict[str, int]:
         self.initialize()
         backup_dir = self.index_dir / f"backup_{datetime.now():%Y%m%d%H%M%S}"
-        backup_dir.mkdir()
+        backup_dir.mkdir(parents=True, exist_ok=True)
         shutil.copy2(self.session_index_path, backup_dir / self.session_index_path.name)
         shutil.copy2(self.pair_index_path, backup_dir / self.pair_index_path.name)
         sessions: dict[str, Any] = {}
@@ -228,9 +229,97 @@ class ChatSessionStore:
             parent = session.get("parent_session_id")
             if parent in sessions:
                 sessions[parent]["children_session_ids"].append(session_id)
+        # 补回附件元信息：attachments/manifest.json 是附件独立真相源（数组格式），
+        # 不经过 _read_json（其要求 JSON 对象），直接解析并在 rebuild 后据此补回
+        manifest_path = self.root / "attachments" / "manifest.json"
+        if manifest_path.is_file():
+            try:
+                manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+            except (ValueError, json.JSONDecodeError, OSError):
+                manifest = []
+            for entry in manifest if isinstance(manifest, list) else []:
+                sid = entry.get("session_id")
+                if sid in sessions:
+                    sessions[sid].setdefault("attachments", []).append(entry)
         _write_json(self.session_index_path, sessions)
         _write_json(self.pair_index_path, pairs)
         return {"sessions": len(sessions), "pairs": len(pairs), "backup": str(backup_dir)}
+
+
+def is_qwen_json_array(text: str) -> bool:
+    """判断文本是否为千问导出的 JSON 消息数组（结构化原料）。
+
+    Args:
+        text: 会话原文。
+
+    Returns:
+        是 JSON 消息数组（``[{"user"|"assistant"|"role"+...}, ...]``）则 True。
+    """
+    stripped = text.lstrip("\ufeff \t\r\n")
+    if not stripped.startswith("["):
+        return False
+    try:
+        data = json.loads(text)
+    except json.JSONDecodeError:
+        return False
+    if not isinstance(data, list) or not data:
+        return False
+    for item in data:
+        if not isinstance(item, dict):
+            return False
+        if "role" in item and "content" in item:
+            continue
+        if "user" in item or "assistant" in item:
+            continue
+        return False
+    return True
+
+
+def messages_from_qwen_json(text: str) -> list[dict[str, str]]:
+    """把千问导出的 JSON 消息数组解析为统一消息列表（零文本往返）。
+
+    兼容两种结构：``{"role": ..., "content": ...}`` 与
+    ``{"user": ...}`` / ``{"assistant": ...}`` 交替数组。
+
+    Args:
+        text: JSON 数组原文。
+
+    Returns:
+        消息列表 ``[{"role": "user"|"assistant", "content": "..."}]``。
+    """
+    data = json.loads(text)
+    messages: list[dict[str, str]] = []
+    for item in data if isinstance(data, list) else []:
+        if not isinstance(item, dict):
+            continue
+        if "role" in item and "content" in item:
+            role = str(item["role"]).strip().lower()
+            if role in {"user", "assistant"}:
+                messages.append({"role": role, "content": str(item["content"])})
+        elif "user" in item:
+            messages.append({"role": "user", "content": str(item["user"])})
+        elif "assistant" in item:
+            messages.append({"role": "assistant", "content": str(item["assistant"])})
+    return messages
+
+
+def parse_messages_from_text(text: str) -> list[dict[str, str]]:
+    """把任意原料文本解析为统一消息列表（索引化的唯一中间语言）。
+
+    核心原则：JSON 结构化原料（千问导出）直接解析为消息列表，
+    不再经过 Markdown 文本往返；Markdown 类原料按 ``## 用户`` / ``## 助手``
+    标题切分。上游脚本（chat_pipeline 等）可在调用前自行做多供应商
+    角色归一化，再交给本函数解析。
+
+    Args:
+        text: 原料原文（JSON 数组或通用格式 Markdown）。
+
+    Returns:
+        消息列表；无法解析时返回空列表。
+    """
+    if is_qwen_json_array(text):
+        return messages_from_qwen_json(text)
+    return parse_markdown_conversation(text)
 
 
 def parse_markdown_conversation(markdown: str) -> list[dict[str, str]]:
@@ -317,7 +406,7 @@ def parse_indexed_session_markdown(markdown: str, fallback_session_id: str) -> d
             "md_path": f"session_storage/{sid}.md",
             "md_anchor": match.group("anchor"),
         }
-    session = {"session_id": sid, "title": title.group(1).strip() if title else sid, "created_at": _now(), "tags": parsed_tags, "md_path": f"session_storage/{sid}.md", "total_qa_pairs": len(pair_ids), "all_pair_ids": pair_ids, "latest_pair_id": pair_ids[-1] if pair_ids else None, "fork_type": "single" if parent else "none", "parent_session_id": parent.group(1).strip() if parent else "", "fork_at_pair_id": fork.group(1).strip() if fork else "", "inherit_rule": "snapshot", "children_session_ids": []}
+    session = {"session_id": sid, "title": title.group(1).strip() if title else sid, "created_at": _now(), "tags": parsed_tags, "md_path": f"session_storage/{sid}.md", "total_qa_pairs": len(pair_ids), "all_pair_ids": pair_ids, "latest_pair_id": pair_ids[-1] if pair_ids else None, "fork_type": "single" if parent else "none", "parent_session_id": parent.group(1).strip() if parent else "", "fork_at_pair_id": fork.group(1).strip() if fork else "", "inherit_rule": "snapshot", "children_session_ids": [], "attachments": []}
     return {"session_id": sid, "session": session, "pairs": entries}
 
 

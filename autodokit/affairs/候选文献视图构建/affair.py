@@ -37,6 +37,7 @@ from autodokit.tools.bibliodb_sqlite import replace_tags_for_namespace, save_str
 from autodokit.tools.contentdb_sqlite import derive_literature_parse_state, get_pdf_structured_variant_column, resolve_content_db_config, resolve_pdf_structured_variant_output_dir
 from autodokit.tools.ocr.classic.pdf_to_structured_data_converter_local_pipeline_v2 import convert_pdf_to_structured_data_file as convert_pdf_to_structured_data_file_local_v2
 from autodokit.tools.ocr.babeldoc.pdf_to_structure_data_converter_use_babeldoc import convert_pdf_to_structured_data_file as convert_pdf_to_structured_data_file_babeldoc
+from autodokit.tools.ocr.mineru.pdf_to_structure_data_converter_use_mineru import convert_pdf_to_structured_data_file as convert_pdf_to_structured_data_file_mineru
 from autodokit.tools.storage_backend import (
     load_knowledge_tables,
     load_reference_main_table,
@@ -99,6 +100,8 @@ DEFAULT_STRUCTURED_VARIANTS: Tuple[Tuple[str, str], ...] = (
     ("local_pipeline_v2", "full_fine_grained"),
     ("babeldoc", "reference_context"),
     ("babeldoc", "full_fine_grained"),
+    ("mineru", "reference_context"),
+    ("mineru", "full_fine_grained"),
 )
 
 MERGED_FOLLOWUP_AFFAIRS: Tuple[Tuple[str, str], ...] = (
@@ -522,6 +525,19 @@ def _ensure_structured_reference_lines(
                         pdf_file.resolve(),
                         structured_path,
                         babeldoc=structured_babeldoc,
+                        task_type=structured_task_type,
+                        uid_literature=_stringify(source_record.get("uid_literature")),
+                        cite_key=_stringify(source_record.get("cite_key")),
+                        source_metadata={
+                            "title": _stringify(source_record.get("title")),
+                            "year": _stringify(source_record.get("year")),
+                        },
+                    )
+                elif structured_converter == "mineru":
+                    convert_pdf_to_structured_data_file_mineru(
+                        pdf_file.resolve(),
+                        structured_path,
+                        mineru=structured_mineru,
                         task_type=structured_task_type,
                         uid_literature=_stringify(source_record.get("uid_literature")),
                         cite_key=_stringify(source_record.get("cite_key")),
@@ -1088,6 +1104,7 @@ def _prepare_review_assets(
     api_key_file: str = "",
     parse_model: str = "",
     structured_babeldoc: Dict[str, Any] | None = None,
+    structured_mineru: Dict[str, Any] | None = None,
     strict_structured_only: bool = False,
     enable_reference_line_repair: bool = True,
     reference_line_repair_model: str = "auto",
@@ -1221,6 +1238,7 @@ def _prepare_review_assets(
                 api_key_file=api_key_file,
                 parse_model=parse_model,
                 structured_babeldoc=structured_babeldoc,
+                structured_mineru=structured_mineru,
             )
         except Exception as exc:
             if strict_structured_only:
@@ -1591,6 +1609,7 @@ def execute(config_path: Path) -> List[Path]:
     structured_generation_required = bool(raw_cfg.get("structured_generation_required", True))
     structured_extractors = raw_cfg.get("structured_extractors") if isinstance(raw_cfg.get("structured_extractors"), dict) else None
     structured_babeldoc = raw_cfg.get("structured_babeldoc") if isinstance(raw_cfg.get("structured_babeldoc"), dict) else None
+    structured_mineru = raw_cfg.get("structured_mineru") if isinstance(raw_cfg.get("structured_mineru"), dict) else None
     logging_enabled = _resolve_logging_enabled(global_cfg)
     canonical_dirs = _build_note_dirs(workspace_root)
     canonical_dirs["views"].mkdir(parents=True, exist_ok=True)

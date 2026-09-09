@@ -152,6 +152,7 @@ class 撤销账本:
                 now_ts,
             ),
         )
+        conn.commit()
         self._change_count += 1
 
     def _推断目标标签(self, file_path: Path) -> str:
@@ -232,6 +233,7 @@ class 撤销账本:
             """,
             (post_hash, self.session_id, str(file_path)),
         )
+        conn.commit()
 
     def 完成(self, status: str = "completed") -> None:
         """标记会话完成。

@@ -6,8 +6,8 @@ import json
 import sqlite3
 from pathlib import Path
 
-from autodokit.tools.atomic.aob_runtime.library_tool import 同步_registry_sqlite
-from autodokit.tools.atomic.aob_runtime.library_tool import 路径配置
+from autodokit.tools.atomic.aob_runtime.aob_common import 路径配置
+from autodokit.tools.atomic.aob_runtime.aob_items import 同步_registry_sqlite
 
 
 def test_registry_sqlite_should_materialize_items_and_profiles(tmp_path: Path) -> None:

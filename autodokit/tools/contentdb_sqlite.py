@@ -592,6 +592,18 @@ PDF_STRUCTURED_VARIANT_SPECS: tuple[dict[str, str], ...] = (
         "column": "structured_path_babeldoc_full_fine_grained",
         "folder": "structured_babeldoc_full_fine_grained",
     },
+    {
+        "converter": "mineru",
+        "task_type": "reference_context",
+        "column": "structured_path_mineru_reference_context",
+        "folder": "structured_mineru_reference_context",
+    },
+    {
+        "converter": "mineru",
+        "task_type": "full_fine_grained",
+        "column": "structured_path_mineru_full_fine_grained",
+        "folder": "structured_mineru_full_fine_grained",
+    },
 )
 PDF_STRUCTURED_VARIANT_PATH_COLUMNS: dict[str, str] = {
     spec["column"]: "TEXT"

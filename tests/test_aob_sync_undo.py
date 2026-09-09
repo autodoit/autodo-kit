@@ -12,9 +12,8 @@ from pathlib import Path
 
 from autodokit.tools.atomic.aob_runtime.aob_sync_undo import (
     创建撤销账本,
-    列出撤销账本,
-    撤销同步,
-    解析账本文件,
+    执行撤销,
+    列出撤销会话,
 )
 
 
@@ -58,12 +57,12 @@ def test_undo_should_restore_create_overwrite_delete(tmp_path: Path) -> None:
     assert not deleted_file.exists()
 
     # 撤销。
-    result = 撤销同步(journal_file=ledger.账本文件, dry_run=False)
+    ledger.关闭()
+    result = 执行撤销(ledger.db_path, session_id=ledger.session_id, dry_run=False)
 
-    assert result["status"] == "ok"
-    assert result["removed_create"] == 1
-    assert result["restored_overwrite"] == 1
-    assert result["restored_delete"] == 1
+    assert result["status"] == "PASS"
+    assert result["deleted"] == 1
+    assert result["restored"] == 2
     assert not created_file.exists()
     assert overwritten_file.read_text(encoding="utf-8") == "OLD overwritten content"
     assert deleted_file.read_text(encoding="utf-8") == "OLD deleted content"
@@ -84,17 +83,16 @@ def test_undo_should_be_idempotent(tmp_path: Path) -> None:
     overwritten_file.write_text("NEW2", encoding="utf-8")
     ledger.标记同步后哈希(overwritten_file)
 
-    first = 撤销同步(journal_file=ledger.账本文件, dry_run=False)
-    assert first["status"] == "ok"
+    ledger.关闭()
+    first = 执行撤销(ledger.db_path, session_id=ledger.session_id, dry_run=False)
+    assert first["status"] == "PASS"
     assert not created_file.exists()
     assert overwritten_file.read_text(encoding="utf-8") == "OLD"
 
     # 第二次撤销应幂等：不再有破坏性动作。
-    second = 撤销同步(journal_file=ledger.账本文件, dry_run=False)
-    assert second["status"] == "ok"
-    assert second["removed_create"] == 0
-    assert second["restored_overwrite"] == 0
-    assert second["skipped_already_undone"] >= 2
+    second = 执行撤销(ledger.db_path, session_id=ledger.session_id, dry_run=False)
+    assert second["status"] == "PASS"
+    assert second["idempotent"] is True
     assert not created_file.exists()
     assert overwritten_file.read_text(encoding="utf-8") == "OLD"
 
@@ -112,10 +110,11 @@ def test_undo_should_not_clobber_user_modifications(tmp_path: Path) -> None:
     # 用户在同步之后又改了这个文件。
     created_file.write_text("USER edited after sync", encoding="utf-8")
 
-    result = 撤销同步(journal_file=ledger.账本文件, dry_run=False)
-    assert result["status"] == "ok"
-    assert result["removed_create"] == 0
-    assert result["skipped_user_modified"] == 1
+    ledger.关闭()
+    result = 执行撤销(ledger.db_path, session_id=ledger.session_id, dry_run=False)
+    assert result["status"] == "PASS"
+    assert result["deleted"] == 0
+    assert result["skipped"] == 1
     # 用户改动被保留。
     assert created_file.read_text(encoding="utf-8") == "USER edited after sync"
 
@@ -130,23 +129,20 @@ def test_undo_dry_run_should_not_touch_disk(tmp_path: Path) -> None:
     created_file.write_text("NEW", encoding="utf-8")
     ledger.标记同步后哈希(created_file)
 
-    result = 撤销同步(journal_file=ledger.账本文件, dry_run=True)
-    assert result["status"] == "ok"
-    assert result["removed_create"] == 1
+    ledger.关闭()
+    result = 执行撤销(ledger.db_path, session_id=ledger.session_id, dry_run=True)
+    assert result["status"] == "DRY_RUN"
+    assert result["deleted"] == 1
     # dry-run 不应真正删除文件。
     assert created_file.exists()
 
 
-def test_list_and_resolve_latest_ledger(tmp_path: Path) -> None:
+def test_list_sessions_should_return_created_ledger(tmp_path: Path) -> None:
     ledger = _build_ledger(tmp_path)
     ledger.记录将创建(tmp_path / "a.md")
+    ledger.关闭()
 
-    ledgers = 列出撤销账本(ledger.journal_root)
-    assert len(ledgers) == 1
-    assert ledgers[0]["run_id"] == ledger.run_id
-
-    resolved = 解析账本文件(journal_root=ledger.journal_root)
-    assert resolved == ledger.账本文件
-
-    resolved_by_id = 解析账本文件(journal_root=ledger.journal_root, run_id=ledger.run_id)
-    assert resolved_by_id == ledger.账本文件
+    sessions = 列出撤销会话(ledger.db_path)
+    assert len(sessions) == 1
+    assert sessions[0]["session_id"] == ledger.session_id
+    assert sessions[0]["status"] == "pending"

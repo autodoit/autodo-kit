@@ -33,6 +33,18 @@ try:
 except Exception:
     发布到单个目标并同步删除 = None
 
+# update 在撤销账本阶段需调用撤销账本模块
+try:
+    from .aob_sync_undo import 创建撤销账本
+except Exception:
+    创建撤销账本 = None
+
+# update 在 items sync 阶段需调用条目同步模块
+try:
+    from .aob_items import 同步_items
+except Exception:
+    同步_items = None
+
 
 def 收集用户级内容同步侧(
     paths: 路径配置,
@@ -148,89 +160,6 @@ def 收集用户级内容同步侧(
 
     return side_entries, side_observe_times, source_summaries, warnings, errors, title_fallback
 
-def 准备用户级内容同步沙盒(
-    paths: 路径配置,
-    *,
-    targets: list[发布目标],
-    home_dir: str = "",
-    sandbox_dir: str,
-) -> tuple[路径配置, list[发布目标], dict[str, Any]]:
-    """把当前 libs canonical 与目标目录复制到独立沙盒。"""
-
-    sandbox_root = 解析唯一沙盒根目录(home_dir=home_dir, sandbox_dir=sandbox_dir)
-    sandbox_paths = 构建沙盒路径配置(sandbox_root=sandbox_root)
-    复制用户级内容沙盒仓库基线(paths, sandbox_paths=sandbox_paths)
-
-    sandbox_targets: list[发布目标] = []
-    sandbox_target_summaries: list[dict[str, Any]] = []
-    path_mappings: list[dict[str, str]] = []
-    for target in targets:
-        if target.scope == "project":
-            # project 范围：复制整个项目根，并在沙盒里复刻项目根 -> carrier 根的层级。
-            container_root = target.target_path.parent
-            mirror_rel = 计算沙盒镜像相对路径(real_path=container_root, home_dir=home_dir)
-            sandbox_container_root = (sandbox_root / mirror_rel).resolve()
-            if container_root.exists():
-                复制到沙盒镜像(source=container_root, destination=sandbox_container_root)
-            sandbox_target_path = sandbox_container_root / target.target_path.name
-        else:
-            container_root = target.target_path
-            mirror_rel = 计算沙盒镜像相对路径(real_path=target.target_path, home_dir=home_dir)
-            sandbox_target_path = (sandbox_root / mirror_rel).resolve()
-            if target.target_path.exists():
-                复制到沙盒镜像(source=target.target_path, destination=sandbox_target_path)
-
-        sandbox_targets.append(
-            发布目标(
-                target_path=sandbox_target_path,
-                target_label=target.target_label,
-                layout=target.layout,
-                engine_vendor=target.engine_vendor,
-                ide_vendor=target.ide_vendor,
-                scope=target.scope,
-            )
-        )
-        sandbox_target_summaries.append(
-            {
-                "target_label": target.target_label,
-                "layout": target.layout,
-                "scope": target.scope,
-                "original_path": str(target.target_path),
-                "container_root": str(container_root),
-                "sandbox_path": str(sandbox_target_path),
-                "exists_in_source": bool(target.target_path.exists()),
-            }
-        )
-        path_mappings.append(
-            {
-                "role": "target",
-                "label": target.target_label,
-                "scope": target.scope,
-                "real_path": str(target.target_path),
-                "sandbox_path": str(sandbox_target_path),
-            }
-        )
-
-    # 落盘 path_mapping.json
-    mapping_payload = {
-        "sandbox_root": str(sandbox_root),
-        "home_dir": str(用户主目录(home_dir)),
-        "layout_mode": "mirror_real_paths",
-        "mappings": path_mappings,
-    }
-    mapping_path = sandbox_root / "path_mapping.json"
-    mapping_path.parent.mkdir(parents=True, exist_ok=True)
-    mapping_path.write_text(json.dumps(mapping_payload, ensure_ascii=False, indent=2), encoding="utf-8")
-
-    return sandbox_paths, sandbox_targets, {
-        "enabled": True,
-        "sandbox_root": str(sandbox_root),
-        "layout_mode": "mirror_real_paths",
-        "targets": sandbox_target_summaries,
-        "path_mappings": path_mappings,
-        "path_mapping_file": str(mapping_path),
-    }
-
 def 更新用户级内容(
     paths: 路径配置,
     *,
@@ -301,7 +230,11 @@ def 更新用户级内容(
             sandbox_dir="",
             enable_undo_journal=enable_undo_journal,
             undo_journal_dir=sandbox_journal_dir,
-            cleanup_unknown=True,
+            # 沙盒与正式同步保持一致：cleanup_unknown 沿用调用方传入值。
+            # 之前硬编码 True 导致沙盒"假干净"（删除畸形目录后看起来正常），
+            # 而正式同步默认 False 不删除，畸形目录被保留并累积，造成
+            # "沙盒通过、正式翻车"的错位。
+            cleanup_unknown=cleanup_unknown,
             resolved_targets_override=sandbox_targets,
         )
         sandbox_result["sandbox"] = sandbox_summary
@@ -512,6 +445,7 @@ def 更新用户级内容(
 
     if undo_journal is not None:
         summary["undo_journal"] = undo_journal.结果摘要()
+        undo_journal.关闭()
     else:
         summary["undo_journal"] = {
             "enabled": False,

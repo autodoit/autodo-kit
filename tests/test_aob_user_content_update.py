@@ -8,14 +8,18 @@ from pathlib import Path
 
 import pytest
 
-from autodokit.tools.atomic.aob_runtime.library_tool import AOL扁平化逻辑条目
-from autodokit.tools.atomic.aob_runtime.library_tool import 备份用户级内容
-from autodokit.tools.atomic.aob_runtime.library_tool import 计算一键更新决策
-from autodokit.tools.atomic.aob_runtime.library_tool import 发布目标
-from autodokit.tools.atomic.aob_runtime.library_tool import 解析发布目标
-from autodokit.tools.atomic.aob_runtime.library_tool import 准备用户级内容同步沙盒
-from autodokit.tools.atomic.aob_runtime.library_tool import 更新用户级内容
-from autodokit.tools.atomic.aob_runtime.library_tool import 路径配置
+from autodokit.tools.atomic.aob_runtime.aob_backup import 备份用户级内容
+from autodokit.tools.atomic.aob_runtime.aob_common import (
+    AOL扁平化逻辑条目,
+    发布目标,
+    路径配置,
+    计算一键更新决策,
+    解析发布目标,
+)
+from autodokit.tools.atomic.aob_runtime.aob_update import (
+    准备用户级内容同步沙盒,
+    更新用户级内容,
+)
 
 
 def _build_paths(repo_root: Path) -> 路径配置:
@@ -449,7 +453,7 @@ def test_update_should_record_undo_journal_and_be_reversible(
 ) -> None:
     """一次真实同步应产出撤销账本，且撤销脚本能精确、幂等地回滚发布结果。"""
 
-    from autodokit.tools.atomic.aob_runtime.aob_sync_undo import 撤销同步
+    from autodokit.tools.atomic.aob_runtime.aob_sync_undo import 执行撤销
 
     repo_root = tmp_path / "repo"
     paths = _build_paths(repo_root)
@@ -476,9 +480,10 @@ def test_update_should_record_undo_journal_and_be_reversible(
     # 同步应产出撤销账本。
     undo_summary = stats.get("undo_journal") or {}
     assert undo_summary.get("enabled") is True
-    journal_path = Path(str(undo_summary.get("journal_path")))
+    journal_path = Path(str(undo_summary.get("db_path")))
     assert journal_path.exists()
-    assert undo_summary.get("operation_count", 0) >= 1
+    assert undo_summary.get("total_changes", 0) >= 1
+    session_id = str(undo_summary.get("session_id") or "")
 
     # 同步应该在 .copilot 目标里产生了文件。
     published = list(target_root.rglob("*"))
@@ -486,8 +491,8 @@ def test_update_should_record_undo_journal_and_be_reversible(
     assert published_files, "同步未在目标目录产生任何文件"
 
     # 撤销应能精确回滚。
-    result = 撤销同步(journal_file=journal_path, dry_run=False)
-    assert result["status"] == "ok"
+    result = 执行撤销(journal_path, session_id=session_id, dry_run=False)
+    assert result["status"] == "PASS"
     assert result["errors"] == []
 
     # 撤销后，目标里这次同步新增的文件应被移除。
@@ -495,8 +500,6 @@ def test_update_should_record_undo_journal_and_be_reversible(
     assert not remaining_files, f"撤销后仍残留同步文件：{remaining_files}"
 
     # 撤销应幂等：再次执行不再有破坏性动作。
-    second = 撤销同步(journal_file=journal_path, dry_run=False)
-    assert second["status"] == "ok"
-    assert second["removed_create"] == 0
-    assert second["restored_overwrite"] == 0
-    assert second["restored_delete"] == 0
+    second = 执行撤销(journal_path, session_id=session_id, dry_run=False)
+    assert second["status"] == "PASS"
+    assert second["idempotent"] is True

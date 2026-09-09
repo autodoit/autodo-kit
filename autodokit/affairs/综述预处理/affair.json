@@ -11,6 +11,15 @@
   },
   "strict_structured_only": true,
   "api_key_file": "",
-  "parse_model": "auto"
+  "parse_model": "auto",
+  "structured_mineru": {
+    "backend": "hybrid-engine",
+    "effort": "medium",
+    "method": "auto",
+    "lang": "ch",
+    "formula": true,
+    "table": true,
+    "image_analysis": true
+  }
 }
 

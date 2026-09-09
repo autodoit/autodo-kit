@@ -26,6 +26,19 @@ def 发布到单个目标并同步删除(
 ) -> tuple[dict[str, Any], set[str]]:
     """发布到单个目标并同步删除过期托管文件。"""
 
+    # 发布前畸形校验：canonical 中若存在 sourceName 丢失的 kebab skill，
+    # 发布会生成畸形目录（如 a010-v5-2-2）。沙盒模拟不删除这些目录时
+    # 看起来正常，正式同步却会累积污染，造成"沙盒通过、正式翻车"。
+    # 因此发布前直接阻断，避免畸形条目进入任何引擎办公区。
+    malformed_skills = 校验AOL无畸形skill(aol)
+    if malformed_skills:
+        raise ValueError(
+            "发布前校验失败：canonical AOL 含畸形 skill（sourceName 丢失），"
+            f"共 {len(malformed_skills)} 个：{', '.join(sorted(malformed_skills)[:20])}"
+            + (" 等" if len(malformed_skills) > 20 else "")
+            + "。请先修复 canonical（重新聚合或清理污染条目）后再发布。"
+        )
+
     stats = 构建发布统计(target)
     target_engine = 归一化引擎供应商(engine_vendor=target.engine_vendor, ide_vendor=target.ide_vendor)
     if str(target.engine_vendor or "").strip().lower() not in 默认AOC支持引擎:

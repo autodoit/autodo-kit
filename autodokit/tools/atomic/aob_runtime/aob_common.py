@@ -102,6 +102,64 @@ except Exception:  # pragma: no cover
     ".log",
 }
 
+# 备份快照排除的运行时目录名（在 默认忽略目录名 基础上扩展）。
+# 备份目标是整目录快照，但引擎用户级目录常混入 tmp/cache/node_modules/模型权重
+# 等运行时产物；若不排除会把备份快照撑爆（曾出现单份 15-19G 的备份）。
+备份排除目录名 = 默认忽略目录名 | {
+    "tmp",
+    "temp",
+    ".tmp",
+    "cache",
+    "CachedData",
+    "CachedExtensionVSIXs",
+    ".git",
+    ".svn",
+    ".hg",
+    "venv",
+    ".venv",
+    "env",
+    "dist",
+    "build",
+    "out",
+    "model_weight",
+    "models",
+    "model",
+    "weights",
+    "extensions",  # IDE 扩展安装目录（含大量二进制，如 cursor 3.3G）
+    "extension",  # 单数形式（如 lingma）
+    "plugins",  # 插件安装目录
+    "sessions",  # 引擎运行时会话记录
+    "archived_sessions",
+    "logs",  # 运行时日志
+    "CoDependencies",
+    "vscode",  # IDE 运行时目录（如 lingma vscode 2.9G）
+    "index",  # 搜索引擎索引缓存
+    "bin",  # 二进制可执行文件目录
+    "pkg",  # 插件包/二进制目录（如 copilot pkg 399M）
+    "jb",  # JetBrains 插件运行时（如 copilot jb 95M）
+    "session-state",  # 会话状态缓存（如 copilot session-state 19M）
+    "session",  # 运行时会话目录
+}
+
+# 备份快照排除的运行时/大文件后缀（在 默认忽略文件后缀 基础上扩展）。
+备份排除文件后缀 = 默认忽略文件后缀 | {
+    ".sqlite",
+    ".sqlite-wal",
+    ".sqlite-shm",
+    ".db",
+    ".db-wal",
+    ".db-shm",
+    ".safetensors",
+    ".pdiparams",
+    ".pdmodel",
+    ".onnx",
+    ".pt",
+    ".pth",
+    ".gguf",
+    ".ckpt",
+    ".bin",
+}
+
 默认聚合内容目录名 = {
     "agents",
     "skills",
@@ -645,6 +703,101 @@ def 复制用户级内容沙盒仓库基线(paths: 路径配置, *, sandbox_path
             复制到备份快照(source=source_file, destination=destination_file)
 
 
+def 准备用户级内容同步沙盒(
+    paths: 路径配置,
+    *,
+    targets: list[发布目标],
+    home_dir: str = "",
+    sandbox_dir: str,
+) -> tuple[路径配置, list[发布目标], dict[str, Any]]:
+    """把当前 libs canonical 与目标目录复制到独立沙盒。
+
+    Args:
+        paths: 当前路径配置。
+        targets: 参与同步的发布目标列表。
+        home_dir: 可选用户主目录。
+        sandbox_dir: 沙盒根目录；不传则自动创建时间戳目录。
+
+    Returns:
+        tuple[路径配置, list[发布目标], dict[str, Any]]:
+            (沙盒路径配置, 沙盒目标列表, 沙盒摘要)。
+    """
+
+    sandbox_root = 解析唯一沙盒根目录(home_dir=home_dir, sandbox_dir=sandbox_dir)
+    sandbox_paths = 构建沙盒路径配置(sandbox_root=sandbox_root)
+    复制用户级内容沙盒仓库基线(paths, sandbox_paths=sandbox_paths)
+
+    sandbox_targets: list[发布目标] = []
+    sandbox_target_summaries: list[dict[str, Any]] = []
+    path_mappings: list[dict[str, str]] = []
+    for target in targets:
+        if target.scope == "project":
+            # project 范围：复制整个项目根，并在沙盒里复刻项目根 -> carrier 根的层级。
+            container_root = target.target_path.parent
+            mirror_rel = 计算沙盒镜像相对路径(real_path=container_root, home_dir=home_dir)
+            sandbox_container_root = (sandbox_root / mirror_rel).resolve()
+            if container_root.exists():
+                复制到沙盒镜像(source=container_root, destination=sandbox_container_root)
+            sandbox_target_path = sandbox_container_root / target.target_path.name
+        else:
+            container_root = target.target_path
+            mirror_rel = 计算沙盒镜像相对路径(real_path=target.target_path, home_dir=home_dir)
+            sandbox_target_path = (sandbox_root / mirror_rel).resolve()
+            if target.target_path.exists():
+                复制到沙盒镜像(source=target.target_path, destination=sandbox_target_path)
+
+        sandbox_targets.append(
+            发布目标(
+                target_path=sandbox_target_path,
+                target_label=target.target_label,
+                layout=target.layout,
+                engine_vendor=target.engine_vendor,
+                ide_vendor=target.ide_vendor,
+                scope=target.scope,
+            )
+        )
+        sandbox_target_summaries.append(
+            {
+                "target_label": target.target_label,
+                "layout": target.layout,
+                "scope": target.scope,
+                "original_path": str(target.target_path),
+                "container_root": str(container_root),
+                "sandbox_path": str(sandbox_target_path),
+                "exists_in_source": bool(target.target_path.exists()),
+            }
+        )
+        path_mappings.append(
+            {
+                "role": "target",
+                "label": target.target_label,
+                "scope": target.scope,
+                "real_path": str(target.target_path),
+                "sandbox_path": str(sandbox_target_path),
+            }
+        )
+
+    # 落盘 path_mapping.json
+    mapping_payload = {
+        "sandbox_root": str(sandbox_root),
+        "home_dir": str(用户主目录(home_dir)),
+        "layout_mode": "mirror_real_paths",
+        "mappings": path_mappings,
+    }
+    mapping_path = sandbox_root / "path_mapping.json"
+    mapping_path.parent.mkdir(parents=True, exist_ok=True)
+    mapping_path.write_text(json.dumps(mapping_payload, ensure_ascii=False, indent=2), encoding="utf-8")
+
+    return sandbox_paths, sandbox_targets, {
+        "enabled": True,
+        "sandbox_root": str(sandbox_root),
+        "layout_mode": "mirror_real_paths",
+        "targets": sandbox_target_summaries,
+        "path_mappings": path_mappings,
+        "path_mapping_file": str(mapping_path),
+    }
+
+
 def 规范来源标签(text: str) -> str:
     """把来源标签规范化为稳定目录名片段。"""
 
@@ -1130,6 +1283,22 @@ def 推断显式聚合来源(
             ide_vendor="cursor",
             scope=scope,
         )
+
+    # 显式传入用户级 structured_root 目录（如 ~/.claude、~/.copilot）时，
+    # 直接按 user 范围处理，不提升到项目根。
+    # 判断依据：目录名本身是用户级聚合根目录名（.claude/.copilot/.codex 等）。
+    # 用户显式指定该目录，意图就是把它当作用户级来源；只有通过 project_dirs
+    # 显式声明项目范围时才提升。
+    if lowered_name in 默认用户级聚合根目录:
+        return 聚合来源(
+            source_path=source_path,
+            source_label=构建范围标签(base_label=vendor, scope="user", path=source_path),
+            layout="structured_root",
+            engine_vendor=vendor or "copilot",
+            ide_vendor=vendor or "copilot",
+            scope="user",
+        )
+
     project_root = 推断项目根目录候选(source_path, home_dir=home_dir)
     effective_path = project_root if project_root is not None else source_path
     scope = "project" if project_root is not None else (explicit_scope or "user")
@@ -1171,6 +1340,19 @@ def 推断显式发布目标(
         effective_path = project_root if project_root is not None else target_path
         scope = "project" if project_root is not None else "user"
         return 发布目标(target_path=effective_path, target_label=构建范围标签(base_label=label, scope=scope, path=effective_path), layout="structured_root", engine_vendor="claude", ide_vendor="cursor", scope=scope)
+
+    # 显式传入用户级 structured_root 目录（如 ~/.claude、~/.copilot）时，
+    # 直接按 user 范围处理，不提升到项目根。
+    if lowered_name in 默认用户级聚合根目录:
+        return 发布目标(
+            target_path=target_path,
+            target_label=构建范围标签(base_label=label, scope="user", path=target_path),
+            layout="structured_root",
+            engine_vendor=label or "copilot",
+            ide_vendor=label or "copilot",
+            scope="user",
+        )
+
     project_root = 推断项目根目录候选(target_path, home_dir=home_dir)
     effective_path = project_root if project_root is not None else target_path
     scope = "project" if project_root is not None else (explicit_scope or "user")
@@ -1666,7 +1848,7 @@ def AOL运行时可用() -> bool:
 def 代理对象转payload(agent: Any) -> dict[str, Any]:
     """把 AOL 代理对象转换为可序列化结构。"""
 
-    return {
+    payload = {
         "id": str(agent.agent_id),
         "description": str(agent.description),
         "prompt": str(agent.prompt),
@@ -1680,6 +1862,13 @@ def 代理对象转payload(agent: Any) -> dict[str, Any]:
         },
         "engineOverrides": dict(agent.engine_overrides or {}),
     }
+    uid = str(getattr(agent, "uid", "") or "").strip()
+    if uid:
+        payload["uid"] = uid
+    metadata = dict(getattr(agent, "metadata", None) or {})
+    if metadata:
+        payload["metadata"] = metadata
+    return payload
 
 
 def 技能对象转payload(skill: Any) -> dict[str, Any]:
@@ -1742,6 +1931,48 @@ def AOL对象转payload(aol: Any) -> dict[str, Any]:
         "engine_native": dict(aol.engine_native or {}),
         "extra_assets": [载体对象转payload(asset) for asset in list(aol.extra_assets or [])],
     }
+
+
+# 畸形 skill 判定：name 为 kebab 且 sourceName 与 name 相同（原始中文名丢失）。
+# 这类条目是旧同步 bug 的污染产物，发布时无法还原中文目录名，会生成
+# `a010-v5-2-2` 之类的畸形目录。独立英文 skill（arxiv/commit/pdf 等）的
+# sourceName 天然等于 name，属于合法资产，需排除。
+_畸形skill_kebab = re.compile(r"^[a-z0-9]+(-[a-z0-9]+)*$")
+
+
+def 校验AOL无畸形skill(aol: Any) -> list[str]:
+    """校验 AOL 中是否含畸形 skill（sourceName 丢失的 kebab 条目）。
+
+    畸形判定：skill.name 为 kebab 且 metadata.sourceName == name，
+    且该 name 不是已知独立英文 skill（如 arxiv/commit/pdf 等官方资产）。
+
+    Args:
+        aol: AOL 对象。
+
+    Returns:
+        list[str]: 畸形 skill 名称列表；为空表示无畸形。
+    """
+
+    if aol is None:
+        return []
+    malformed: list[str] = []
+    for skill in list(aol.skills or []):
+        payload = 技能对象转payload(skill)
+        name = str(payload.get("name") or "").strip()
+        metadata = payload.get("metadata") or {}
+        source_name = str(metadata.get("sourceName") or "").strip()
+        if not _畸形skill_kebab.match(name):
+            continue
+        if source_name != name:
+            continue
+        # sourceName==name 的 kebab：独立英文 skill 合法，畸形 skill 需阻断。
+        # 独立英文 skill 的 sourcePath 指向英文目录且无 sourceEngine=unknown 标记；
+        # 畸形 skill 的 sourcePath 指向中文目录（原始名丢失）或 sourceEngine=unknown。
+        source_path = str(metadata.get("sourcePath") or "")
+        source_engine = str(metadata.get("sourceEngine") or "")
+        if source_engine == "unknown" or re.search(r"[\u4e00-\u9fff]", source_path):
+            malformed.append(name)
+    return malformed
 
 
 def payload转AOL对象(payload: dict[str, Any]) -> Any:
@@ -2495,32 +2726,51 @@ def 是否旧同步污染key(
             if num >= 2:
                 base_key = f"{prefix}::{base_id}"
                 if base_key in all_known_keys:
-                    # 内容验证：仅当内容与 base 相同时才过滤
+                    # 内容验证：仅当数字后缀条目与 base 的"业务内容"（剔除 id/name）
+                    # 相同时才过滤。若内容不同视为独立条目保留。
                     if all_entries is not None:
-                        dup_content = str(all_entries.get(logical_key, {}).get("content", ""))
-                        base_content = str(all_entries.get(base_key, {}).get("content", ""))
-                        if dup_content == base_content:
+                        dup_value = dict(all_entries.get(logical_key, {}).get("value") or {})
+                        base_value = dict(all_entries.get(base_key, {}).get("value") or {})
+                        dup_value.pop("id", None)
+                        dup_value.pop("name", None)
+                        base_value.pop("id", None)
+                        base_value.pop("name", None)
+                        if 计算稳定哈希(dup_value) == 计算稳定哈希(base_value):
                             return True
-                    else:
-                        return True
+                        return False
+                    return True
 
     return False
 
 
 def 过滤旧同步污染条目(
     side_entries: dict[str, dict[str, dict[str, Any]]],
-) -> tuple[dict[str, dict[str, dict[str, Any]]], dict[str, int]]:
-    """过滤所有侧中的旧同步污染条目。
+    *,
+    promote_orphan_variants: bool = True,
+) -> tuple[dict[str, dict[str, dict[str, Any]]], dict[str, Any]]:
+    """过滤所有侧中的旧同步污染条目，并按语义收敛 vendor 变体。
 
     污染类型：
-    - vendor 后缀：agent-xxx-claude（不应存在）
+    - vendor 后缀：agent-xxx-claude（旧同步把同一语义实体按引擎拆成多份）
     - 数字后缀重复：agent-xxx-2 / agent-xxx-3（旧同步冲突解决产物）
 
+    收敛策略（以"canonical 是语义真源，vendor 差异进编译规则"为原则）：
+    - vendor 变体：若 base（无后缀主版本）存在 → 删除变体；
+      若 base 缺失 → 提升变体为 base（保留唯一内容，避免丢失）。
+    - 数字后缀重复：与 base 业务内容（剔除 id/name）相同 → 删除；
+      内容不同 → 保留（视为独立实体）。
+
+    Args:
+        side_entries: 各侧扁平化逻辑条目。
+        promote_orphan_variants: 是否把 base 缺失的 vendor 变体提升为 base。
+
     Returns:
-        (cleaned_entries, filter_stats)
+        (cleaned_entries, filter_stats):
+            cleaned_entries 为过滤/收敛后的条目；
+            filter_stats 含 removed、promoted、per_side 统计。
     """
 
-    # 先收集所有已知 key 和 entries（用于检测数字后缀重复）
+    # 先收集所有已知 key 和 entries（用于检测数字后缀重复与 vendor base 缺失）
     all_keys: set[str] = set()
     all_entries_merged: dict[str, dict[str, Any]] = {}
     for entries in side_entries.values():
@@ -2529,23 +2779,71 @@ def 过滤旧同步污染条目(
             if k not in all_entries_merged:
                 all_entries_merged[k] = v
 
+    # 识别 base 缺失的 vendor 变体（orphan），需要提升为 base 保留内容
+    orphan_variant_keys: set[str] = set()
+    if promote_orphan_variants:
+        for key in all_keys:
+            if "::" not in key:
+                continue
+            prefix, key_id = key.split("::", 1)
+            for suffix in _旧同步污染后缀:
+                if key_id.endswith(suffix):
+                    base_id = key_id[: -len(suffix)]
+                    base_key = f"{prefix}::{base_id}"
+                    if base_key not in all_keys:
+                        orphan_variant_keys.add(key)
+                    break
+
     cleaned_entries: dict[str, dict[str, dict[str, Any]]] = {}
     total_removed = 0
+    total_promoted = 0
     per_side: dict[str, int] = {}
+    per_side_promoted: dict[str, int] = {}
+
     for side_id, entries in side_entries.items():
         cleaned: dict[str, dict[str, Any]] = {}
         removed = 0
+        promoted = 0
         for key, entry in entries.items():
             if 是否旧同步污染key(key, all_known_keys=all_keys, all_entries=all_entries_merged):
-                removed += 1
+                if key in orphan_variant_keys:
+                    # 提升为 base：修改 key 与 entry 的 identity / value.id 或 value.name
+                    prefix, key_id = key.split("::", 1)
+                    base_id = key_id
+                    for suffix in _旧同步污染后缀:
+                        if key_id.endswith(suffix):
+                            base_id = key_id[: -len(suffix)]
+                            break
+                    base_key = f"{prefix}::{base_id}"
+                    promoted_entry = dict(entry)
+                    promoted_entry["logical_key"] = base_key
+                    promoted_entry["identity"] = base_id
+                    promoted_value = dict(entry.get("value") or {})
+                    if "id" in promoted_value:
+                        promoted_value["id"] = base_id
+                    if "name" in promoted_value:
+                        promoted_value["name"] = base_id
+                    promoted_entry["value"] = promoted_value
+                    cleaned[base_key] = promoted_entry
+                    promoted += 1
+                else:
+                    removed += 1
             else:
                 cleaned[key] = entry
         cleaned_entries[side_id] = cleaned
         if removed > 0:
             per_side[side_id] = removed
+        if promoted > 0:
+            per_side_promoted[side_id] = promoted
         total_removed += removed
+        total_promoted += promoted
 
-    return cleaned_entries, {"removed": total_removed, "per_side": per_side}
+    return cleaned_entries, {
+        "removed": total_removed,
+        "promoted": total_promoted,
+        "per_side": per_side,
+        "per_side_promoted": per_side_promoted,
+    }
 
 
 def 计算一键更新决策(
@@ -2724,6 +3022,27 @@ def 收集提示词目标托管文件(compile_workspace_root: Path) -> set[str]:
     return {item for item in managed_files if item}
 
 
+def 是否提示词发布文件(file_path: Path, *, content_type: str) -> bool:
+    """判断文件是否适合发布到 prompts 根目录。
+
+    Args:
+        file_path: 待判断文件。
+        content_type: 内容类型（prompts/instructions）。
+
+    Returns:
+        bool: 适合发布返回 True。
+    """
+
+    if not file_path.is_file():
+        return False
+    lowered = file_path.name.lower()
+    if content_type == "prompts":
+        return lowered.endswith(".prompt.md")
+    if content_type == "instructions":
+        return lowered.endswith(".instructions.md")
+    return False
+
+
 def 清理空目录到根(*, start_dir: Path, root_dir: Path) -> None:
     """从 start_dir 向上清理空目录，直到 root_dir。"""
 
@@ -2767,6 +3086,23 @@ _托管目录扫描模式: dict[str, list[str]] = {
 }
 
 
+# 清理未跟踪文件时跳过的人工/归档/备份文件名模式
+_清理跳过目录名 = {"_archive", "archive", "backups", "backup", ".git", ".idea"}
+_清理跳过文件名模式 = (".bak", ".bak2", ".old", ".orig", ".sync.ffs_db", ".DS_Store")
+
+
+def _应跳过未跟踪清理(file_path: Path) -> bool:
+    """判断文件是否应跳过未跟踪清理（归档/备份/同步状态等人工保留文件）。"""
+
+    name = file_path.name
+    for part in file_path.parts:
+        if part in _清理跳过目录名:
+            return True
+    if name in _清理跳过文件名模式 or any(name.endswith(suffix) for suffix in _清理跳过文件名模式):
+        return True
+    return False
+
+
 def 清理目标未跟踪文件(
     *,
     target: 发布目标,
@@ -2778,7 +3114,9 @@ def 清理目标未跟踪文件(
     """清理目标目录中不在 managed_files 中的未跟踪文件。
 
     仅扫描已知的托管目录（agents/, skills/, rules/ 等），
-    删除不在编译输出中的残留文件。
+    删除不在编译输出中的残留文件。归档目录（_archive/backups）、
+    备份文件（*.bak*）与同步状态文件（.sync.ffs_db）跳过不删，
+    避免误删用户人工保留的历史版本。
 
     Returns:
         删除的文件数。
@@ -2795,6 +3133,8 @@ def 清理目标未跟踪文件(
             continue
         for file_path in sorted(subdir.rglob("*")):
             if not file_path.is_file():
+                continue
+            if _应跳过未跟踪清理(file_path):
                 continue
             rel = 规范路径(str(file_path.relative_to(target_root)))
             if rel in managed_files:
@@ -2837,24 +3177,114 @@ def 构造备份快照目录(*, backup_root: Path, prefix: str = "aob-user-conte
     return candidate
 
 
+def _路径被备份排除(path: Path) -> bool:
+    """判断路径是否命中备份排除规则（目录名/文件名/后缀）。
+
+    Args:
+        path: 待判断路径。
+
+    Returns:
+        bool: 命中排除规则返回 True。
+    """
+
+    if path.name in 默认忽略文件名:
+        return True
+    if any(path.name.endswith(suffix) for suffix in 备份排除文件后缀):
+        return True
+    for part in path.parts:
+        if part in 备份排除目录名:
+            return True
+    try:
+        if path.is_socket() or path.is_fifo():
+            return True
+    except OSError:
+        return True
+    return False
+
+
+def _备份忽略回调(adir: str, names: list[str]) -> set[str]:
+    """copytree 备份忽略回调：排除运行时垃圾目录与文件。
+
+    Args:
+        adir: 当前目录名。
+        names: 当前目录下的名字列表。
+
+    Returns:
+        set[str]: 需要忽略的名字集合。
+    """
+
+    ignored: set[str] = set()
+    for name in names:
+        if name in 备份排除目录名 or name in 默认忽略文件名:
+            ignored.add(name)
+            continue
+        if any(name.endswith(suffix) for suffix in 备份排除文件后缀):
+            ignored.add(name)
+            continue
+        p = Path(adir) / name
+        try:
+            if p.is_socket() or p.is_fifo():
+                ignored.add(name)
+        except OSError:
+            ignored.add(name)
+    return ignored
+
+
 def 统计文件数量(path: Path) -> int:
-    """统计路径内文件数量。"""
+    """统计路径内文件数量（按备份排除规则过滤运行时垃圾）。"""
 
     if not path.exists():
         return 0
     if path.is_file():
         return 1
-    return sum(1 for item in path.rglob("*") if item.is_file())
+    return sum(1 for item in path.rglob("*") if item.is_file() and not _路径被备份排除(item))
 
 
 def 复制到备份快照(*, source: Path, destination: Path) -> None:
-    """复制来源到备份快照。"""
+    """复制来源到备份快照。
+
+    目录复制时排除运行时垃圾（tmp/cache/node_modules/sqlite/模型权重等），
+    避免备份快照被引擎运行时产物撑爆磁盘。
+    """
 
     destination.parent.mkdir(parents=True, exist_ok=True)
     if source.is_file():
         shutil.copy2(source, destination)
         return
-    shutil.copytree(source, destination)
+    shutil.copytree(source, destination, ignore=_备份忽略回调)
+
+
+def 复制文件到临时办公区(*, source_file: Path, target_file: Path) -> None:
+    """把单个文件复制到临时办公区目录。
+
+    用于把 prompt_root / single_file 来源的文件复制到
+    临时工作区结构中，供 AOC ingest 读取。
+
+    Args:
+        source_file: 来源文件。
+        target_file: 目标文件路径。
+    """
+
+    target_file.parent.mkdir(parents=True, exist_ok=True)
+    shutil.copy2(source_file, target_file)
+
+
+def 文件内容一致(source_file: Path, target_file: Path) -> bool:
+    """判断两个文件内容是否一致。
+
+    Args:
+        source_file: 来源文件。
+        target_file: 目标文件。
+
+    Returns:
+        bool: 内容一致返回 True。
+    """
+
+    if not source_file.exists() or not target_file.exists():
+        return False
+    if source_file.is_dir() or target_file.is_dir():
+        return False
+    return filecmp.cmp(str(source_file), str(target_file), shallow=False)
 
 
 def 复制到沙盒镜像(*, source: Path, destination: Path) -> None:
@@ -2872,16 +3302,6 @@ def 复制到沙盒镜像(*, source: Path, destination: Path) -> None:
     if source.is_file():
         shutil.copy2(source, destination)
         return
-    # copytree with dirs_exist_ok, ignoring socket/pipe files
-    import stat as _stat
-    def _ignore_unreadable(adir: str, names: list[str]) -> set[str]:
-        ignored: set[str] = set()
-        for name in names:
-            p = Path(adir) / name
-            try:
-                if p.is_socket() or p.is_fifo():
-                    ignored.add(name)
-            except OSError:
-                ignored.add(name)
-        return ignored
-    shutil.copytree(source, destination, dirs_exist_ok=True, ignore=_ignore_unreadable)
+    # copytree with dirs_exist_ok，忽略运行时垃圾目录/文件（含 socket/pipe），
+    # 避免沙盒镜像把引擎运行时产物（tmp/node_modules/模型权重等）复制进来撑爆磁盘。
+    shutil.copytree(source, destination, dirs_exist_ok=True, ignore=_备份忽略回调)

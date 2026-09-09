@@ -146,6 +146,8 @@ LEGACY_TO_CHINESE_KEY_MAP: dict[str, str] = {
     "parse_model": "解析模型",
     "structured_converter": "结构化转换器",
     "structured_task_type": "结构化任务类型",
+    "structured_mineru": "MinerU结构化配置",
+    "structured_babeldoc": "BabelDOC结构化配置",
     "run_mode": "运行模式",
     "origin_bib_paths": "原始题录路径列表",
     "origin_attachments_root": "原始附件根目录",

@@ -36,6 +36,9 @@ from autodokit.tools.ocr.classic.pdf_to_structured_data_converter_local_pipeline
 from autodokit.tools.ocr.babeldoc.pdf_to_structure_data_converter_use_babeldoc import (
     convert_pdf_to_structured_data_file as convert_pdf_to_structured_data_file_babeldoc,
 )
+from autodokit.tools.ocr.mineru.pdf_to_structure_data_converter_use_mineru import (
+    convert_pdf_to_structured_data_file as convert_pdf_to_structured_data_file_mineru,
+)
 from autodokit.tools.ocr.classic.pdf_structured_data_tools import load_structured_data
 
 
@@ -46,8 +49,9 @@ class PdfDirToStructuredDataConfig:
     Attributes:
         input_pdf_dir: 输入 PDF 文件夹（仅扫描本层，不递归）。
         output_structured_dir: 输出结构化数据文件夹；为空时，若提供 `content_db`，将按四组合契约自动路由。
-        converter: 转换器类型。当前支持 `local_pipeline_v2` 与历史兼容 `babeldoc`。
+        converter: 转换器类型。当前支持 `local_pipeline_v2`、`babeldoc` 与 `mineru`。
         babeldoc: BabelDOC 的配置字典（透传给工具层）。
+        mineru: MinerU 的配置字典（透传给工具层）。
         extractors: 抽取器开关（本地流水线）
         overwrite: 是否覆盖已存在的结构化文件。
         output_log: 可选，过程日志输出路径（若提供则边打印边写文件）。
@@ -57,6 +61,7 @@ class PdfDirToStructuredDataConfig:
     output_structured_dir: str  # 输出结构化数据文件夹（绝对路径，可留空并按四组合契约自动推导）
     converter: str = "local_pipeline_v2"  # 转换器类型
     babeldoc: Dict[str, Any] | None = None  # BabelDOC 配置（历史兼容）
+    mineru: Dict[str, Any] | None = None  # MinerU 配置
     extractors: Dict[str, Any] | None = None  # 抽取器开关（本地流水线）
     overwrite: bool = False  # 是否覆盖已存在文件
     output_log: str | None = None  # 过程日志输出文件（绝对路径）
@@ -163,6 +168,7 @@ def execute(config_path: Path) -> List[Path]:
         output_structured_dir=str(affair_cfg.get("output_structured_dir") or ""),
         converter=str(affair_cfg.get("converter") or "local_pipeline_v2"),
         babeldoc=affair_cfg.get("babeldoc") if isinstance(affair_cfg.get("babeldoc"), dict) else None,
+        mineru=affair_cfg.get("mineru") if isinstance(affair_cfg.get("mineru"), dict) else None,
         extractors=affair_cfg.get("extractors") if isinstance(affair_cfg.get("extractors"), dict) else None,
         overwrite=bool(affair_cfg.get("overwrite", False)),
         output_log=str(affair_cfg.get("output_log") or "").strip() or None,
@@ -211,9 +217,9 @@ def execute(config_path: Path) -> List[Path]:
                 f.write(line.rstrip("\n") + "\n")
 
     converter = str(cfg.converter or "local_pipeline_v2").strip().lower()
-    if converter not in {"local_pipeline_v2", "babeldoc"}:
+    if converter not in {"local_pipeline_v2", "babeldoc", "mineru"}:
         raise ValueError(
-            f"不支持的 converter：{cfg.converter!r}（当前支持 'local_pipeline_v2' 与历史兼容 'babeldoc'）"
+            f"不支持的 converter：{cfg.converter!r}（当前支持 'local_pipeline_v2'、'babeldoc' 与 'mineru'）"
         )
 
     pdf_files = sorted([p for p in input_dir.iterdir() if p.is_file() and p.suffix.lower() == ".pdf"])
@@ -259,6 +265,19 @@ def execute(config_path: Path) -> List[Path]:
                     pdf_path.resolve(),
                     out_json,
                     extractors=cfg.extractors,
+                    task_type=cfg.task_type,
+                    uid_literature=str(metadata.get("uid_literature") or ""),
+                    cite_key=str(metadata.get("cite_key") or ""),
+                    source_metadata={
+                        "title": str(metadata.get("title") or ""),
+                        "year": str(metadata.get("year") or ""),
+                    },
+                )
+            elif converter == "mineru":
+                output_path = convert_pdf_to_structured_data_file_mineru(
+                    pdf_path.resolve(),
+                    out_json,
+                    mineru=cfg.mineru,
                     task_type=cfg.task_type,
                     uid_literature=str(metadata.get("uid_literature") or ""),
                     cite_key=str(metadata.get("cite_key") or ""),

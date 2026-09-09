@@ -345,6 +345,8 @@ class 代理定义:
         color: 代理颜色（优先使用 `#RRGGBB`）。
         tools_policy: 工具策略。
         engine_overrides: 引擎级覆盖配置。
+        uid: 原始 frontmatter 的 uid（跨引擎保留）。
+        metadata: 原始 frontmatter 的 metadata（display_zh/aliases_zh 等）。
     """
 
     agent_id: str
@@ -355,6 +357,8 @@ class 代理定义:
     color: str | None = None
     tools_policy: 工具策略 = field(default_factory=工具策略)
     engine_overrides: dict[str, dict[str, Any]] = field(default_factory=dict)
+    uid: str = ""
+    metadata: dict[str, str] = field(default_factory=dict)
 
 
 @dataclass(frozen=True)
@@ -557,6 +561,8 @@ def 读取_代理列表(raw: Any) -> list[代理定义]:
                 color=color,
                 tools_policy=读取_工具策略(item.get("toolsPolicy")),
                 engine_overrides=engine_overrides,
+                uid=str(item.get("uid") or "").strip(),
+                metadata=dict(item.get("metadata") or {}),
             )
         )
     return result
@@ -1685,6 +1691,14 @@ def 模板代理转aol(*, file_path: Path) -> dict[str, Any] | None:
             }
         },
     }
+    # 保留原始 frontmatter 的 uid 与 metadata（display_zh/aliases_zh 等），
+    # 避免中文索引（aob_zh_index）与跨引擎元数据在反编译/发布链路中丢失。
+    uid = str(frontmatter.get("uid") or "").strip()
+    if uid:
+        payload["uid"] = uid
+    raw_metadata = frontmatter.get("metadata")
+    if isinstance(raw_metadata, dict) and raw_metadata:
+        payload["metadata"] = dict(raw_metadata)
     model = str(frontmatter.get("model") or "").strip()
     if model:
         payload["model"] = model
@@ -1719,6 +1733,13 @@ def 模板技能转aol(*, file_path: Path) -> dict[str, Any] | None:
         "sourcePath": str(file_path).replace("\\", "/"),
         "sourceName": raw_name,
     }
+    # 保留原始 frontmatter 的 metadata（display_zh/aliases_zh 等），
+    # 避免中文索引（aob_zh_index）在反编译/发布链路中丢失。
+    raw_metadata = frontmatter.get("metadata")
+    if isinstance(raw_metadata, dict) and raw_metadata:
+        for key, value in raw_metadata.items():
+            if key not in metadata:
+                metadata[key] = value
     return {
         "name": skill_name,
         "description": description,
@@ -2108,6 +2129,9 @@ def 渲染_opencode_agent(agent: 代理定义) -> str:
     """
 
     lines = ["---"]
+    uid = str(getattr(agent, "uid", "") or "").strip()
+    if uid:
+        lines.extend(渲染_yaml键值("uid", uid))
     lines.extend(渲染_yaml键值("description", agent.description))
     lines.extend(渲染_yaml键值("mode", "subagent" if agent.kind == "primary" else agent.kind))
     if agent.model:
@@ -2115,6 +2139,12 @@ def 渲染_opencode_agent(agent: 代理定义) -> str:
     normalized_color = 规范化颜色值(agent.color)
     if normalized_color:
         lines.extend(渲染_yaml键值("color", normalized_color))
+    metadata = dict(getattr(agent, "metadata", None) or {})
+    if metadata:
+        lines.append("metadata:")
+        for key, value in sorted(metadata.items()):
+            escaped = str(value).replace('"', '\\"')
+            lines.append(f'  {key}: "{escaped}"')
 
     if agent.tools_policy.tools:
         lines.append("tools:")
@@ -2139,10 +2169,19 @@ def 渲染_claude_agent(agent: 代理定义) -> str:
     """
 
     lines = ["---"]
+    uid = str(getattr(agent, "uid", "") or "").strip()
+    if uid:
+        lines.extend(渲染_yaml键值("uid", uid))
     lines.extend(渲染_yaml键值("name", agent.agent_id))
     lines.extend(渲染_yaml键值("description", agent.description))
     if agent.model:
         lines.extend(渲染_yaml键值("model", agent.model))
+    metadata = dict(getattr(agent, "metadata", None) or {})
+    if metadata:
+        lines.append("metadata:")
+        for key, value in sorted(metadata.items()):
+            escaped = str(value).replace('"', '\\"')
+            lines.append(f'  {key}: "{escaped}"')
 
     enabled_tools = [tool_name for tool_name, enabled in sorted(agent.tools_policy.tools.items()) if enabled]
     if enabled_tools:
@@ -2166,9 +2205,18 @@ def 渲染_copilot_agent(agent: 代理定义) -> str:
     """
 
     lines = ["---"]
+    uid = str(getattr(agent, "uid", "") or "").strip()
+    if uid:
+        lines.extend(渲染_yaml键值("uid", uid))
     lines.extend(渲染_yaml键值("description", agent.description))
     if agent.model:
         lines.extend(渲染_yaml键值("model", agent.model))
+    metadata = dict(getattr(agent, "metadata", None) or {})
+    if metadata:
+        lines.append("metadata:")
+        for key, value in sorted(metadata.items()):
+            escaped = str(value).replace('"', '\\"')
+            lines.append(f'  {key}: "{escaped}"')
 
     enabled_tools = [tool_name for tool_name, enabled in sorted(agent.tools_policy.tools.items()) if enabled]
     if enabled_tools:

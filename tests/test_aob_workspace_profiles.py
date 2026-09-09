@@ -10,7 +10,7 @@ from autodokit.tools.atomic.aob_runtime.workspace_profile_registry import 解析
 def test_profile_registry_should_resolve_cursor_claude_win11_from_repo_db() -> None:
     """应能从仓库数据库中解析 Cursor + Claude + Win11 profile。"""
 
-    repo_root = Path(__file__).resolve().parents[2].parent / "autodo-lib"
+    repo_root = Path(__file__).resolve().parents[1].parent / "autodo-lib"
 
     profile = 解析工作区目标配置(
         engine_vendor="claude",
@@ -28,7 +28,7 @@ def test_profile_registry_should_resolve_cursor_claude_win11_from_repo_db() -> N
 def test_profile_registry_should_resolve_default_vscode_copilot_profile() -> None:
     """未显式传 IDE 时，应回退到引擎默认 profile。"""
 
-    repo_root = Path(__file__).resolve().parents[2].parent / "autodo-lib"
+    repo_root = Path(__file__).resolve().parents[1].parent / "autodo-lib"
 
     profile = 解析工作区目标配置(
         engine_vendor="copilot",

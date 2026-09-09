@@ -152,6 +152,7 @@ def execute(config_path: Path) -> List[Path]:
         api_key_file=str(raw_cfg.get("api_key_file") or ""),
         parse_model=str(raw_cfg.get("parse_model") or ""),
         structured_babeldoc=raw_cfg.get("structured_babeldoc") if isinstance(raw_cfg.get("structured_babeldoc"), dict) else None,
+        structured_mineru=raw_cfg.get("structured_mineru") if isinstance(raw_cfg.get("structured_mineru"), dict) else None,
         strict_structured_only=bool(raw_cfg.get("strict_structured_only", True)),
         enable_reference_line_repair=bool(raw_cfg.get("enable_reference_line_repair", True)),
         reference_line_repair_model=str(raw_cfg.get("reference_line_repair_model") or "auto"),

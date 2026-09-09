@@ -102,6 +102,8 @@
 
 - `import_chat_session_markdown` / `get_chat_pair_info` / `repair_exported_chat_markdown`
 - `batch_read_pairs_by_llm` — 逐 Pair 调用大模型（断点续跑）
+- `session_index.json` 的每个 session 含 `attachments` 字段（附件元信息，无附件为空数组）；
+  `rebuild_indexes` 重建后从 `attachments/manifest.json` 补回附件信息
 
 ### 直接查源码
 
@@ -111,4 +113,4 @@
 2. `autodokit/tools/__init__.py`
 3. 各工具模块的函数 docstring 与 `demos/scripts/` 示例
 
-上次更新: 2026-08-14
+上次更新: 2026-08-29
