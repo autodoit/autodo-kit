@@ -177,7 +177,11 @@ except Exception:  # pragma: no cover
     ".codex",
     ".gemini",
     ".cursor",
+    # lingma = Qoder CN（原名通义灵码）的配置路径契约；qoder_cn 实体，见 entity_registry.json。
+    # 注意：~/.qoder-cn 是 Qoder CN 的「应用数据目录」（app/cache/extensions/memories 等），
+    # 不是 AI 内容配置路径，一律不参与聚合/发布/同步，故不在此列表。
     ".lingma",
+    # qoder = Qoder 国际版（BRIGHT ZENITH），与 qoder_cn（阿里云）是不同实体。
     ".qoder",
     ".qwen",
     ".agents",
@@ -338,6 +342,122 @@ def 序列化标签单元格(tags: list[str]) -> str:
     {"parts": ("Lingma", "User", "prompts"), "target_label": "lingma_user_prompts", "layout": "prompt_root", "engine_vendor": "lingma", "ide_vendor": "lingma", "scope": "user"},
 ]
 
+# ===== 实体注册表（世界模型层）=====
+# 实体注册表数据文件位于 autodo-lib/database/entity_registry.json。
+# 运行时优先从该文件加载实体知识（vendor/roles/path_contract/compat_reads），
+# 加载失败时回退到上方硬编码的 默认用户级发布目标 列表。
+
+实体注册表默认路径 = "database/entity_registry.json"
+
+
+def 加载实体注册表(registry_path: str | Path | None = None) -> dict[str, Any]:
+    """加载实体注册表（世界模型层）。
+
+    Args:
+        registry_path: 实体注册表 JSON 文件路径。为 None 时按
+            autodo-lib/database/entity_registry.json 相对路径查找。
+
+    Returns:
+        dict[str, Any]: 实体注册表内容，含 entities / relationships /
+            compatibility_matrix 三部分。加载失败时返回空 dict。
+    """
+
+    if registry_path is None:
+        # 优先从 autodo-lib 仓库根目录查找（兄弟仓库）
+        kit_root = Path(__file__).resolve().parents[4]
+        sibling_aob = kit_root.parent / "autodo-lib"
+        candidates = [
+            sibling_aob / 实体注册表默认路径,
+            Path.cwd() / 实体注册表默认路径,
+        ]
+        for cand in candidates:
+            if cand.exists():
+                registry_path = cand
+                break
+    if registry_path is None:
+        return {}
+
+    try:
+        with open(registry_path, "r", encoding="utf-8") as f:
+            data = json.load(f)
+        if not isinstance(data, dict) or "entities" not in data:
+            return {}
+        return data
+    except Exception:  # noqa: BLE001
+        return {}
+
+
+def 从实体注册表派生发布目标(registry: dict[str, Any] | None = None) -> list[dict[str, Any]]:
+    """从实体注册表派生用户级发布目标。
+
+    对每个有 path_contract.primary 的实体，生成一个 structured_root 发布目标。
+    无 primary 路径的实体（如纯模型供应商 deepseek）不生成发布目标。
+
+    Args:
+        registry: 实体注册表内容。为 None 时自动加载。
+
+    Returns:
+        list[dict[str, Any]]: 派生出的发布目标列表。
+    """
+
+    if registry is None:
+        registry = 加载实体注册表()
+    entities = registry.get("entities", {}) if isinstance(registry, dict) else {}
+    targets: list[dict[str, Any]] = []
+    for entity_id, entity in entities.items():
+        if not isinstance(entity, dict):
+            continue
+        path_contract = entity.get("path_contract") or {}
+        primary = path_contract.get("primary")
+        if not primary:
+            continue
+        # primary 形如 ~/.codex 或 ~/.config/opencode
+        folder_name = str(primary).lstrip("~/").split("/")[0]
+        if str(primary).startswith("~/.config/"):
+            path_parts = tuple(str(primary).lstrip("~/").split("/"))
+            targets.append({
+                "path_parts": path_parts,
+                "target_label": entity_id,
+                "layout": "structured_root",
+                "engine_vendor": entity_id,
+                "ide_vendor": entity_id,
+                "scope": "user",
+                "entity_id": entity_id,
+                "vendor": entity.get("vendor"),
+                "roles": entity.get("roles", []),
+                "compat_reads": path_contract.get("compat_reads", []),
+            })
+        else:
+            targets.append({
+                "folder_name": folder_name,
+                "target_label": entity_id,
+                "layout": "structured_root",
+                "engine_vendor": entity_id,
+                "ide_vendor": entity_id,
+                "scope": "user",
+                "entity_id": entity_id,
+                "vendor": entity.get("vendor"),
+                "roles": entity.get("roles", []),
+                "compat_reads": path_contract.get("compat_reads", []),
+            })
+    return targets
+
+
+def 获取用户级发布目标() -> list[dict[str, Any]]:
+    """获取用户级发布目标。
+
+    优先从实体注册表派生；注册表为空时回退到硬编码的 默认用户级发布目标。
+
+    Returns:
+        list[dict[str, Any]]: 用户级发布目标列表。
+    """
+
+    registry = 加载实体注册表()
+    derived = 从实体注册表派生发布目标(registry)
+    if derived:
+        return derived
+    return list(默认用户级发布目标)
+
 默认独立指令文件名 = {
     "agents.md",
     "claude.md",
@@ -366,6 +486,11 @@ def 序列化标签单元格(tags: list[str]) -> str:
 
 默认AOC支持引擎 = {"opencode", "claude", "copilot", "gemini", "codex"}
 
+# 引擎供应商 → 语法族映射。
+# 注意：这里映射的是"内容语法族"（L3 引擎协议），不是品牌名。
+# - lingma / qoder_cn 是同一实体（Qoder CN）的不同品牌名，语法族均为 copilot。
+# - qoder 是 Qoder 国际版（不同实体），语法族暂按 copilot 兼容处理。
+# - cursor 用 claude 引擎；vscode 默认 copilot 插件。
 默认引擎供应商映射 = {
     "opencode": "opencode",
     "claude": "claude",
@@ -375,6 +500,7 @@ def 序列化标签单元格(tags: list[str]) -> str:
     "cursor": "claude",
     "vscode": "copilot",
     "lingma": "copilot",
+    "qoder_cn": "copilot",
     "qoder": "copilot",
     "qwen": "copilot",
 }
@@ -519,7 +645,20 @@ class 聚合来源:
 
 @dataclass(frozen=True)
 class 发布目标:
-    """用户级内容发布目标。"""
+    """用户级内容发布目标。
+
+    Args:
+        target_path: 目标根目录。
+        target_label: 稳定目标标签。
+        layout: 目标布局类型。
+        engine_vendor: 目标引擎供应商。
+        ide_vendor: 目标 IDE 供应商。
+        scope: 目标范围。
+        entity_id: 实体注册表实体 ID（可选，世界模型层）。
+        vendor: 实体所属商家（可选，世界模型层）。
+        roles: 实体形态列表（可选，世界模型层）。
+        compat_reads: 兼容读取的实体列表（可选，世界模型层）。
+    """
 
     target_path: Path
     target_label: str
@@ -527,6 +666,10 @@ class 发布目标:
     engine_vendor: str
     ide_vendor: str
     scope: str
+    entity_id: str | None = None
+    vendor: str | None = None
+    roles: tuple[str, ...] = ()
+    compat_reads: tuple[str, ...] = ()
 
 
 def 仓库根目录() -> Path:
@@ -1607,7 +1750,7 @@ def 发现用户级发布目标(
     ide_filters = 规范发布过滤(ide_vendors)
     candidates: list[发布目标] = []
 
-    for item in 默认用户级发布目标:
+    for item in 获取用户级发布目标():
         # 支持 path_parts 字段（优先）或 folder_name 字段
         if "path_parts" in item:
             target_path = home.joinpath(*tuple(item["path_parts"]))
@@ -1621,6 +1764,10 @@ def 发现用户级发布目标(
             engine_vendor=str(item["engine_vendor"]),
             ide_vendor=str(item["ide_vendor"]),
                 scope=str(item["scope"]),
+            entity_id=str(item["entity_id"]) if item.get("entity_id") else None,
+            vendor=str(item["vendor"]) if item.get("vendor") else None,
+            roles=tuple(item["roles"]) if item.get("roles") else (),
+            compat_reads=tuple(item["compat_reads"]) if item.get("compat_reads") else (),
         )
         candidates.append(target)
 

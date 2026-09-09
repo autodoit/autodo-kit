@@ -79,6 +79,13 @@
 | `qoder` | 非原生编译目标 | 自动发现 | 自动发布 | `copilot` | `.qoder` | `experimental` | 发布时按 Copilot 语法族编译后投影 |
 | `qwen` | 非原生编译目标 | 自动发现 | 自动发布 | `copilot` | `.qwen` | `experimental` | 发布时按 Copilot 语法族编译后投影 |
 
+> **2026-09-09 身份修正**：
+> - `lingma` 与 `qoder` 是**两个不同供应商身份**，不是同一产品的两个名字。
+>   - `lingma`（`~/.lingma`）= **Qoder CN**（原名通义灵码 Lingma，2026-05-20 更名）的配置路径契约，实体 `qoder_cn`（阿里云）。
+>   - `qoder`（`~/.qoder`）= **Qoder 国际版**（BRIGHT ZENITH），实体 `qoder`。
+> - `~/.qoder-cn/` 是 Qoder CN 的**应用数据目录**（缓存/扩展/记忆等），**不是 AI 内容路径，不参与聚合/发布/同步**。
+> - 实体知识（vendor/roles/path_contract/api_protocols/config_format）统一收编于 `autodo-lib/database/entity_registry.json`。
+
 补充说明：
 
 1. `cursor` 在当前实现里更适合作为 IDE 供应商，而不是独立引擎供应商。
