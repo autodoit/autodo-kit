@@ -2453,25 +2453,30 @@ def 编译到_claude(aol: AOL定义, output_dir: Path) -> None:
 
 
 def _解析引擎原始名(agent_or_skill: Any, target_engine: str) -> str | None:
-    """从 engineOverrides 中提取原始文件名（sourceName）。
+    """从 engineOverrides / metadata 中提取原始文件名（sourceName）。
 
-    仅当该 agent/skill 来源于目标引擎时返回原始名，否则返回 None。
+    优先 engineOverrides[target_engine].sourceName；否则回退 metadata.sourceName。
+    说明：metadata.sourceName 记录的是内容最初的原始目录名（如中文 skill 名），
+    与"发布到哪个目标引擎"无关。历史上误加了 sourceEngine==target_engine 的
+    判断，导致 canonical 中 sourceEngine=copilot 的 skill 发布到其他引擎时
+    取不到 sourceName，退回 kebab name 生成畸形目录（a010-v6 等）。现改为
+    metadata 只要有 sourceName 就返回，保证跨引擎发布都还原原始目录名。
     """
 
     overrides = getattr(agent_or_skill, "engine_overrides", None)
-    if not overrides or not isinstance(overrides, dict):
-        # 也检查 metadata（skills 可能用 metadata）
-        metadata = getattr(agent_or_skill, "metadata", None)
-        if isinstance(metadata, dict):
-            source_engine = str(metadata.get("sourceEngine", "")).strip()
-            if source_engine == target_engine:
-                return str(metadata.get("sourceName", "")).strip() or None
-        return None
-    engine_data = overrides.get(target_engine)
-    if not isinstance(engine_data, dict):
-        return None
-    source_name = str(engine_data.get("sourceName", "")).strip()
-    return source_name if source_name else None
+    if overrides and isinstance(overrides, dict):
+        engine_data = overrides.get(target_engine)
+        if isinstance(engine_data, dict):
+            source_name = str(engine_data.get("sourceName", "")).strip()
+            if source_name:
+                return source_name
+    # 回退 metadata.sourceName（与 sourceEngine 解耦）
+    metadata = getattr(agent_or_skill, "metadata", None)
+    if isinstance(metadata, dict):
+        source_name = str(metadata.get("sourceName", "")).strip()
+        if source_name:
+            return source_name
+    return None
 
 
 def 编译到_copilot(aol: AOL定义, output_dir: Path) -> None:

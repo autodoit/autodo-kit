@@ -160,3 +160,55 @@ def test_语法族映射_按实体角色(tmp_path: Path) -> None:
     assert 默认引擎供应商映射["lingma"] == "copilot"
     assert 默认引擎供应商映射["qoder"] == "copilot"
     assert 默认引擎供应商映射["cursor"] == "claude"
+
+
+class _模拟技能:
+    """模拟带 metadata 的 skill 对象。"""
+
+    def __init__(self, name: str, metadata: dict) -> None:
+        self.name = name
+        self.description = "test"
+        self.body = "body"
+        self.metadata = metadata
+        self.engine_overrides = None
+
+
+def test_跨引擎发布还原原始目录名(tmp_path: Path) -> None:
+    """sourceEngine=copilot 的 skill 发布到其他引擎也应还原中文原始目录名。
+
+    回归：历史上 _解析引擎原始名 要求 sourceEngine==target_engine 才返回
+    sourceName，导致 canonical 中 sourceEngine=copilot 的 skill 发布到
+    claude/cursor 等目标时取不到 sourceName，退回 kebab name（a010-v6）
+    生成畸形目录。修复后 metadata 只要有 sourceName 就应返回。
+    """
+    from autodokit.tools.atomic.aob_runtime.aoc_tool import _解析引擎原始名
+
+    skill = _模拟技能(
+        name="a010-v6",
+        metadata={
+            "sourceEngine": "copilot",
+            "sourceName": "A010_模板进化_v6",
+            "sourcePath": "/Users/ethan/.copilot/skills/A010_模板进化_v6/SKILL.md",
+        },
+    )
+    # 发布到任意引擎都应还原中文原始目录名
+    for engine in ["copilot", "claude", "cursor", "codex", "gemini", "opencode"]:
+        assert _解析引擎原始名(skill, engine) == "A010_模板进化_v6"
+
+
+def test_畸形skill_payload_判定(tmp_path: Path) -> None:
+    """畸形 skill payload（sourceEngine=unknown / sourceName==name kebab）判定。"""
+    from autodokit.tools.atomic.aob_runtime.aob_common import 是否畸形skillPayload
+
+    # 畸形：sourceEngine=unknown 且 sourceName==name
+    assert 是否畸形skillPayload(
+        {"name": "a010-v5-2-2", "metadata": {"sourceName": "a010-v5-2-2", "sourceEngine": "unknown"}}
+    )
+    # 正常：sourceName 是中文原名（≠ name）
+    assert not 是否畸形skillPayload(
+        {"name": "a010-v6", "metadata": {"sourceName": "A010_模板进化_v6", "sourceEngine": "copilot"}}
+    )
+    # 独立英文 skill：合法
+    assert not 是否畸形skillPayload(
+        {"name": "arxiv", "metadata": {"sourceName": "arxiv", "sourceEngine": "copilot"}}
+    )

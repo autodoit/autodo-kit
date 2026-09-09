@@ -2087,11 +2087,40 @@ def AOL对象转payload(aol: Any) -> dict[str, Any]:
 _畸形skill_kebab = re.compile(r"^[a-z0-9]+(-[a-z0-9]+)*$")
 
 
-def 校验AOL无畸形skill(aol: Any) -> list[str]:
-    """校验 AOL 中是否含畸形 skill（sourceName 丢失的 kebab 条目）。
+def 是否畸形skillPayload(payload: dict[str, Any]) -> bool:
+    """判断单个 skill payload 是否为畸形污染条目。
 
     畸形判定：skill.name 为 kebab 且 metadata.sourceName == name，
-    且该 name 不是已知独立英文 skill（如 arxiv/commit/pdf 等官方资产）。
+    且 sourceEngine == "unknown" 或 sourcePath 含中文（原始名丢失）。
+
+    独立英文 skill（arxiv/commit/pdf 等官方资产）的 sourceName 天然等于
+    name 且 sourceEngine 不是 unknown，不算畸形。
+
+    Args:
+        payload: skill payload（含 name/metadata）。
+
+    Returns:
+        bool: 是否为畸形 skill。
+    """
+
+    name = str(payload.get("name") or "").strip()
+    metadata = payload.get("metadata") or {}
+    if not isinstance(metadata, dict):
+        return False
+    source_name = str(metadata.get("sourceName") or "").strip()
+    if not _畸形skill_kebab.match(name):
+        return False
+    if source_name != name:
+        return False
+    source_path = str(metadata.get("sourcePath") or "")
+    source_engine = str(metadata.get("sourceEngine") or "")
+    if source_engine == "unknown" or re.search(r"[\u4e00-\u9fff]", source_path):
+        return True
+    return False
+
+
+def 校验AOL无畸形skill(aol: Any) -> list[str]:
+    """校验 AOL 中是否含畸形 skill（sourceName 丢失的 kebab 条目）。
 
     Args:
         aol: AOL 对象。
@@ -2105,20 +2134,8 @@ def 校验AOL无畸形skill(aol: Any) -> list[str]:
     malformed: list[str] = []
     for skill in list(aol.skills or []):
         payload = 技能对象转payload(skill)
-        name = str(payload.get("name") or "").strip()
-        metadata = payload.get("metadata") or {}
-        source_name = str(metadata.get("sourceName") or "").strip()
-        if not _畸形skill_kebab.match(name):
-            continue
-        if source_name != name:
-            continue
-        # sourceName==name 的 kebab：独立英文 skill 合法，畸形 skill 需阻断。
-        # 独立英文 skill 的 sourcePath 指向英文目录且无 sourceEngine=unknown 标记；
-        # 畸形 skill 的 sourcePath 指向中文目录（原始名丢失）或 sourceEngine=unknown。
-        source_path = str(metadata.get("sourcePath") or "")
-        source_engine = str(metadata.get("sourceEngine") or "")
-        if source_engine == "unknown" or re.search(r"[\u4e00-\u9fff]", source_path):
-            malformed.append(name)
+        if 是否畸形skillPayload(payload):
+            malformed.append(str(payload.get("name") or "").strip())
     return malformed
 
 
@@ -2313,6 +2330,10 @@ def AOL扁平化逻辑条目(aol_payload: dict[str, Any]) -> dict[str, dict[str,
                 continue
             identity = str(raw.get(identity_field) or "").strip()
             if not identity:
+                continue
+            # 畸形 skill（sourceEngine=unknown / 原始中文名丢失的污染条目）不进
+            # logical entry，避免经 winner 决策污染 canonical 与发布目标。
+            if section == "skills" and 是否畸形skillPayload(raw):
                 continue
             payload = dict(raw)
             payload[key_name] = identity
