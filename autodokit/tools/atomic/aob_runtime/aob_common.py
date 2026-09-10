@@ -484,12 +484,12 @@ def 获取用户级发布目标() -> list[dict[str, Any]]:
 同步撤销变更表名 = "sync_undo_file_changes"
 同步撤销数据库文件名 = "sync_undo.sqlite3"
 
-默认AOC支持引擎 = {"opencode", "claude", "copilot", "gemini", "codex"}
+默认AOC支持引擎 = {"opencode", "claude", "copilot", "gemini", "codex", "qoder", "qoder_cn", "zed", "qwen"}
 
 # 引擎供应商 → 语法族映射。
-# 注意：这里映射的是"内容语法族"（L3 引擎协议），不是品牌名。
-# - lingma / qoder_cn 是同一实体（Qoder CN）的不同品牌名，语法族均为 copilot。
-# - qoder 是 Qoder 国际版（不同实体），语法族暂按 copilot 兼容处理。
+# 注意：这里映射的是“内容语法族”（L3 引擎协议），不是品牌名。
+# - qoder 使用 copilot 语法族（.agent.md）。
+# - qoder_cn / lingma / qwen / zed 使用 claude 语法族（.md）。
 # - cursor 用 claude 引擎；vscode 默认 copilot 插件。
 默认引擎供应商映射 = {
     "opencode": "opencode",
@@ -499,10 +499,11 @@ def 获取用户级发布目标() -> list[dict[str, Any]]:
     "codex": "codex",
     "cursor": "claude",
     "vscode": "copilot",
-    "lingma": "copilot",
-    "qoder_cn": "copilot",
+    "lingma": "claude",
+    "qoder_cn": "claude",
     "qoder": "copilot",
-    "qwen": "copilot",
+    "qwen": "claude",
+    "zed": "claude",
 }
 
 

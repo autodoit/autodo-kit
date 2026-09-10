@@ -101,6 +101,10 @@ from typing import Any
     "copilot": ".github",
     "gemini": ".gemini",
     "codex": ".codex",
+    "qoder": ".qoder",
+    "qoder_cn": ".lingma",
+    "zed": ".agents",
+    "qwen": ".qwen",
 }
 
 可迁移附加载体目录: list[str] = [
@@ -3058,6 +3062,177 @@ def 编译_aol到引擎办公区(*, aol: AOL定义, target_workspace_dir: Path, 
 
         for skill in aol.skills:
             skill_dir_name = _解析引擎原始名(skill, "codex") or skill.name
+            写文本(
+                target_root / "skills" / skill_dir_name / "SKILL.md",
+                渲染_skill(skill.name, skill.description, skill.body, skill.metadata),
+            )
+
+        for rule in aol.rules:
+            写文本(target_root / "rules" / f"{rule.rule_id}.md", f"# {rule.rule_id}\n\n{rule.content}\n")
+
+        for command in aol.commands:
+            写文本(target_root / "commands" / f"{command.command_id}.md", 渲染_claude_command(command))
+
+        写入_hooks载体(target_root, aol.hooks)
+        写入附加载体(target_root=target_root, extra_assets=aol.extra_assets)
+        return
+
+    if target_engine == "qoder":
+        # qoder 使用 copilot 格式（.agent.md）
+        (target_root / "agents").mkdir(parents=True, exist_ok=True)
+        (target_root / "skills").mkdir(parents=True, exist_ok=True)
+
+        if aol.project_instruction and aol.project_instruction.strip():
+            instruction_text = aol.project_instruction.strip() + "\n"
+        else:
+            instruction_lines = [f"# {aol.title}"]
+            if aol.instructions:
+                instruction_lines.append("")
+                instruction_lines.extend([f"- {line}" for line in aol.instructions])
+            instruction_text = "\n".join(instruction_lines) + "\n"
+        写文本(target_root / "copilot-instructions.md", instruction_text)
+        config = 构建目标配置(aol, target_engine="qoder", base={"aolVersion": aol.version, "title": aol.title})
+        if len(config) > 2:
+            写文本(target_root / "autodo.engine.config.json", json.dumps(config, ensure_ascii=False, indent=2) + "\n")
+
+        for agent in aol.agents:
+            file_stem = _解析引擎原始名(agent, "qoder") or agent.agent_id
+            写文本(target_root / "agents" / f"{file_stem}.agent.md", 渲染_copilot_agent(agent))
+
+        for skill in aol.skills:
+            skill_dir_name = _解析引擎原始名(skill, "qoder") or skill.name
+            写文本(
+                target_root / "skills" / skill_dir_name / "SKILL.md",
+                渲染_skill(skill.name, skill.description, skill.body, skill.metadata),
+            )
+
+        (target_root / "commands").mkdir(parents=True, exist_ok=True)
+        (target_root / "rules").mkdir(parents=True, exist_ok=True)
+
+        for command in aol.commands:
+            写文本(target_root / "commands" / f"{command.command_id}.md", 渲染_claude_command(command))
+
+        for rule in aol.rules:
+            写文本(target_root / "rules" / f"{rule.rule_id}.md", f"# {rule.rule_id}\n\n{rule.content}\n")
+
+        写入_hooks载体(target_root, aol.hooks)
+        写入附加载体(target_root=target_root, extra_assets=aol.extra_assets)
+        return
+
+    if target_engine == "qoder_cn":
+        # qoder_cn (通义灵码) 使用 claude 格式（.md）
+        (target_root / "agents").mkdir(parents=True, exist_ok=True)
+        (target_root / "skills").mkdir(parents=True, exist_ok=True)
+        (target_root / "commands").mkdir(parents=True, exist_ok=True)
+        (target_root / "rules").mkdir(parents=True, exist_ok=True)
+        settings = 构建目标配置(aol, target_engine="qoder_cn", base={
+            "aolVersion": aol.version,
+            "title": aol.title,
+        })
+        写文本(target_root / "settings.json", json.dumps(settings, ensure_ascii=False, indent=2) + "\n")
+
+        if aol.project_instruction and aol.project_instruction.strip():
+            instruction_md = aol.project_instruction.strip() + "\n"
+        else:
+            md_lines = [f"# {aol.title}"]
+            if aol.instructions:
+                md_lines.append("")
+                md_lines.extend([f"- {line}" for line in aol.instructions])
+            instruction_md = "\n".join(md_lines) + "\n"
+        写文本(target_root / "AGENTS.md", instruction_md)
+
+        for agent in aol.agents:
+            file_stem = _解析引擎原始名(agent, "qoder_cn") or agent.agent_id
+            写文本(target_root / "agents" / f"{file_stem}.md", 渲染_claude_agent(agent))
+
+        for skill in aol.skills:
+            skill_dir_name = _解析引擎原始名(skill, "qoder_cn") or skill.name
+            写文本(
+                target_root / "skills" / skill_dir_name / "SKILL.md",
+                渲染_skill(skill.name, skill.description, skill.body, skill.metadata),
+            )
+
+        for rule in aol.rules:
+            写文本(target_root / "rules" / f"{rule.rule_id}.md", f"# {rule.rule_id}\n\n{rule.content}\n")
+
+        for command in aol.commands:
+            写文本(target_root / "commands" / f"{command.command_id}.md", 渲染_claude_command(command))
+
+        写入_hooks载体(target_root, aol.hooks)
+        写入附加载体(target_root=target_root, extra_assets=aol.extra_assets)
+        return
+
+    if target_engine == "qwen":
+        # qwen 使用 claude 格式（.md）
+        (target_root / "agents").mkdir(parents=True, exist_ok=True)
+        (target_root / "skills").mkdir(parents=True, exist_ok=True)
+        (target_root / "commands").mkdir(parents=True, exist_ok=True)
+        (target_root / "rules").mkdir(parents=True, exist_ok=True)
+        settings = 构建目标配置(aol, target_engine="qwen", base={
+            "aolVersion": aol.version,
+            "title": aol.title,
+        })
+        写文本(target_root / "settings.json", json.dumps(settings, ensure_ascii=False, indent=2) + "\n")
+
+        if aol.project_instruction and aol.project_instruction.strip():
+            instruction_md = aol.project_instruction.strip() + "\n"
+        else:
+            md_lines = [f"# {aol.title}"]
+            if aol.instructions:
+                md_lines.append("")
+                md_lines.extend([f"- {line}" for line in aol.instructions])
+            instruction_md = "\n".join(md_lines) + "\n"
+        写文本(target_root / "AGENTS.md", instruction_md)
+
+        for agent in aol.agents:
+            file_stem = _解析引擎原始名(agent, "qwen") or agent.agent_id
+            写文本(target_root / "agents" / f"{file_stem}.md", 渲染_claude_agent(agent))
+
+        for skill in aol.skills:
+            skill_dir_name = _解析引擎原始名(skill, "qwen") or skill.name
+            写文本(
+                target_root / "skills" / skill_dir_name / "SKILL.md",
+                渲染_skill(skill.name, skill.description, skill.body, skill.metadata),
+            )
+
+        for rule in aol.rules:
+            写文本(target_root / "rules" / f"{rule.rule_id}.md", f"# {rule.rule_id}\n\n{rule.content}\n")
+
+        for command in aol.commands:
+            写文本(target_root / "commands" / f"{command.command_id}.md", 渲染_claude_command(command))
+
+        写入_hooks载体(target_root, aol.hooks)
+        写入附加载体(target_root=target_root, extra_assets=aol.extra_assets)
+        return
+
+    if target_engine == "zed":
+        # zed 使用 claude 格式（.md）
+        (target_root / "agents").mkdir(parents=True, exist_ok=True)
+        (target_root / "skills").mkdir(parents=True, exist_ok=True)
+        (target_root / "commands").mkdir(parents=True, exist_ok=True)
+        (target_root / "rules").mkdir(parents=True, exist_ok=True)
+        settings = 构建目标配置(aol, target_engine="zed", base={
+            "aolVersion": aol.version,
+            "title": aol.title,
+        })
+        写文本(target_root / "settings.json", json.dumps(settings, ensure_ascii=False, indent=2) + "\n")
+
+        if aol.project_instruction and aol.project_instruction.strip():
+            instruction_md = aol.project_instruction.strip() + "\n"
+        else:
+            md_lines = [f"# {aol.title}"]
+            if aol.instructions:
+                md_lines.append("")
+                md_lines.extend([f"- {line}" for line in aol.instructions])
+            instruction_md = "\n".join(md_lines) + "\n"
+        写文本(target_root / "AGENTS.md", instruction_md)
+
+        for agent in aol.agents:
+            file_stem = _解析引擎原始名(agent, "zed") or agent.agent_id
+            写文本(target_root / "agents" / f"{file_stem}.md", 渲染_claude_agent(agent))
+
+        for skill in aol.skills:
+            skill_dir_name = _解析引擎原始名(skill, "zed") or skill.name
             写文本(
                 target_root / "skills" / skill_dir_name / "SKILL.md",
                 渲染_skill(skill.name, skill.description, skill.body, skill.metadata),
