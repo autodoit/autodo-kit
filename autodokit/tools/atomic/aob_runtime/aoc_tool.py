@@ -1696,9 +1696,20 @@ def 模板代理转aol(*, file_path: Path) -> dict[str, Any] | None:
     uid = str(frontmatter.get("uid") or "").strip()
     if uid:
         payload["uid"] = uid
+    # 与 skills（模板技能转aol）对齐：metadata 也写入 sourceEngine/sourcePath/
+    # sourceName，保证发布到非源引擎（跨引擎）时仍能还原原始目录名，避免退回
+    # kebab id 生成英文/哈希目录（如 agent-8fb3821a）。
+    metadata: dict[str, Any] = {
+        "sourceEngine": source_engine,
+        "sourcePath": str(file_path).replace("\\", "/"),
+        "sourceName": raw_name,
+    }
     raw_metadata = frontmatter.get("metadata")
     if isinstance(raw_metadata, dict) and raw_metadata:
-        payload["metadata"] = dict(raw_metadata)
+        for key, value in raw_metadata.items():
+            if key not in metadata:
+                metadata[key] = value
+    payload["metadata"] = metadata
     model = str(frontmatter.get("model") or "").strip()
     if model:
         payload["model"] = model
