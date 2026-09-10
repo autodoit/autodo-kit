@@ -3256,7 +3256,7 @@ _托管目录扫描模式: dict[str, list[str]] = {
 
 
 # 清理未跟踪文件时跳过的人工/归档/备份文件名模式
-_清理跳过目录名 = {"_archive", "archive", "backups", "backup", ".git", ".idea"}
+_清理跳过目录名 = {"_archive", "archive", "backups", "backup", ".git", ".idea", ".system"}
 _清理跳过文件名模式 = (".bak", ".bak2", ".old", ".orig", ".sync.ffs_db", ".DS_Store")
 
 
@@ -3287,6 +3287,12 @@ def 清理目标未跟踪文件(
     备份文件（*.bak*）与同步状态文件（.sync.ffs_db）跳过不删，
     避免误删用户人工保留的历史版本。
 
+    安全规则：对于含子目录的托管目录（如 skills/），如果某个子条目
+    （如 skills/m_Zed单源工作区镜像生成_v1/）在 managed_files 中有
+    至少一个文件（如 SKILL.md），则该子条目内的所有文件（scripts/、
+    README.md、assets/ 等）均受保护，不会被清理。只有完全不在
+    managed_files 中的子条目才会被整体删除。
+
     Returns:
         删除的文件数。
     """
@@ -3296,19 +3302,33 @@ def 清理目标未跟踪文件(
     if not target_root.exists():
         return 0
 
+    # 预计算：每个托管目录下，哪些一级子条目是"已管理"的。
+    # 只要该子条目在 managed_files 中出现过至少一个文件，就视为受保护。
+    managed_sub_entries: dict[str, set[str]] = defaultdict(set)
+    for rel in managed_files:
+        parts = PurePosixPath(rel).parts
+        if len(parts) >= 2:
+            managed_sub_entries[parts[0]].add(parts[1])
+
     for subdir_name in _托管目录扫描模式:
         subdir = target_root / subdir_name
         if not subdir.exists() or not subdir.is_dir():
             continue
+        managed_entries = managed_sub_entries.get(subdir_name, set())
         for file_path in sorted(subdir.rglob("*")):
             if not file_path.is_file():
                 continue
             if _应跳过未跟踪清理(file_path):
                 continue
+            # 安全规则：如果该文件所属的一级子条目已被 AOB 管理，
+            # 则跳过（不删 scripts/、README.md 等 skill 附属资产）。
+            rel_parts = file_path.relative_to(subdir).parts
+            if len(rel_parts) >= 1 and rel_parts[0] in managed_entries:
+                continue
             rel = 规范路径(str(file_path.relative_to(target_root)))
             if rel in managed_files:
                 continue
-            # 该文件不在编译输出中，删除
+            # 该文件不在编译输出中，且不属于任何已管理的子条目，删除
             deleted += 1
             stats["deleted"] += 1
             stats.setdefault("cleanup_unknown_files", []).append(rel)
