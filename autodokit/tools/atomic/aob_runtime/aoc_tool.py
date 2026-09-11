@@ -2173,7 +2173,7 @@ def 渲染_opencode_agent(agent: 代理定义) -> str:
     return "\n".join(lines)
 
 
-def 渲染_claude_agent(agent: 代理定义) -> str:
+def 渲染_claude_agent(agent: 代理定义, display_name: str | None = None) -> str:
     """渲染 Claude 代理文件。
 
     Args:
@@ -2187,11 +2187,18 @@ def 渲染_claude_agent(agent: 代理定义) -> str:
     uid = str(getattr(agent, "uid", "") or "").strip()
     if uid:
         lines.extend(渲染_yaml键值("uid", uid))
-    lines.extend(渲染_yaml键值("name", agent.agent_id))
+    metadata = dict(getattr(agent, "metadata", None) or {})
+    # AOB 统一风格：name 优先取调用点传入的、与文件名同一解析结果（file_stem），
+    # 其次回退 metadata.sourceName，最后 kebab agent_id。确保 name==文件名。
+    agent_display_name = (
+        (display_name or "").strip()
+        or str(metadata.get("sourceName") or "").strip()
+        or agent.agent_id
+    )
+    lines.extend(渲染_yaml键值("name", agent_display_name))
     lines.extend(渲染_yaml键值("description", agent.description))
     if agent.model:
         lines.extend(渲染_yaml键值("model", agent.model))
-    metadata = dict(getattr(agent, "metadata", None) or {})
     if metadata:
         lines.append("metadata:")
         for key, value in sorted(metadata.items()):
@@ -2244,7 +2251,7 @@ def 渲染_copilot_agent(agent: 代理定义) -> str:
     return "\n".join(lines)
 
 
-def 渲染_skill(name: str, description: str, body: str, metadata: dict[str, str]) -> str:
+def 渲染_skill(name: str, description: str, body: str, metadata: dict[str, str], display_name: str | None = None) -> str:
     """渲染技能 SKILL.md。
 
     Args:
@@ -2258,7 +2265,9 @@ def 渲染_skill(name: str, description: str, body: str, metadata: dict[str, str
     """
 
     lines = ["---"]
-    lines.extend(渲染_yaml键值("name", name))
+    # AOB 统一风格：name 优先取调用点传入的、与目录名同一解析结果（skill_dir_name），
+    # 确保 name==文件夹名；copilot 锚点传 display_name=skill.name(kebab) 防聚合漂移。
+    lines.extend(渲染_yaml键值("name", (display_name or name)))
     lines.extend(渲染_yaml键值("description", description))
     if metadata:
         lines.append("metadata:")
@@ -2419,7 +2428,7 @@ def 编译到_opencode(aol: AOL定义, output_dir: Path) -> None:
         skill_dir_name = _解析引擎原始名(skill, "opencode") or skill.name
         写文本(
             opencode_root / "skills" / skill_dir_name / "SKILL.md",
-            渲染_skill(skill.name, skill.description, skill.body, skill.metadata),
+            渲染_skill(skill.name, skill.description, skill.body, skill.metadata, display_name=skill_dir_name),
         )
     写入_hooks载体(opencode_root, aol.hooks)
     for asset in aol.extra_assets:
@@ -2454,13 +2463,13 @@ def 编译到_claude(aol: AOL定义, output_dir: Path) -> None:
 
     for agent in aol.agents:
         file_stem = _解析引擎原始名(agent, "claude") or agent.agent_id
-        写文本(claude_root / "agents" / f"{file_stem}.md", 渲染_claude_agent(agent))
+        写文本(claude_root / "agents" / f"{file_stem}.md", 渲染_claude_agent(agent, display_name=file_stem))
 
     for skill in aol.skills:
         skill_dir_name = _解析引擎原始名(skill, "claude") or skill.name
         写文本(
             claude_root / "skills" / skill_dir_name / "SKILL.md",
-            渲染_skill(skill.name, skill.description, skill.body, skill.metadata),
+            渲染_skill(skill.name, skill.description, skill.body, skill.metadata, display_name=skill_dir_name),
         )
     写入_hooks载体(claude_root, aol.hooks)
     for asset in aol.extra_assets:
@@ -2523,7 +2532,7 @@ def 编译到_copilot(aol: AOL定义, output_dir: Path) -> None:
         skill_dir_name = _解析引擎原始名(skill, "copilot") or skill.name
         写文本(
             github_root / "skills" / skill_dir_name / "SKILL.md",
-            渲染_skill(skill.name, skill.description, skill.body, skill.metadata),
+            渲染_skill(skill.name, skill.description, skill.body, skill.metadata, display_name=skill.name),
         )
     写入_hooks载体(github_root, aol.hooks)
     for asset in aol.extra_assets:
@@ -2562,13 +2571,13 @@ def 编译到_gemini(aol: AOL定义, output_dir: Path) -> None:
 
     for agent in aol.agents:
         file_stem = _解析引擎原始名(agent, "gemini") or agent.agent_id
-        写文本(gemini_root / "agents" / f"{file_stem}.md", 渲染_claude_agent(agent))
+        写文本(gemini_root / "agents" / f"{file_stem}.md", 渲染_claude_agent(agent, display_name=file_stem))
 
     for skill in aol.skills:
         skill_dir_name = _解析引擎原始名(skill, "gemini") or skill.name
         写文本(
             gemini_root / "skills" / skill_dir_name / "SKILL.md",
-            渲染_skill(skill.name, skill.description, skill.body, skill.metadata),
+            渲染_skill(skill.name, skill.description, skill.body, skill.metadata, display_name=skill_dir_name),
         )
 
     for rule in aol.rules:
@@ -2605,7 +2614,7 @@ def 编译到_codex(aol: AOL定义, output_dir: Path) -> None:
 
     for agent in aol.agents:
         file_stem = _解析引擎原始名(agent, "codex") or agent.agent_id
-        写文本(codex_root / "agents" / f"{file_stem}.md", 渲染_claude_agent(agent))
+        写文本(codex_root / "agents" / f"{file_stem}.md", 渲染_claude_agent(agent, display_name=file_stem))
 
     codex_config = 构建目标配置(aol, target_engine="codex", base={
         "aolVersion": aol.version,
@@ -2619,7 +2628,7 @@ def 编译到_codex(aol: AOL定义, output_dir: Path) -> None:
         skill_dir_name = _解析引擎原始名(skill, "codex") or skill.name
         写文本(
             codex_root / "skills" / skill_dir_name / "SKILL.md",
-            渲染_skill(skill.name, skill.description, skill.body, skill.metadata),
+            渲染_skill(skill.name, skill.description, skill.body, skill.metadata, display_name=skill_dir_name),
         )
 
     for rule in aol.rules:
@@ -2881,7 +2890,7 @@ def 编译_aol到引擎办公区(*, aol: AOL定义, target_workspace_dir: Path, 
             skill_dir_name = _解析引擎原始名(skill, "opencode") or skill.name
             写文本(
                 target_root / "skills" / skill_dir_name / "SKILL.md",
-                渲染_skill(skill.name, skill.description, skill.body, skill.metadata),
+                渲染_skill(skill.name, skill.description, skill.body, skill.metadata, display_name=skill_dir_name),
             )
 
         for command in aol.commands:
@@ -2931,13 +2940,13 @@ def 编译_aol到引擎办公区(*, aol: AOL定义, target_workspace_dir: Path, 
 
         for agent in aol.agents:
             file_stem = _解析引擎原始名(agent, "claude") or agent.agent_id
-            写文本(target_root / "agents" / f"{file_stem}.md", 渲染_claude_agent(agent))
+            写文本(target_root / "agents" / f"{file_stem}.md", 渲染_claude_agent(agent, display_name=file_stem))
 
         for skill in aol.skills:
             skill_dir_name = _解析引擎原始名(skill, "claude") or skill.name
             写文本(
                 target_root / "skills" / skill_dir_name / "SKILL.md",
-                渲染_skill(skill.name, skill.description, skill.body, skill.metadata),
+                渲染_skill(skill.name, skill.description, skill.body, skill.metadata, display_name=skill_dir_name),
             )
 
         for rule in aol.rules:
@@ -2975,7 +2984,7 @@ def 编译_aol到引擎办公区(*, aol: AOL定义, target_workspace_dir: Path, 
             skill_dir_name = _解析引擎原始名(skill, "copilot") or skill.name
             写文本(
                 target_root / "skills" / skill_dir_name / "SKILL.md",
-                渲染_skill(skill.name, skill.description, skill.body, skill.metadata),
+                渲染_skill(skill.name, skill.description, skill.body, skill.metadata, display_name=skill.name),
             )
 
         (target_root / "commands").mkdir(parents=True, exist_ok=True)
@@ -3015,13 +3024,13 @@ def 编译_aol到引擎办公区(*, aol: AOL定义, target_workspace_dir: Path, 
 
         for agent in aol.agents:
             file_stem = _解析引擎原始名(agent, "gemini") or agent.agent_id
-            写文本(target_root / "agents" / f"{file_stem}.md", 渲染_claude_agent(agent))
+            写文本(target_root / "agents" / f"{file_stem}.md", 渲染_claude_agent(agent, display_name=file_stem))
 
         for skill in aol.skills:
             skill_dir_name = _解析引擎原始名(skill, "gemini") or skill.name
             写文本(
                 target_root / "skills" / skill_dir_name / "SKILL.md",
-                渲染_skill(skill.name, skill.description, skill.body, skill.metadata),
+                渲染_skill(skill.name, skill.description, skill.body, skill.metadata, display_name=skill_dir_name),
             )
 
         for rule in aol.rules:
@@ -3050,7 +3059,7 @@ def 编译_aol到引擎办公区(*, aol: AOL定义, target_workspace_dir: Path, 
 
         for agent in aol.agents:
             file_stem = _解析引擎原始名(agent, "codex") or agent.agent_id
-            写文本(target_root / "agents" / f"{file_stem}.md", 渲染_claude_agent(agent))
+            写文本(target_root / "agents" / f"{file_stem}.md", 渲染_claude_agent(agent, display_name=file_stem))
 
         codex_config = 构建目标配置(aol, target_engine="codex", base={
             "aolVersion": aol.version,
@@ -3064,7 +3073,7 @@ def 编译_aol到引擎办公区(*, aol: AOL定义, target_workspace_dir: Path, 
             skill_dir_name = _解析引擎原始名(skill, "codex") or skill.name
             写文本(
                 target_root / "skills" / skill_dir_name / "SKILL.md",
-                渲染_skill(skill.name, skill.description, skill.body, skill.metadata),
+                渲染_skill(skill.name, skill.description, skill.body, skill.metadata, display_name=skill_dir_name),
             )
 
         for rule in aol.rules:
@@ -3103,7 +3112,7 @@ def 编译_aol到引擎办公区(*, aol: AOL定义, target_workspace_dir: Path, 
             skill_dir_name = _解析引擎原始名(skill, "qoder") or skill.name
             写文本(
                 target_root / "skills" / skill_dir_name / "SKILL.md",
-                渲染_skill(skill.name, skill.description, skill.body, skill.metadata),
+                渲染_skill(skill.name, skill.description, skill.body, skill.metadata, display_name=skill_dir_name),
             )
 
         (target_root / "commands").mkdir(parents=True, exist_ok=True)
@@ -3143,13 +3152,13 @@ def 编译_aol到引擎办公区(*, aol: AOL定义, target_workspace_dir: Path, 
 
         for agent in aol.agents:
             file_stem = _解析引擎原始名(agent, "qoder_cn") or agent.agent_id
-            写文本(target_root / "agents" / f"{file_stem}.md", 渲染_claude_agent(agent))
+            写文本(target_root / "agents" / f"{file_stem}.md", 渲染_claude_agent(agent, display_name=file_stem))
 
         for skill in aol.skills:
             skill_dir_name = _解析引擎原始名(skill, "qoder_cn") or skill.name
             写文本(
                 target_root / "skills" / skill_dir_name / "SKILL.md",
-                渲染_skill(skill.name, skill.description, skill.body, skill.metadata),
+                渲染_skill(skill.name, skill.description, skill.body, skill.metadata, display_name=skill_dir_name),
             )
 
         for rule in aol.rules:
@@ -3186,13 +3195,13 @@ def 编译_aol到引擎办公区(*, aol: AOL定义, target_workspace_dir: Path, 
 
         for agent in aol.agents:
             file_stem = _解析引擎原始名(agent, "qwen") or agent.agent_id
-            写文本(target_root / "agents" / f"{file_stem}.md", 渲染_claude_agent(agent))
+            写文本(target_root / "agents" / f"{file_stem}.md", 渲染_claude_agent(agent, display_name=file_stem))
 
         for skill in aol.skills:
             skill_dir_name = _解析引擎原始名(skill, "qwen") or skill.name
             写文本(
                 target_root / "skills" / skill_dir_name / "SKILL.md",
-                渲染_skill(skill.name, skill.description, skill.body, skill.metadata),
+                渲染_skill(skill.name, skill.description, skill.body, skill.metadata, display_name=skill_dir_name),
             )
 
         for rule in aol.rules:
@@ -3229,13 +3238,13 @@ def 编译_aol到引擎办公区(*, aol: AOL定义, target_workspace_dir: Path, 
 
         for agent in aol.agents:
             file_stem = _解析引擎原始名(agent, "zed") or agent.agent_id
-            写文本(target_root / "agents" / f"{file_stem}.md", 渲染_claude_agent(agent))
+            写文本(target_root / "agents" / f"{file_stem}.md", 渲染_claude_agent(agent, display_name=file_stem))
 
         for skill in aol.skills:
             skill_dir_name = _解析引擎原始名(skill, "zed") or skill.name
             写文本(
                 target_root / "skills" / skill_dir_name / "SKILL.md",
-                渲染_skill(skill.name, skill.description, skill.body, skill.metadata),
+                渲染_skill(skill.name, skill.description, skill.body, skill.metadata, display_name=skill_dir_name),
             )
 
         for rule in aol.rules:

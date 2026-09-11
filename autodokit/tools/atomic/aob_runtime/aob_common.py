@@ -23,7 +23,8 @@ import tempfile
 import time
 import uuid
 from dataclasses import dataclass
-from pathlib import Path
+from collections import defaultdict
+from pathlib import Path, PurePosixPath
 from typing import Any
 
 
@@ -3259,6 +3260,10 @@ _托管目录扫描模式: dict[str, list[str]] = {
 _清理跳过目录名 = {"_archive", "archive", "backups", "backup", ".git", ".idea", ".system"}
 _清理跳过文件名模式 = (".bak", ".bak2", ".old", ".orig", ".sync.ffs_db", ".DS_Store")
 
+# 单次未跟踪清理的批量删除硬上限：非 dry_run 时若候选删除数超过此值，
+# 默认中止整批删除，防止编译/配置异常造成的大规模误删事故（如一次删掉数千文件）。
+_cleanup批量删除硬上限 = 200
+
 
 def _应跳过未跟踪清理(file_path: Path) -> bool:
     """判断文件是否应跳过未跟踪清理（归档/备份/同步状态等人工保留文件）。"""
@@ -3279,6 +3284,8 @@ def 清理目标未跟踪文件(
     dry_run: bool,
     stats: dict[str, Any],
     journal: Any = None,
+    max_delete: int | None = None,
+    allow_bulk: bool = False,
 ) -> int:
     """清理目标目录中不在 managed_files 中的未跟踪文件。
 
@@ -3287,20 +3294,25 @@ def 清理目标未跟踪文件(
     备份文件（*.bak*）与同步状态文件（.sync.ffs_db）跳过不删，
     避免误删用户人工保留的历史版本。
 
-    安全规则：对于含子目录的托管目录（如 skills/），如果某个子条目
-    （如 skills/m_Zed单源工作区镜像生成_v1/）在 managed_files 中有
+    安全规则一（子条目保护）：对于含子目录的托管目录（如 skills/），如果某个
+    子条目（如 skills/m_Zed单源工作区镜像生成_v1/）在 managed_files 中有
     至少一个文件（如 SKILL.md），则该子条目内的所有文件（scripts/、
     README.md、assets/ 等）均受保护，不会被清理。只有完全不在
     managed_files 中的子条目才会被整体删除。
+
+    安全规则二（批量删除硬上限）：非 dry_run 时，若候选删除数超过
+    _cleanup批量删除硬上限（默认 200），默认中止整批删除并写入 warning，
+    需显式 allow_bulk=True 才继续，防止大规模误删事故。
 
     Returns:
         删除的文件数。
     """
 
-    deleted = 0
     target_root = target.target_path.resolve()
     if not target_root.exists():
         return 0
+
+    limit = _cleanup批量删除硬上限 if max_delete is None else max_delete
 
     # 预计算：每个托管目录下，哪些一级子条目是"已管理"的。
     # 只要该子条目在 managed_files 中出现过至少一个文件，就视为受保护。
@@ -3310,6 +3322,8 @@ def 清理目标未跟踪文件(
         if len(parts) >= 2:
             managed_sub_entries[parts[0]].add(parts[1])
 
+    # 第一阶段：收集候选删除文件（只算不删）。
+    candidates: list[tuple[Path, str]] = []
     for subdir_name in _托管目录扫描模式:
         subdir = target_root / subdir_name
         if not subdir.exists() or not subdir.is_dir():
@@ -3320,26 +3334,38 @@ def 清理目标未跟踪文件(
                 continue
             if _应跳过未跟踪清理(file_path):
                 continue
-            # 安全规则：如果该文件所属的一级子条目已被 AOB 管理，
-            # 则跳过（不删 scripts/、README.md 等 skill 附属资产）。
+            # 安全规则一：文件所属一级子条目已被 AOB 管理则跳过。
             rel_parts = file_path.relative_to(subdir).parts
             if len(rel_parts) >= 1 and rel_parts[0] in managed_entries:
                 continue
             rel = 规范路径(str(file_path.relative_to(target_root)))
             if rel in managed_files:
                 continue
-            # 该文件不在编译输出中，且不属于任何已管理的子条目，删除
-            deleted += 1
-            stats["deleted"] += 1
-            stats.setdefault("cleanup_unknown_files", []).append(rel)
-            stats["touched_paths"].append(str(file_path))
-            if dry_run:
-                continue
-            if journal is not None:
-                journal.记录将删除(file_path)
-            file_path.unlink()
-            if 路径在目录内(file_path.parent, target_root):
-                清理空目录到根(start_dir=file_path.parent, root_dir=target_root)
+            candidates.append((file_path, rel))
+
+    # 安全规则二：非 dry_run 且候选数超硬上限时默认中止整批删除。
+    if not dry_run and limit is not None and len(candidates) > limit and not allow_bulk:
+        stats["cleanup_aborted_bulk"] = len(candidates)
+        stats.setdefault("warnings", []).append(
+            f"清理中止：目标 {target.target_label} 候选删除 {len(candidates)} 个文件，"
+            f"超过硬上限 {limit}；如确需批量清理请显式传 allow_bulk=True 或先 dry_run 预览。"
+        )
+        return 0
+
+    # 第二阶段：执行删除。
+    deleted = 0
+    for file_path, rel in candidates:
+        deleted += 1
+        stats["deleted"] += 1
+        stats.setdefault("cleanup_unknown_files", []).append(rel)
+        stats["touched_paths"].append(str(file_path))
+        if dry_run:
+            continue
+        if journal is not None:
+            journal.记录将删除(file_path)
+        file_path.unlink()
+        if 路径在目录内(file_path.parent, target_root):
+            清理空目录到根(start_dir=file_path.parent, root_dir=target_root)
 
     return deleted
 
