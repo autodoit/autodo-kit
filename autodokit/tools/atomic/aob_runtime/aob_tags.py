@@ -8,6 +8,7 @@
 from __future__ import annotations
 
 from .aob_common import *
+from .aob_items import 读取_items, 写入_items, 写入关系表, 读取关系表
 
 import argparse
 import json
