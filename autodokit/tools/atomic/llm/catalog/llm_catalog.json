@@ -1,0 +1,593 @@
+{
+  "$comment": [
+    "autodo-kit 大模型目录（单一真相源）。",
+    "",
+    "用途：把「本工具可用的模型及其参数、能力、价格」与「调用顺序」外置为数据，",
+    "使新增/下架模型、调整路由顺序无需改动 Python 代码。",
+    "",
+    "字段设计参考 VS Code Copilot 的 chatLanguageModels.json（id/name/url/costLevel/",
+    "maxInputTokens/maxOutputTokens/toolCalling/vision），并补充路由所需的字段",
+    "（family/task_types/status/replacement/定价明细）。",
+    "",
+    "修改本文件后无需重启：调用 reload_catalog() 或重新导入模块即可生效。",
+    "读取失败时工具会退回内置默认值（不会中断运行），并给出告警。"
+  ],
+  "schema_version": 1,
+  "catalog_version": "2026-09-15",
+  "updated_at": "2026-09-15",
+
+  "currencies": {
+    "$comment": "定价币种。工具不做汇率换算，跨币种金额不可直接相加。",
+    "CNY": "人民币（阿里百炼计费币种）",
+    "USD": "美元（DeepSeek 官方计费币种）"
+  },
+
+  "regions": {
+    "cn-beijing": {
+      "base_url": "https://dashscope.aliyuncs.com/compatible-mode/v1",
+      "default": true
+    },
+    "ap-southeast-1": {
+      "base_url": "https://dashscope-intl.aliyuncs.com/compatible-mode/v1"
+    },
+    "us-east-1": {
+      "base_url": "https://dashscope-us.aliyuncs.com/compatible-mode/v1"
+    }
+  },
+
+  "providers": [
+    {
+      "$comment": "priority 越小越优先。auto 路由按 priority 升序逐个尝试（provider 级容灾）。",
+      "name": "deepseek",
+      "display_name": "DeepSeek 官方",
+      "priority": 10,
+      "sdk_backend": "openai-compatible",
+      "base_url": "https://api.deepseek.com/v1",
+      "default_model": "deepseek-flash",
+      "fallback_models": ["deepseek-v4-pro"],
+      "secret_name": "deepseek",
+      "env_api_key_name": "DEEPSEEK_API_KEY",
+      "is_local": false,
+      "extra_body": {},
+      "no_thinking_body": { "thinking": { "type": "disabled" } },
+      "notes": "独立账户，与百炼互为平台级容灾。密钥文件：deepseek_api-key_<profile>.txt"
+    },
+    {
+      "name": "bailian",
+      "display_name": "阿里百炼",
+      "priority": 20,
+      "sdk_backend": "openai-compatible",
+      "base_url": "https://dashscope.aliyuncs.com/compatible-mode/v1",
+      "default_model": "qwen3.7-plus",
+      "fallback_models": [],
+      "secret_name": "bailian",
+      "env_api_key_name": "DASHSCOPE_API_KEY",
+      "is_local": false,
+      "extra_body": {},
+      "no_thinking_body": { "enable_thinking": false },
+      "notes": "内部再叠模型级路由（地域/档位感知 + 跨厂商回退链）。密钥文件：bailian_api-key_<profile>.txt"
+    },
+    {
+      "name": "lmstudio",
+      "display_name": "LM Studio 本地",
+      "priority": 30,
+      "sdk_backend": "openai-compatible",
+      "base_url": "http://127.0.0.1:1234/v1",
+      "default_model": "qwen/qwen3.5-9b",
+      "fallback_models": [],
+      "secret_name": "lmstudio",
+      "env_api_key_name": "",
+      "is_local": true,
+      "extra_body": {},
+      "no_thinking_body": {},
+      "notes": "最后兜底；需本地服务在线。密钥文件：lmstudio_api-key_<profile>.txt"
+    }
+  ],
+
+  "vendor_rules": [
+    { "vendor": "alibaba", "prefixes": ["qwen", "tongyi", "gui-", "wan", "happyhorse"] },
+    { "vendor": "deepseek", "prefixes": ["deepseek"] },
+    { "vendor": "moonshot", "prefixes": ["kimi", "moonshot"] },
+    { "vendor": "zhipu", "prefixes": ["glm", "zhipu", "chatglm"] },
+    { "vendor": "minimax", "prefixes": ["minimax"] },
+    { "vendor": "xiaomi", "prefixes": ["mimo"] },
+    { "vendor": "tripo", "prefixes": ["tripo"] }
+  ],
+
+  "cn_only_prefixes": [
+    "qwen-long",
+    "qwen-math-",
+    "qwen-doc-",
+    "qwen-deep-research",
+    "tongyi-xiaomi-",
+    "tongyi-intent-detect-",
+    "gui-plus",
+    "qwen-audio-"
+  ],
+
+  "deprecated_replacements": {
+    "$comment": "仅在「同档位已被新一代直接取代」或「官方公告明示下线」时收录。'不在主推列表' 不等于 '已下线'。",
+    "qwen-turbo": "qwen3.8-flash",
+    "qwen-turbo-realtime": "qwen3.8-flash",
+    "qwen-vl-max": "qwen3.7-plus",
+    "qwen-vl-plus": "qwen3.7-plus",
+    "qwen-max": "qwen3.8-max",
+    "qwen-plus": "qwen3.7-plus",
+    "qwen-flash": "qwen3.8-flash",
+    "qwen3-max": "qwen3.8-max",
+    "qwen3-max-preview": "qwen3.8-max",
+    "qwen3.6-max-preview": "qwen3.8-max",
+    "qwq-plus": "qwen3.7-plus",
+    "qwen-math-turbo": "qwen3.7-plus",
+    "qwen-math-plus": "qwen3.7-plus",
+    "qwen-coder-turbo": "qwen3.7-plus",
+    "qwen-coder-plus": "qwen3.7-plus",
+    "qwen3-coder-plus": "qwen3.7-plus",
+    "qwen-long": "qwen3.7-plus",
+    "qwen-long-latest": "qwen3.7-plus",
+    "qwen-vl-ocr": "qwen3.7-plus",
+    "qwen-vl-ocr-latest": "qwen3.7-plus",
+    "qwen3-vl-plus": "qwen3.7-plus",
+    "qwen3-vl-flash": "qwen3.8-flash"
+  },
+
+  "cross_vendor_fallbacks": {
+    "$comment": [
+      "百炼平台内的跨厂商兜底链（排在同系列候选之后）。",
+      "边界：只抗『单模型族故障』，不抗账户级故障（欠费/封禁时同账户全模型同时失败）。"
+    ],
+    "models": [
+      "deepseek-v4.1-flash",
+      "deepseek-v4-pro-0813",
+      "kimi-k3",
+      "glm-5.2",
+      "MiniMax-M3"
+    ]
+  },
+
+  "task_pools": {
+    "$comment": "任务类型 × 成本档位 → 主模型。依据百炼「选择模型」页（2026-09-14 更新）。",
+    "general": { "cheap": "qwen3.8-flash", "balanced": "qwen3.7-plus", "premium": "qwen3.8-max" },
+    "vision": { "cheap": "qwen3.8-flash", "balanced": "qwen3.7-plus", "premium": "qwen3.8-max" },
+    "long_text": { "cheap": "qwen3.8-flash", "balanced": "qwen3.7-plus", "premium": "qwen3.8-max" },
+    "math_reasoning": { "cheap": "qwen3.8-flash", "balanced": "qwen3.7-plus", "premium": "qwen3.8-max" },
+    "coding": { "cheap": "qwen3.8-flash", "balanced": "qwen3.7-plus", "premium": "qwen3.8-max" }
+  },
+
+  "models": [
+    {
+      "$comment": "=== Qwen3.8 世代（百炼 2026-09 主推）===",
+      "id": "qwen3.8-max",
+      "vendor": "alibaba",
+      "provider": "bailian",
+      "display_name": "Qwen3.8 Max（旗舰·文本+视觉）",
+      "family": "qwen-max",
+      "status": "active",
+      "task_types": ["general", "long_text", "coding", "math_reasoning", "vision"],
+      "capabilities": {
+        "thinking": true,
+        "vision": true,
+        "tool_calling": true,
+        "json_output": true,
+        "streaming": true
+      },
+      "limits": { "max_input_tokens": 1000000, "max_output_tokens": 65536 },
+      "pricing": {
+        "currency": "CNY",
+        "unit": "per_million_tokens",
+        "input": 3.0,
+        "output": 12.0,
+        "source": "官方定价页",
+        "verified_at": "2026-09-15"
+      },
+      "cost_level": 6
+    },
+    {
+      "id": "qwen3.8-flash",
+      "vendor": "alibaba",
+      "provider": "bailian",
+      "display_name": "Qwen3.8 Flash（轻量·文本+视觉）",
+      "family": "qwen-flash",
+      "status": "active",
+      "task_types": ["general", "long_text", "coding", "math_reasoning", "vision"],
+      "capabilities": { "thinking": true, "vision": true, "tool_calling": true, "json_output": true, "streaming": true },
+      "limits": { "max_input_tokens": 1000000, "max_output_tokens": 65536 },
+      "pricing": { "currency": "CNY", "unit": "per_million_tokens", "input": 0.5, "output": 3.0, "source": "官方定价页", "verified_at": "2026-09-15" },
+      "cost_level": 1
+    },
+    {
+      "$comment": "plus 档官方尚未发布 3.8，qwen3.7-plus 仍为主推，故保持 active。",
+      "id": "qwen3.7-plus",
+      "vendor": "alibaba",
+      "provider": "bailian",
+      "display_name": "Qwen3.7 Plus（平衡·文本+视觉）",
+      "family": "qwen-plus",
+      "status": "active",
+      "task_types": ["general", "long_text", "coding", "math_reasoning", "vision"],
+      "capabilities": { "thinking": true, "vision": true, "tool_calling": true, "json_output": true, "streaming": true },
+      "limits": { "max_input_tokens": 1000000, "max_output_tokens": 65536 },
+      "pricing": { "currency": "CNY", "unit": "per_million_tokens", "input": 2.0, "output": 8.0, "source": "官方定价页", "verified_at": "2026-09-15" },
+      "cost_level": 2,
+      "notes": "通用默认模型（balanced 档）。"
+    },
+    {
+      "$comment": "以下两型曾被误标下线：官方仅列「主推款」，未列不等于下线。已按实证（VS Code Copilot 配置仍可用）恢复 active。",
+      "id": "qwen3.7-max",
+      "vendor": "alibaba",
+      "provider": "bailian",
+      "display_name": "Qwen3.7 Max（上一代旗舰·文本+视觉）",
+      "family": "qwen-max",
+      "status": "active",
+      "task_types": ["general", "long_text", "coding", "math_reasoning", "vision"],
+      "capabilities": { "thinking": true, "vision": true, "tool_calling": true, "json_output": true, "streaming": true },
+      "limits": { "max_input_tokens": 1000000, "max_output_tokens": 65536 },
+      "pricing": { "currency": "CNY", "unit": "per_million_tokens", "input": 3.0, "output": 12.0, "source": "同代同档量级估算", "verified_at": "" },
+      "cost_level": 6
+    },
+    {
+      "id": "qwen3.7-flash",
+      "vendor": "alibaba",
+      "provider": "bailian",
+      "display_name": "Qwen3.7 Flash（上一代轻量·文本+视觉）",
+      "family": "qwen-flash",
+      "status": "active",
+      "task_types": ["general", "long_text", "coding", "math_reasoning", "vision"],
+      "capabilities": { "thinking": true, "vision": true, "tool_calling": true, "json_output": true, "streaming": true },
+      "limits": { "max_input_tokens": 1000000, "max_output_tokens": 65536 },
+      "pricing": { "currency": "CNY", "unit": "per_million_tokens", "input": 0.5, "output": 3.0, "source": "同代同档量级估算", "verified_at": "" },
+      "cost_level": 1
+    },
+    {
+      "$comment": "=== Qwen3.6 / 3.5 世代（保留 active：无下线证据）===",
+      "id": "qwen3.6-plus",
+      "vendor": "alibaba",
+      "provider": "bailian",
+      "display_name": "Qwen3.6 Plus（上一代平衡）",
+      "family": "qwen-plus",
+      "status": "active",
+      "task_types": ["general", "long_text", "coding", "math_reasoning", "vision"],
+      "capabilities": { "thinking": true, "vision": true, "tool_calling": true, "json_output": true, "streaming": true },
+      "limits": { "max_input_tokens": 1000000, "max_output_tokens": 65536 },
+      "pricing": { "currency": "CNY", "unit": "per_million_tokens", "input": 2.0, "output": 12.0, "source": "同代同档量级估算", "verified_at": "" },
+      "cost_level": 2
+    },
+    {
+      "id": "qwen3.5-plus",
+      "vendor": "alibaba",
+      "provider": "bailian",
+      "display_name": "Qwen3.5 Plus（高性价比）",
+      "family": "qwen-plus",
+      "status": "active",
+      "task_types": ["general", "long_text", "coding", "math_reasoning", "vision"],
+      "capabilities": { "thinking": true, "vision": true, "tool_calling": true, "json_output": true, "streaming": true },
+      "limits": { "max_input_tokens": 1000000, "max_output_tokens": 65536 },
+      "pricing": { "currency": "CNY", "unit": "per_million_tokens", "input": 2.0, "output": 12.0, "source": "同代同档量级估算", "verified_at": "" },
+      "cost_level": 2
+    },
+    {
+      "id": "qwen3.5-flash",
+      "vendor": "alibaba",
+      "provider": "bailian",
+      "display_name": "Qwen3.5 Flash（低成本）",
+      "family": "qwen-flash",
+      "status": "active",
+      "task_types": ["general", "long_text", "coding"],
+      "capabilities": { "thinking": true, "vision": false, "tool_calling": true, "json_output": true, "streaming": true },
+      "limits": { "max_input_tokens": 1000000, "max_output_tokens": 32768 },
+      "pricing": { "currency": "CNY", "unit": "per_million_tokens", "input": 0.2, "output": 2.0, "source": "同代同档量级估算", "verified_at": "" },
+      "cost_level": 1
+    },
+    {
+      "$comment": "=== 百炼平台托管的第三方模型（构成跨厂商回退链）===",
+      "id": "deepseek-v4.1-flash",
+      "vendor": "deepseek",
+      "provider": "bailian",
+      "display_name": "DeepSeek V4.1 Flash（百炼托管·轻量推理）",
+      "family": "deepseek",
+      "status": "active",
+      "task_types": ["general", "long_text", "coding", "math_reasoning"],
+      "capabilities": { "thinking": true, "vision": false, "tool_calling": true, "json_output": true, "streaming": true },
+      "limits": { "max_input_tokens": 1000000, "max_output_tokens": 32768 },
+      "pricing": { "currency": "CNY", "unit": "per_million_tokens", "input": 1.0, "output": 4.0, "source": "同档量级估算", "verified_at": "" },
+      "cost_level": 2
+    },
+    {
+      "id": "deepseek-v4-pro-0813",
+      "vendor": "deepseek",
+      "provider": "bailian",
+      "display_name": "DeepSeek V4 Pro 0813（百炼托管·深度推理）",
+      "family": "deepseek",
+      "status": "active",
+      "task_types": ["general", "long_text", "coding", "math_reasoning"],
+      "capabilities": { "thinking": true, "vision": false, "tool_calling": true, "json_output": true, "streaming": true },
+      "limits": { "max_input_tokens": 1000000, "max_output_tokens": 32768 },
+      "pricing": { "currency": "CNY", "unit": "per_million_tokens", "input": 3.5, "output": 14.0, "source": "同档量级估算", "verified_at": "" },
+      "cost_level": 5
+    },
+    {
+      "id": "kimi-k3",
+      "vendor": "moonshot",
+      "provider": "bailian",
+      "display_name": "Kimi K3（百炼托管·长上下文）",
+      "family": "kimi",
+      "status": "active",
+      "task_types": ["general", "long_text", "math_reasoning"],
+      "capabilities": { "thinking": true, "vision": true, "tool_calling": true, "json_output": true, "streaming": true },
+      "limits": { "max_input_tokens": 256000, "max_output_tokens": 32768 },
+      "pricing": { "currency": "CNY", "unit": "per_million_tokens", "input": 2.0, "output": 8.0, "source": "同档量级估算", "verified_at": "" },
+      "cost_level": 5
+    },
+    {
+      "id": "glm-5.2",
+      "vendor": "zhipu",
+      "provider": "bailian",
+      "display_name": "GLM 5.2（百炼托管·通用）",
+      "family": "glm",
+      "status": "active",
+      "task_types": ["general", "coding", "math_reasoning"],
+      "capabilities": { "thinking": true, "vision": false, "tool_calling": true, "json_output": true, "streaming": true },
+      "limits": { "max_input_tokens": 1000000, "max_output_tokens": 32768 },
+      "pricing": { "currency": "CNY", "unit": "per_million_tokens", "input": 2.0, "output": 8.0, "source": "同档量级估算", "verified_at": "" },
+      "cost_level": 5
+    },
+    {
+      "id": "MiniMax-M3",
+      "vendor": "minimax",
+      "provider": "bailian",
+      "display_name": "MiniMax M3（百炼托管）",
+      "family": "minimax",
+      "status": "active",
+      "task_types": ["general", "long_text"],
+      "capabilities": { "thinking": true, "vision": false, "tool_calling": true, "json_output": true, "streaming": true },
+      "limits": { "max_input_tokens": 1000000, "max_output_tokens": 16384 },
+      "pricing": { "currency": "CNY", "unit": "per_million_tokens", "input": 1.0, "output": 4.0, "source": "同档量级估算", "verified_at": "" },
+      "cost_level": 2
+    },
+    {
+      "$comment": "=== DeepSeek 官方直连（provider=deepseek）===",
+      "id": "deepseek-flash",
+      "vendor": "deepseek",
+      "provider": "deepseek",
+      "display_name": "DeepSeek V4.1 Flash（官方直连·文本+视觉）",
+      "family": "deepseek",
+      "status": "active",
+      "task_types": ["general", "long_text", "coding", "math_reasoning", "vision"],
+      "capabilities": { "thinking": true, "vision": true, "tool_calling": true, "json_output": true, "streaming": true },
+      "limits": { "max_input_tokens": 1000000, "max_output_tokens": 384000 },
+      "pricing": {
+        "currency": "USD",
+        "unit": "per_million_tokens",
+        "input": 0.3,
+        "output": 1.2,
+        "input_offpeak": 0.15,
+        "output_offpeak": 0.6,
+        "source": "官方定价页（高峰价；低谷为半价）",
+        "verified_at": "2026-09-15"
+      },
+      "cost_level": 1,
+      "notes": "旧名 deepseek-v4-flash / deepseek-v4-flash-vision-exp 请求亦由此模型承接。"
+    },
+    {
+      "id": "deepseek-v4-pro",
+      "vendor": "deepseek",
+      "provider": "deepseek",
+      "display_name": "DeepSeek V4 Pro（官方直连·深度推理·无视觉）",
+      "family": "deepseek",
+      "status": "active",
+      "task_types": ["general", "long_text", "coding", "math_reasoning"],
+      "capabilities": { "thinking": true, "vision": false, "tool_calling": true, "json_output": true, "streaming": true },
+      "limits": { "max_input_tokens": 1000000, "max_output_tokens": 384000 },
+      "pricing": {
+        "currency": "USD",
+        "unit": "per_million_tokens",
+        "input": 1.32,
+        "output": 3.96,
+        "input_offpeak": 0.66,
+        "output_offpeak": 1.98,
+        "source": "官方定价页（高峰价）",
+        "verified_at": "2026-09-15"
+      },
+      "cost_level": 7
+    },
+    {
+      "id": "deepseek-v4-flash",
+      "vendor": "deepseek",
+      "provider": "deepseek",
+      "display_name": "DeepSeek V4 Flash（旧名·请求由 Flash 承接）",
+      "family": "deepseek",
+      "status": "active",
+      "task_types": ["general", "long_text", "coding", "math_reasoning", "vision"],
+      "capabilities": { "thinking": true, "vision": true, "tool_calling": true, "json_output": true, "streaming": true },
+      "limits": { "max_input_tokens": 1000000, "max_output_tokens": 384000 },
+      "pricing": { "currency": "USD", "unit": "per_million_tokens", "input": 0.3, "output": 1.2, "input_offpeak": 0.15, "output_offpeak": 0.6, "source": "官方公告：旧名按 Flash 价计费", "verified_at": "2026-09-15" },
+      "cost_level": 1,
+      "notes": "兼容别名，非独立模型。"
+    },
+    {
+      "$comment": "=== 本地 LM Studio ===",
+      "id": "qwen/qwen3.5-9b",
+      "vendor": "alibaba",
+      "provider": "lmstudio",
+      "display_name": "Qwen3.5-9B（本地·免费离线）",
+      "family": "qwen",
+      "status": "active",
+      "task_types": ["general", "long_text", "coding"],
+      "capabilities": { "thinking": true, "vision": false, "tool_calling": true, "json_output": false, "streaming": true },
+      "limits": { "max_input_tokens": 131072, "max_output_tokens": 8192 },
+      "pricing": { "currency": "CNY", "unit": "per_million_tokens", "input": 0.0, "output": 0.0, "source": "本地运行，无调用费用", "verified_at": "" },
+      "cost_level": 0,
+      "notes": "JSON 遵从度弱于云端，用于打标等结构化任务时需抽样校验。"
+    },
+    {
+      "id": "qwen/qwen3.6-35b-a3b",
+      "vendor": "alibaba",
+      "provider": "lmstudio",
+      "display_name": "Qwen3.6-35B-A3B（本地·MoE·免费离线）",
+      "family": "qwen",
+      "status": "active",
+      "task_types": ["general", "long_text"],
+      "capabilities": {
+        "thinking": false,
+        "vision": false,
+        "tool_calling": true,
+        "json_output": true,
+        "streaming": true
+      },
+      "limits": { "max_input_tokens": 262144, "max_output_tokens": 8192 },
+      "pricing": {
+        "currency": "CNY",
+        "unit": "per_million_tokens",
+        "input": 0.0,
+        "output": 0.0,
+        "source": "本地运行，无调用费用",
+        "verified_at": ""
+      },
+      "cost_level": 0,
+      "notes": "MoE 架构（激活约 3B），实测长词表打标约 55 秒/批且直接输出合规 JSON。"
+    },
+    {
+      "id": "qwen3.8-27b-mlx",
+      "vendor": "alibaba",
+      "provider": "lmstudio",
+      "display_name": "Qwen3.8-27B（本地·AzureML/MLX·免费离线）",
+      "family": "qwen",
+      "status": "active",
+      "task_types": ["general", "long_text"],
+      "capabilities": {
+        "thinking": false,
+        "vision": false,
+        "tool_calling": true,
+        "json_output": true,
+        "streaming": true
+      },
+      "limits": { "max_input_tokens": 262144, "max_output_tokens": 8192 },
+      "pricing": {
+        "currency": "CNY",
+        "unit": "per_million_tokens",
+        "input": 0.0,
+        "output": 0.0,
+        "source": "本地运行，无调用费用",
+        "verified_at": ""
+      },
+      "cost_level": 0,
+      "notes": "实测长词表打标约 70 秒/批，输出合规 JSON；作为本地备选。"
+    },
+
+    {
+      "$comment": "=== 已下线 / 被替代（保留条目以便路由替换与审计）==="
+    },
+    {
+      "id": "qwen3-max",
+      "vendor": "alibaba",
+      "provider": "bailian",
+      "display_name": "Qwen3 Max（已被 3.8 取代）",
+      "family": "qwen-max",
+      "status": "deprecated",
+      "replacement": "qwen3.8-max",
+      "task_types": ["general", "long_text", "coding", "math_reasoning"],
+      "capabilities": { "thinking": true, "vision": false, "tool_calling": true, "json_output": true, "streaming": true },
+      "limits": { "max_input_tokens": 262144, "max_output_tokens": 32768 },
+      "pricing": { "currency": "CNY", "unit": "per_million_tokens", "input": 2.5, "output": 10.0, "source": "历史定价", "verified_at": "" },
+      "cost_level": 5
+    },
+    {
+      "id": "qwen3-coder-plus",
+      "vendor": "alibaba",
+      "provider": "bailian",
+      "display_name": "Qwen3 Coder Plus（已下线）",
+      "family": "qwen-coder",
+      "status": "deprecated",
+      "replacement": "qwen3.7-plus",
+      "task_types": ["coding", "general", "long_text"],
+      "capabilities": { "thinking": true, "vision": false, "tool_calling": true, "json_output": true, "streaming": true },
+      "limits": { "max_input_tokens": 1000000, "max_output_tokens": 65536 },
+      "pricing": { "currency": "CNY", "unit": "per_million_tokens", "input": 4.0, "output": 16.0, "source": "历史定价", "verified_at": "" },
+      "cost_level": 6
+    },
+    {
+      "id": "qwen3-coder-flash",
+      "vendor": "alibaba",
+      "provider": "bailian",
+      "display_name": "Qwen3 Coder Flash（代码向轻量）",
+      "family": "qwen-coder",
+      "status": "active",
+      "task_types": ["coding", "general"],
+      "capabilities": { "thinking": true, "vision": false, "tool_calling": true, "json_output": true, "streaming": true },
+      "limits": { "max_input_tokens": 1000000, "max_output_tokens": 65536 },
+      "pricing": { "currency": "CNY", "unit": "per_million_tokens", "input": 1.5, "output": 6.0, "source": "同档量级估算", "verified_at": "" },
+      "cost_level": 3
+    },
+    {
+      "id": "qwen3-vl-plus",
+      "vendor": "alibaba",
+      "provider": "bailian",
+      "display_name": "Qwen3 VL Plus（视觉·已被统一多模态取代）",
+      "family": "qwen-vl",
+      "status": "deprecated",
+      "replacement": "qwen3.7-plus",
+      "task_types": ["vision", "general"],
+      "capabilities": { "thinking": true, "vision": true, "tool_calling": true, "json_output": true, "streaming": true },
+      "limits": { "max_input_tokens": 262144, "max_output_tokens": 32768 },
+      "pricing": { "currency": "CNY", "unit": "per_million_tokens", "input": 1.0, "output": 10.0, "source": "历史定价", "verified_at": "" },
+      "cost_level": 4
+    },
+    {
+      "id": "qwen3-vl-flash",
+      "vendor": "alibaba",
+      "provider": "bailian",
+      "display_name": "Qwen3 VL Flash（视觉轻量·已取代）",
+      "family": "qwen-vl",
+      "status": "deprecated",
+      "replacement": "qwen3.8-flash",
+      "task_types": ["vision"],
+      "capabilities": { "thinking": true, "vision": true, "tool_calling": true, "json_output": true, "streaming": true },
+      "limits": { "max_input_tokens": 262144, "max_output_tokens": 32768 },
+      "pricing": { "currency": "CNY", "unit": "per_million_tokens", "input": 1.0, "output": 10.0, "source": "历史定价", "verified_at": "" },
+      "cost_level": 3
+    },
+    {
+      "id": "qwen-vl-ocr",
+      "vendor": "alibaba",
+      "provider": "bailian",
+      "display_name": "Qwen VL OCR（OCR 专用·已取代）",
+      "family": "qwen-ocr",
+      "status": "deprecated",
+      "replacement": "qwen3.7-plus",
+      "cn_only": true,
+      "task_types": ["vision"],
+      "capabilities": { "thinking": false, "vision": true, "tool_calling": false, "json_output": false, "streaming": true },
+      "limits": { "max_input_tokens": 38192, "max_output_tokens": 8192 },
+      "pricing": { "currency": "CNY", "unit": "per_million_tokens", "input": 0.3, "output": 0.5, "source": "历史定价", "verified_at": "" },
+      "cost_level": 1
+    },
+    {
+      "id": "qwq-plus",
+      "vendor": "alibaba",
+      "provider": "bailian",
+      "display_name": "QwQ Plus（推理专用·已下线）",
+      "family": "qwq",
+      "status": "deprecated",
+      "replacement": "qwen3.7-plus",
+      "task_types": ["math_reasoning", "general"],
+      "capabilities": { "thinking": true, "vision": false, "tool_calling": true, "json_output": false, "streaming": true },
+      "limits": { "max_input_tokens": 131072, "max_output_tokens": 32768 },
+      "pricing": { "currency": "CNY", "unit": "per_million_tokens", "input": 1.6, "output": 4.0, "source": "历史定价", "verified_at": "" },
+      "cost_level": 3
+    },
+    {
+      "id": "qwen-long",
+      "vendor": "alibaba",
+      "provider": "bailian",
+      "display_name": "Qwen Long（超长上下文·已下线）",
+      "family": "qwen-long",
+      "status": "deprecated",
+      "replacement": "qwen3.7-plus",
+      "cn_only": true,
+      "task_types": ["long_text"],
+      "capabilities": { "thinking": false, "vision": false, "tool_calling": false, "json_output": false, "streaming": true },
+      "limits": { "max_input_tokens": 10000000, "max_output_tokens": 32768 },
+      "pricing": { "currency": "CNY", "unit": "per_million_tokens", "input": 0.5, "output": 2.0, "source": "历史定价", "verified_at": "" },
+      "cost_level": 1
+    }
+  ]
+}

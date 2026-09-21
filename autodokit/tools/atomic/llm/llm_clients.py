@@ -253,10 +253,11 @@ class ModelRoutingPlan:
         sdk_backend: 调用后端。
         base_url: 对应地域 base_url。
         estimated_input_tokens: 输入 Token 估算。
-        estimated_min_cost: 最低成本估算（单次请求，元）。
-        estimated_max_cost: 最高成本估算（单次请求，元）。
+        estimated_min_cost: 最低成本估算（单次请求）。**币种随模型而定**
+            （百炼系为 CNY、DeepSeek 官方直连为 USD，见目录的 ``pricing.currency``）。
+        estimated_max_cost: 最高成本估算（单次请求）。
         reason: 决策说明。
-        catalog_version: 目录版本。
+        catalog_version: 目录版本，取自 ``llm_catalog.json``。
     """
 
     primary_model: str
@@ -272,7 +273,8 @@ class ModelRoutingPlan:
     estimated_min_cost: float
     estimated_max_cost: float
     reason: str
-    catalog_version: str = "2026-04-03"
+    catalog_version: str = "unknown"
+    """目录版本；实际值取自 ``llm_catalog.json`` 的 ``catalog_version``。"""
 
 
 @dataclass(frozen=True)
@@ -348,7 +350,177 @@ class AliyunLLMConfig:
 
 _AUTO_MODEL_ALIASES = {"", "auto", "smart", "auto-model", "smart-model"}
 
-_REGION_BASE_URL_MAP: Dict[str, str] = {
+
+# ==========================================================================
+# 目录桥接：**数据文件优先，硬编码兜底**
+# ==========================================================================
+#
+# 模型清单、任务池、回退链、下线映射、厂商规则、地域端点等全部来自
+# ``catalog/llm_catalog.json``（单一真相源）。本模块只保留一份 ``_FALLBACK_*``
+# 副本，用于数据文件缺失或损坏时降级——保证工具永不因目录问题而不可用。
+#
+# 注意：``_FALLBACK_*`` 是**兜底快照**，不是主数据。调整模型请改 JSON。
+
+_CATALOG_WARNINGS: List[str] = []
+
+
+def _catalog_or_none() -> Any:
+    """惰性获取目录对象（失败时记录一次告警并返回 None）。
+
+    Returns:
+        ``Catalog`` 实例；不可用时为 None。
+    """
+
+    try:
+        from autodokit.tools.atomic.llm.llm_catalog import try_load_catalog
+
+        catalog, error = try_load_catalog()
+        if catalog is None:
+            if not _CATALOG_WARNINGS or _CATALOG_WARNINGS[-1] != error:
+                _CATALOG_WARNINGS.append(error)
+            return None
+        return catalog
+    except Exception as exc:  # noqa: BLE001 - 目录不可用不应中断调用
+        message = f"{type(exc).__name__}: {exc}"
+        if not _CATALOG_WARNINGS or _CATALOG_WARNINGS[-1] != message:
+            _CATALOG_WARNINGS.append(message)
+        return None
+
+
+def catalog_warnings() -> List[str]:
+    """返回目录加载期的告警（供自检与排障）。
+
+    Returns:
+        告警列表（同一原因只记一次）。
+    """
+
+    return list(_CATALOG_WARNINGS)
+
+
+def _get_model_catalog() -> Dict[str, ModelCatalogEntry]:
+    """取得模型目录（数据文件优先，兜底为内置快照）。
+
+    Returns:
+        模型名 → 目录条目。
+    """
+
+    catalog = _catalog_or_none()
+    if catalog is None:
+        return dict(_FALLBACK_MODEL_CATALOG)
+
+    entries: Dict[str, ModelCatalogEntry] = {}
+    for item in catalog.models.values():
+        caps = item.capabilities
+        entries[item.id] = ModelCatalogEntry(
+            model=item.id,
+            family=item.family or "custom",
+            task_types=tuple(item.task_types),  # type: ignore[arg-type]
+            supports_thinking=caps.thinking,
+            supports_vision=caps.vision,
+            cn_only=item.cn_only or catalog.is_cn_only(item.id),
+            input_price_per_million_min=item.pricing.input,
+            output_price_per_million_min=item.pricing.output,
+            context_limit=item.max_input_tokens or 131072,
+            status=item.status,  # type: ignore[arg-type]
+            replacement=item.replacement,
+        )
+    return entries or dict(_FALLBACK_MODEL_CATALOG)
+
+
+def _get_model_pool() -> Dict[TaskType, Dict[BudgetTier, str]]:
+    """取得「任务类型 × 成本档位 → 主模型」映射。
+
+    Returns:
+        任务池映射。
+    """
+
+    catalog = _catalog_or_none()
+    if catalog is None or not catalog.task_pools:
+        return {key: dict(value) for key, value in _FALLBACK_MODEL_POOL.items()}
+    pool: Dict[TaskType, Dict[BudgetTier, str]] = {}
+    for task_type, tiers in catalog.task_pools.items():
+        pool[task_type] = dict(tiers)  # type: ignore[index]
+    return pool or {key: dict(value) for key, value in _FALLBACK_MODEL_POOL.items()}
+
+
+def _get_cross_vendor_fallbacks() -> tuple[str, ...]:
+    """取得百炼平台内的跨厂商兜底链。
+
+    Returns:
+        模型名元组（保序）。
+    """
+
+    catalog = _catalog_or_none()
+    if catalog is None or not catalog.cross_vendor_fallbacks:
+        return _FALLBACK_CROSS_VENDOR_FALLBACKS
+    return tuple(catalog.cross_vendor_fallbacks)
+
+
+def _get_deprecated_replacements() -> Dict[str, str]:
+    """取得下线模型 → 替代模型映射。
+
+    Returns:
+        映射字典。
+    """
+
+    catalog = _catalog_or_none()
+    if catalog is None or not catalog.deprecated_replacements:
+        return dict(_FALLBACK_DEPRECATED_MODEL_REPLACEMENTS)
+    return dict(catalog.deprecated_replacements)
+
+
+def _get_cn_only_prefixes() -> tuple[str, ...]:
+    """取得「仅中国内地」的模型名前缀集合。
+
+    Returns:
+        前缀元组。
+    """
+
+    catalog = _catalog_or_none()
+    if catalog is None or not catalog.cn_only_prefixes:
+        return _FALLBACK_CN_ONLY_MODEL_PREFIXES
+    return tuple(catalog.cn_only_prefixes)
+
+
+def _get_region_base_url_map() -> Dict[str, str]:
+    """取得地域 → OpenAI 兼容端点映射。
+
+    Returns:
+        端点映射。
+    """
+
+    catalog = _catalog_or_none()
+    if catalog is None or not catalog.region_base_urls:
+        return dict(_FALLBACK_REGION_BASE_URL_MAP)
+    return dict(catalog.region_base_urls)
+
+
+def _get_vendor_rules() -> tuple[tuple[tuple[str, ...], str], ...]:
+    """取得厂商标识规则（前缀 → 厂商）。
+
+    Returns:
+        规则元组。
+    """
+
+    catalog = _catalog_or_none()
+    if catalog is None or not catalog.vendor_rules:
+        return _FALLBACK_MODEL_VENDOR_RULES
+    return tuple((prefixes, vendor) for vendor, prefixes in catalog.vendor_rules)
+
+
+def _get_catalog_version() -> str:
+    """取得目录内容版本（写入路由计划便于审计）。
+
+    Returns:
+        版本字符串；目录不可用时为空串。
+    """
+
+    catalog = _catalog_or_none()
+    return str(catalog.catalog_version) if catalog is not None else ""
+
+
+#: 兜底快照：数据文件不可用时使用。勿直接引用，请用 :func:`_get_region_base_url_map` 等访问器。
+_FALLBACK_REGION_BASE_URL_MAP: Dict[str, str] = {
     "cn-beijing": "https://dashscope.aliyuncs.com/compatible-mode/v1",
     "ap-southeast-1": "https://dashscope-intl.aliyuncs.com/compatible-mode/v1",
     "us-east-1": "https://dashscope-us.aliyuncs.com/compatible-mode/v1",
@@ -356,7 +528,7 @@ _REGION_BASE_URL_MAP: Dict[str, str] = {
 
 #: 按阿里百炼官方文档定义的“仅中国内地部署模式”模型前缀集合。
 #: 说明：这里采用“保守”策略——仅对白名单前缀做地域限制，避免误判导致不必要降级。
-_CN_ONLY_MODEL_PREFIXES: tuple[str, ...] = (
+_FALLBACK_CN_ONLY_MODEL_PREFIXES: tuple[str, ...] = (
     "qwen-long",
     "qwen-math-",
     "qwen-doc-",
@@ -368,22 +540,31 @@ _CN_ONLY_MODEL_PREFIXES: tuple[str, ...] = (
 )
 
 #: 一些老型号在官方文档中已明确“后续不再更新”的替代关系。
-#: 更新依据：阿里云百炼 2026-10-10 模型下线公告
-#: （https://www.aliyun.com/notice/118177、118344、118345、118434 等）。
-#: 下线主线模型：qwen-turbo、qwen-vl-max、qwen-vl-plus、qwq-plus、qwen-max、
-#: qwen-plus、qwen-flash、qwen3-max、qwen3-vl-flash、qwen3-coder-plus、qwen-long 等；
-#: 官方推荐迁移到 Qwen3.6/Qwen3.7 系列最新模型。
-_DEPRECATED_MODEL_REPLACEMENTS: Dict[str, str] = {
-    "qwen-turbo": "qwen3.7-flash",
-    "qwen-turbo-realtime": "qwen3.7-flash",
+#:
+#: 更新依据：
+#: 1. 阿里云百炼 2026-10-10 模型下线公告
+#:    （https://www.aliyun.com/notice/118177、118344、118345、118434 等）：
+#:    qwen-turbo、qwen-vl-max、qwq-plus、qwen-max、qwen-plus、qwen-flash、
+#:    qwen3-max、qwen3-coder-plus、qwen-long 等；
+#: 2. 百炼「选择模型」页（更新时间 2026-09-14）：文本生成主推
+#:    ``qwen3.8-max`` / ``qwen3.7-plus`` / ``qwen3.8-flash``。
+#:
+#: **收录边界（重要）**：只收录“同档位已被新一代直接取代”或“官方公告明示下线”的模型。
+#: “不在主推列表”**不等于**“已下线”——官方只列每档主推款，其余历史版本仍可调用。
+#: 因此 ``qwen3.6-plus`` ``qwen3.5-plus`` ``qwen3.5-flash`` 这类上一代型号保留为
+#: active（无下线证据）；仅将 3.7 代的 max/flash 映射到已发布的 3.8 同档型号，
+#: 而 ``qwen3.7-plus`` 因官方仍主推（plus 档尚未发 3.8）而保持不动。
+_FALLBACK_DEPRECATED_MODEL_REPLACEMENTS: Dict[str, str] = {
+    "qwen-turbo": "qwen3.8-flash",
+    "qwen-turbo-realtime": "qwen3.8-flash",
     "qwen-vl-max": "qwen3.7-plus",
     "qwen-vl-plus": "qwen3.7-plus",
-    "qwen-max": "qwen3.7-max",
+    "qwen-max": "qwen3.8-max",
     "qwen-plus": "qwen3.7-plus",
-    "qwen-flash": "qwen3.7-flash",
-    "qwen3-max": "qwen3.7-max",
-    "qwen3-max-preview": "qwen3.7-max",
-    "qwen3.6-max-preview": "qwen3.7-max",
+    "qwen-flash": "qwen3.8-flash",
+    "qwen3-max": "qwen3.8-max",
+    "qwen3-max-preview": "qwen3.8-max",
+    "qwen3.6-max-preview": "qwen3.8-max",
     "qwq-plus": "qwen3.7-plus",
     "qwen-math-turbo": "qwen3.7-plus",
     "qwen-math-plus": "qwen3.7-plus",
@@ -395,45 +576,117 @@ _DEPRECATED_MODEL_REPLACEMENTS: Dict[str, str] = {
     "qwen-vl-ocr": "qwen3.7-plus",
     "qwen-vl-ocr-latest": "qwen3.7-plus",
     "qwen3-vl-plus": "qwen3.7-plus",
-    "qwen3-vl-flash": "qwen3.7-flash",
+    "qwen3-vl-flash": "qwen3.8-flash",
 }
 
-_DEFAULT_MODEL_POOL: Dict[TaskType, Dict[BudgetTier, str]] = {
-    # 文本通用：优先使用官方当前主推的 Qwen3.7 稳定版命名。
+#: 各任务类型 × 成本档位的**主模型**。
+#:
+#: 命名依据：百炼「选择模型」页（2026-09-14 更新）文本生成/视觉理解两节的
+#: 前三位主推模型——``qwen3.8-max`` / ``qwen3.7-plus`` / ``qwen3.8-flash``。
+#: 注意 plus 档官方尚未发布 3.8，故 balanced 仍用 ``qwen3.7-plus``。
+_FALLBACK_MODEL_POOL: Dict[TaskType, Dict[BudgetTier, str]] = {
+    # 文本通用。
     "general": {
-        "cheap": "qwen3.7-flash",
+        "cheap": "qwen3.8-flash",
         "balanced": "qwen3.7-plus",
-        "premium": "qwen3.7-max",
+        "premium": "qwen3.8-max",
     },
-    # 视觉理解：Qwen3.7 系列已统一多模态能力，覆盖 OCR、图像问答、图表理解。
+    # 视觉理解：Qwen3.8/3.7 系列已统一多模态能力，覆盖 OCR、图像问答、图表理解。
     "vision": {
-        "cheap": "qwen3.7-flash",
+        "cheap": "qwen3.8-flash",
         "balanced": "qwen3.7-plus",
-        "premium": "qwen3.7-max",
+        "premium": "qwen3.8-max",
     },
-    # 长文本：qwen-long 已下线，改由 Qwen3.7 系列（百万级上下文）承接。
+    # 长文本：qwen-long 已下线，改由 Qwen3.x 系列（百万级上下文）承接。
     "long_text": {
-        "cheap": "qwen3.7-flash",
+        "cheap": "qwen3.8-flash",
         "balanced": "qwen3.7-plus",
-        "premium": "qwen3.7-max",
+        "premium": "qwen3.8-max",
     },
-    # 数学/推理：QwQ 系列已下线，由 Qwen3.7 深度思考能力承接。
+    # 数学/推理：QwQ 系列已下线，由 Qwen3.x 深度思考能力承接。
     "math_reasoning": {
-        "cheap": "qwen3.7-flash",
+        "cheap": "qwen3.8-flash",
         "balanced": "qwen3.7-plus",
-        "premium": "qwen3.7-max",
+        "premium": "qwen3.8-max",
     },
-    # 代码：qwen3-coder-plus 已下线，Qwen3.7 系列具备同等代码能力。
+    # 代码：qwen3-coder-plus 已下线，Qwen3.x 系列具备同等代码能力。
     "coding": {
-        "cheap": "qwen3.7-flash",
+        "cheap": "qwen3.8-flash",
         "balanced": "qwen3.7-plus",
-        "premium": "qwen3.7-max",
+        "premium": "qwen3.8-max",
     },
 }
 
-_DEFAULT_MODEL_CATALOG: Dict[str, ModelCatalogEntry] = {
-    "qwen3.7-max": ModelCatalogEntry(
-        model="qwen3.7-max",
+#: **跨厂商**回退候选（同一百炼账号下的异构模型）。
+#:
+#: 用途：抵抗「单一模型族故障 / 限流 / 下线」——例如某厂模型临时不可用或其
+#: 配额耗尽时，可自动切到另一厂的模型完成本次调用。
+#:
+#: 重要边界：本列表**不抵抗账户级故障**（欠费、封禁、额度耗尽）。
+#: 若需要跨「账号/平台」容灾，必须在 provider 层切换（见 ``llm_providers``）。
+#: 两者是互补关系：provider 层抗平台故障，模型层抗单模型故障。
+#:
+#: 排序原则：先追求「同价位可替代」（价格量级接近、能力相当），再考虑异构。
+_FALLBACK_CROSS_VENDOR_FALLBACKS: tuple[str, ...] = (
+    "deepseek-v4.1-flash",
+    "deepseek-v4-pro-0813",
+    "kimi-k3",
+    "glm-5.2",
+    "MiniMax-M3",
+)
+
+#: 模型名 → 厂商标识。用于审计「本次切换到了哪家厂商」。
+#: 未收录者回退为 ``_VENDOR_UNKNOWN``，不抛异常（避免新模型导致路由中断）。
+_VENDOR_UNKNOWN = "unknown"
+
+_FALLBACK_MODEL_VENDOR_RULES: tuple[tuple[tuple[str, ...], str], ...] = (
+    (("qwen", "tongyi", "gui-", "wan", "happyhorse"), "alibaba"),
+    (("deepseek",), "deepseek"),
+    (("kimi", "moonshot"), "moonshot"),
+    (("glm", "zhipu", "chatglm"), "zhipu"),
+    (("minimax",), "minimax"),
+    (("mimo",), "xiaomi"),
+    (("tripo",), "tripo"),
+)
+
+
+def _infer_model_vendor(model: str) -> str:
+    """推断模型所属厂商（用于切换审计）。
+
+    Args:
+        model: 模型名（可含 ``厂商/`` 前缀）。
+
+    Returns:
+        厂商标识；无法识别时为 ``unknown``。
+
+    Examples:
+        >>> _infer_model_vendor("qwen3.8-max")
+        'alibaba'
+        >>> _infer_model_vendor("deepseek-v4-pro-0813")
+        'deepseek'
+        >>> _infer_model_vendor("ZHIPU/GLM-5.3")
+        'zhipu'
+    """
+
+    lowered = str(model or "").strip().lower()
+    if not lowered:
+        return _VENDOR_UNKNOWN
+    rules = _get_vendor_rules()
+    # 带 ``厂商/`` 前缀时优先用前缀判定（如 ``kimi/kimi-k3``、``ZHIPU/GLM-5.3``）。
+    head = lowered.split("/", 1)[0]
+    for prefixes, vendor in rules:
+        if any(head.startswith(prefix) for prefix in prefixes):
+            return vendor
+    for prefixes, vendor in rules:
+        if any(lowered.startswith(prefix) for prefix in prefixes):
+            return vendor
+    return _VENDOR_UNKNOWN
+
+
+_FALLBACK_MODEL_CATALOG: Dict[str, ModelCatalogEntry] = {
+    # ---- Qwen3.8 世代（百炼 2026-09-14 主推）----
+    "qwen3.8-max": ModelCatalogEntry(
+        model="qwen3.8-max",
         family="qwen-max",
         task_types=("general", "long_text", "coding", "math_reasoning", "vision"),
         supports_thinking=True,
@@ -442,6 +695,18 @@ _DEFAULT_MODEL_CATALOG: Dict[str, ModelCatalogEntry] = {
         output_price_per_million_min=12.0,
         context_limit=1000000,
     ),
+    "qwen3.8-flash": ModelCatalogEntry(
+        model="qwen3.8-flash",
+        family="qwen-flash",
+        task_types=("general", "long_text", "coding", "math_reasoning", "vision"),
+        supports_thinking=True,
+        supports_vision=True,
+        input_price_per_million_min=0.5,
+        output_price_per_million_min=3.0,
+        context_limit=1000000,
+    ),
+    # ---- Qwen3.7 世代 ----
+    #: plus 档官方尚未发布 3.8，``qwen3.7-plus`` 仍为主推且为通用默认模型，保持 active。
     "qwen3.7-plus": ModelCatalogEntry(
         model="qwen3.7-plus",
         family="qwen-plus",
@@ -452,6 +717,18 @@ _DEFAULT_MODEL_CATALOG: Dict[str, ModelCatalogEntry] = {
         output_price_per_million_min=8.0,
         context_limit=1000000,
     ),
+    "qwen3.7-max": ModelCatalogEntry(
+        model="qwen3.7-max",
+        family="qwen-max",
+        task_types=("general", "long_text", "coding", "math_reasoning", "vision"),
+        supports_thinking=True,
+        supports_vision=True,
+        input_price_per_million_min=3.0,
+        output_price_per_million_min=12.0,
+        context_limit=1000000,
+        status="deprecated",
+        replacement="qwen3.8-max",
+    ),
     "qwen3.7-flash": ModelCatalogEntry(
         model="qwen3.7-flash",
         family="qwen-flash",
@@ -461,6 +738,56 @@ _DEFAULT_MODEL_CATALOG: Dict[str, ModelCatalogEntry] = {
         input_price_per_million_min=0.5,
         output_price_per_million_min=3.0,
         context_limit=1000000,
+        status="deprecated",
+        replacement="qwen3.8-flash",
+    ),
+    # ---- 第三方模型（百炼平台托管，构成跨厂商回退链）----
+    #: 价格与上下文为**估算区间**：官方「选择模型」页仅列名不列价，
+    #: 此处按同代同档位量级估计，仅用于成本预估与档位排序，不作结算依据。
+    "deepseek-v4-pro-0813": ModelCatalogEntry(
+        model="deepseek-v4-pro-0813",
+        family="deepseek",
+        task_types=("general", "long_text", "coding", "math_reasoning"),
+        supports_thinking=True,
+        input_price_per_million_min=2.0,
+        output_price_per_million_min=8.0,
+        context_limit=262144,
+    ),
+    "deepseek-v4.1-flash": ModelCatalogEntry(
+        model="deepseek-v4.1-flash",
+        family="deepseek",
+        task_types=("general", "long_text", "coding", "math_reasoning"),
+        supports_thinking=True,
+        input_price_per_million_min=0.5,
+        output_price_per_million_min=2.0,
+        context_limit=262144,
+    ),
+    "kimi-k3": ModelCatalogEntry(
+        model="kimi-k3",
+        family="kimi",
+        task_types=("general", "long_text", "math_reasoning"),
+        supports_thinking=True,
+        input_price_per_million_min=2.0,
+        output_price_per_million_min=8.0,
+        context_limit=262144,
+    ),
+    "glm-5.2": ModelCatalogEntry(
+        model="glm-5.2",
+        family="glm",
+        task_types=("general", "coding", "math_reasoning"),
+        supports_thinking=True,
+        input_price_per_million_min=2.0,
+        output_price_per_million_min=8.0,
+        context_limit=262144,
+    ),
+    "MiniMax-M3": ModelCatalogEntry(
+        model="MiniMax-M3",
+        family="minimax",
+        task_types=("general", "long_text"),
+        supports_thinking=True,
+        input_price_per_million_min=1.0,
+        output_price_per_million_min=4.0,
+        context_limit=262144,
     ),
     "qwen3-max": ModelCatalogEntry(
         model="qwen3-max",
@@ -471,7 +798,7 @@ _DEFAULT_MODEL_CATALOG: Dict[str, ModelCatalogEntry] = {
         output_price_per_million_min=10.0,
         context_limit=262144,
         status="deprecated",
-        replacement="qwen3.7-max",
+        replacement="qwen3.8-max",
     ),
     "qwen3.6-plus": ModelCatalogEntry(
         model="qwen3.6-plus",
@@ -524,7 +851,7 @@ _DEFAULT_MODEL_CATALOG: Dict[str, ModelCatalogEntry] = {
         output_price_per_million_min=10.0,
         context_limit=262144,
         status="deprecated",
-        replacement="qwen3.7-flash",
+        replacement="qwen3.8-flash",
     ),
     "qwen-vl-ocr": ModelCatalogEntry(
         model="qwen-vl-ocr",
@@ -622,15 +949,41 @@ def _rank_fallback_models(
     catalog: Dict[str, ModelCatalogEntry],
     region: str,
 ) -> tuple[str, ...]:
-    """按任务类型与成本档位生成回退模型链。"""
+    """按任务类型与成本档位生成回退模型链。
 
-    preferred_order = [
-        _DEFAULT_MODEL_POOL.get(task_type, {}).get(budget_tier, ""),
-        _DEFAULT_MODEL_POOL.get(task_type, {}).get("balanced", ""),
-        _DEFAULT_MODEL_POOL.get("general", {}).get("balanced", ""),
-        _DEFAULT_MODEL_POOL.get("general", {}).get("cheap", ""),
-        _DEFAULT_MODEL_POOL.get("general", {}).get("premium", ""),
+    回退链分两段，顺序固定：
+
+    1. **同系列段**：本任务同档位 → 本任务 balanced → 通用 balanced → cheap → premium
+       （与原行为一致，保证既有调用方的 fallback 顺序不变）；
+    2. **跨厂商段**：``cross_vendor_fallbacks`` 顺序（DeepSeek / Kimi / GLM / MiniMax），
+       取自目录数据文件 ``catalog/llm_catalog.json``。
+
+    之所以把跨厂商放在后段：跨厂商模型能力与输出风格存在差异，
+    宜作为「同系列都不可用」时的最后手段，而非首选项。
+
+    Args:
+        task_type: 任务类型。
+        budget_tier: 成本档位。
+        primary_model: 主模型（会从链中排除，避免重复尝试）。
+        catalog: 生效的模型目录。
+        region: 部署地域。
+
+    Returns:
+        去重且排除主模型后的回退模型元组（保序）。
+    """
+
+    pool = _get_model_pool()
+    same_family_order = [
+        pool.get(task_type, {}).get(budget_tier, ""),
+        pool.get(task_type, {}).get("balanced", ""),
+        pool.get("general", {}).get("balanced", ""),
+        pool.get("general", {}).get("cheap", ""),
+        pool.get("general", {}).get("premium", ""),
     ]
+    preferred_order = [*same_family_order, *_get_cross_vendor_fallbacks()]
+
+    # 跨厂商模型不承担视觉任务：若目录中标记了 task_types 且不含当前任务则跳过。
+    need_vision = task_type == "vision"
 
     result: List[str] = []
     seen: set[str] = {primary_model}
@@ -640,11 +993,96 @@ def _rank_fallback_models(
             continue
         if _is_cn_only_model(normalized) and region != "cn-beijing":
             continue
-        if normalized not in catalog:
+        entry = catalog.get(normalized)
+        if entry is None:
+            continue
+        if need_vision and entry.task_types and "vision" not in entry.task_types:
             continue
         seen.add(normalized)
         result.append(normalized)
     return tuple(result)
+
+
+def _build_switching_report(
+    attempts: List[Dict[str, Any]],
+    *,
+    primary_model: str,
+    selected_model: str,
+) -> Dict[str, Any]:
+    """构造**模型切换审计报告**（供调用方向上汇报）。
+
+    设计动机：回退链一旦生效，实际产出内容的模型可能已不是主模型。
+    若调用方无从得知，就无法判断输出质量的来源。因此每次调用都强制生成
+    本报告，明确「是否切换、从谁切到谁、是否跨厂商、前序为何失败」。
+
+    Args:
+        attempts: 逐模型尝试记录（含 model/vendor/status/error）。
+        primary_model: 路由计划中的主模型。
+        selected_model: 最终成功产出内容的模型（全失败时为空串）。
+
+    Returns:
+        切换审计字典，含 ``switched`` / ``cross_vendor`` / ``summary`` 等字段。
+
+    Examples:
+        >>> _build_switching_report(
+        ...     [{"model": "qwen3.8-flash", "vendor": "alibaba", "status": "FAIL", "error": "timeout"},
+        ...      {"model": "qwen3.7-plus", "vendor": "alibaba", "status": "PASS", "error": ""}],
+        ...     primary_model="qwen3.8-flash", selected_model="qwen3.7-plus",
+        ... )["switched"]
+        True
+        >>> _build_switching_report(
+        ...     [{"model": "qwen3.7-plus", "vendor": "alibaba", "status": "PASS", "error": ""}],
+        ...     primary_model="qwen3.7-plus", selected_model="qwen3.7-plus",
+        ... )["summary"]
+        '使用 qwen3.7-plus（alibaba），无切换'
+    """
+
+    failed = [
+        {
+            "model": item.get("model", ""),
+            "vendor": item.get("vendor", _VENDOR_UNKNOWN),
+            "error": item.get("error", ""),
+        }
+        for item in attempts
+        if item.get("status") == "FAIL"
+    ]
+
+    primary_vendor = _infer_model_vendor(primary_model)
+    selected_vendor = _infer_model_vendor(selected_model) if selected_model else ""
+    switched = bool(selected_model) and selected_model != primary_model
+    cross_vendor = bool(selected_vendor) and bool(primary_vendor) and selected_vendor != primary_vendor
+
+    if not selected_model:
+        summary = (
+            f"全部模型失败，主模型 {primary_model}（{primary_vendor}）；"
+            f"依次尝试并失败：{'、'.join(item['model'] for item in failed) or '无'}"
+        )
+    elif not switched:
+        summary = f"使用 {selected_model}（{selected_vendor}），无切换"
+    elif cross_vendor:
+        summary = (
+            f"主模型 {primary_model}（{primary_vendor}）失败 → "
+            f"**跨厂商切换**至 {selected_model}（{selected_vendor}）"
+        )
+    else:
+        summary = (
+            f"主模型 {primary_model}（{primary_vendor}）失败 → "
+            f"已切换至 {selected_model}（{selected_vendor}）"
+        )
+
+    if switched and failed:
+        summary = f"{summary}；失败原因：{failed[0]['error'][:200]}"
+
+    return {
+        "switched": switched,
+        "cross_vendor": cross_vendor,
+        "primary_model": primary_model,
+        "primary_vendor": primary_vendor,
+        "selected_model": selected_model,
+        "selected_vendor": selected_vendor,
+        "failed_models": failed,
+        "summary": summary,
+    }
 
 
 def resolve_model_plan(
@@ -656,14 +1094,14 @@ def resolve_model_plan(
 
     这是 Router Facade 对外的核心决策函数。
     """
-
-    effective_catalog = dict(_DEFAULT_MODEL_CATALOG)
+    effective_catalog = _get_model_catalog()
     if catalog:
         effective_catalog.update(catalog)
 
     model_text = (intent.model or "").strip()
     region = _normalize_region(intent.region)
-    base_url = _REGION_BASE_URL_MAP.get(region, _REGION_BASE_URL_MAP["cn-beijing"])
+    region_map = _get_region_base_url_map()
+    base_url = region_map.get(region, region_map.get("cn-beijing", ""))
     reasons: List[str] = []
 
     if model_text and model_text.lower() not in _AUTO_MODEL_ALIASES:
@@ -700,7 +1138,9 @@ def resolve_model_plan(
         reasons.append("主模型不在目录内，按自定义模型处理")
 
     if _is_cn_only_model(primary) and region != "cn-beijing":
-        replacement = _DEFAULT_MODEL_POOL.get("general", {}).get(intent.budget_tier, "qwen3.7-plus")
+        replacement = _get_model_pool().get("general", {}).get(
+            intent.budget_tier, "qwen3.7-plus"
+        )
         primary = _normalize_model_name(replacement)
         reasons.append(f"主模型仅支持中国内地，自动切换为 {primary}")
 
@@ -718,6 +1158,9 @@ def resolve_model_plan(
         input_tokens=estimated_input_tokens,
         catalog=effective_catalog,
     )
+    catalog_version = _get_catalog_version() or ModelRoutingPlan.__dataclass_fields__[
+        "catalog_version"
+    ].default
 
     return ModelRoutingPlan(
         primary_model=primary,
@@ -733,6 +1176,7 @@ def resolve_model_plan(
         estimated_min_cost=estimated_min_cost,
         estimated_max_cost=estimated_max_cost,
         reason="; ".join([r for r in reasons if r]),
+        catalog_version=catalog_version,
     )
 
 
@@ -807,11 +1251,19 @@ def _parse_api_key_text(text: str, *, env_api_key_name: str = "DASHSCOPE_API_KEY
     return fallback_plain_value
 
 
-def _iter_default_api_key_file_candidates() -> List[Path]:
+def _iter_default_api_key_file_candidates(secret_name: str = "bailian") -> List[Path]:
     """生成默认 API Key 文件候选路径。
 
     统一密钥仓库（``~/.config/autodo-suite/secrets/``）优先级最高，
-    仓库内旧候选路径仅作兼容回退。
+    仓库内的历史命名与仓库外的旧路径仅作兼容回退。
+
+    **厂商隔离**：候选范围由 ``secret_name`` 决定。早期实现在此处硬编码
+    ``bailian``/``dashscope``，导致非百炼 provider 在“未显式传 api_key_file”时
+    会拿到百炼的凭据（曾真实发生：DeepSeek 收到百炼 key，服务端返回 401）。
+    跨厂商误送凭据属于凭据泄露风险，因此此处不做“跨厂商兼容”。
+
+    Args:
+        secret_name: 逻辑密钥名（对应 provider 的密钥文件）。
 
     Returns:
         候选路径列表（按优先级顺序）。
@@ -820,19 +1272,34 @@ def _iter_default_api_key_file_candidates() -> List[Path]:
         >>> candidates = _iter_default_api_key_file_candidates()
         >>> len(candidates) >= 1
         True
+        >>> any("deepseek" in str(p).lower() for p in _iter_default_api_key_file_candidates("deepseek"))
+        True
     """
 
     ensure_secrets_layout()
     repo_root = Path(__file__).resolve().parents[2]
-    return [
-        *iter_secret_candidates("bailian"),
-        *iter_secret_candidates("dashscope"),
-        repo_root / "demos" / "settings" / "配置文件" / "bailian_api_key.txt",
-        repo_root / "config" / "bailian_api_key.txt",
-        repo_root / "demos" / "settings" / "配置文件" / "dashscope_api_key.txt",
-        repo_root / "config" / "dashscope_api_key.txt",
-        repo_root / "config" / "API-Keys.txt",
-    ]
+
+    names = [secret_name]
+    if secret_name == "bailian":
+        # dashscope 与百炼同源（同一平台的两种叫法），仅在同源时互为候选。
+        names.append("dashscope")
+
+    candidates: List[Path] = []
+    for logical in names:
+        candidates.extend(iter_secret_candidates(logical))
+
+    if secret_name == "bailian":
+        # 仓库外的历史路径只对百炼有意义。
+        candidates.extend(
+            [
+                repo_root / "demos" / "settings" / "配置文件" / "bailian_api_key.txt",
+                repo_root / "config" / "bailian_api_key.txt",
+                repo_root / "demos" / "settings" / "配置文件" / "dashscope_api_key.txt",
+                repo_root / "config" / "dashscope_api_key.txt",
+                repo_root / "config" / "API-Keys.txt",
+            ]
+        )
+    return candidates
 
 
 def _load_api_key_from_file(file_path: Path, *, env_api_key_name: str = "DASHSCOPE_API_KEY") -> str:
@@ -918,7 +1385,7 @@ def _normalize_model_name(model: str) -> str:
     name = (model or "").strip()
     if not name:
         return name
-    return _DEPRECATED_MODEL_REPLACEMENTS.get(name, name)
+    return _get_deprecated_replacements().get(name, name)
 
 
 def _is_cn_only_model(model: str) -> bool:
@@ -934,7 +1401,7 @@ def _is_cn_only_model(model: str) -> bool:
     name = (model or "").strip()
     if not name:
         return False
-    return any(name.startswith(prefix) for prefix in _CN_ONLY_MODEL_PREFIXES)
+    return any(name.startswith(prefix) for prefix in _get_cn_only_prefixes())
 
 
 def _infer_is_ocr_affair(affair_name: str | None) -> bool:
@@ -1022,9 +1489,10 @@ def route_aliyun_model(
         True
     """
 
-    pool = model_pool or _DEFAULT_MODEL_POOL
+    pool = model_pool or _get_model_pool()
     region = _normalize_region(request.region)
-    base_url = _REGION_BASE_URL_MAP.get(region, _REGION_BASE_URL_MAP["cn-beijing"])
+    region_map = _get_region_base_url_map()
+    base_url = region_map.get(region, region_map.get("cn-beijing", ""))
 
     inferred_type: TaskType = request.task_type or _infer_task_type_from_affair_name(request.affair_name)
     reasons: List[str] = [f"初始任务类型={inferred_type}"]
@@ -1208,8 +1676,9 @@ def _resolve_model_and_backend(
     inferred_task_type = _infer_task_type_from_affair_name(affair_name)
     looks_like_vision = bool(hints.get("need_vision", False)) or hints.get("task_type") == "vision" or ("vl" in model_text.lower())
     resolved_backend = backend_from_arg or backend_hint or ("openai-compatible" if looks_like_vision else "dashscope")
+    region_map = _get_region_base_url_map()
     resolved_base_url = base_url or (
-        _REGION_BASE_URL_MAP.get(region_norm, _REGION_BASE_URL_MAP["cn-beijing"])
+        region_map.get(region_norm, region_map.get("cn-beijing", ""))
         if resolved_backend == "openai-compatible"
         else ""
     )
@@ -1233,13 +1702,14 @@ def load_aliyun_llm_config(
     region: str = "cn-beijing",
     affair_name: str | None = None,
     route_hints: Optional[Dict[str, Any]] = None,
+    secret_name: str = "bailian",
 ) -> AliyunLLMConfig:
     """加载阿里百炼 LLM 配置。
 
     API Key 查找优先级：
     1) 显式传入 `api_key_file`
     2) `config.json` 的 `secrets_file`
-    3) 默认候选路径（优先 `bailian_api_key.txt`，并兼容旧文件名）
+    3) 默认候选路径（由 `secret_name` 决定厂商，避免跨厂商误用凭据）
 
     模型与后端选择规则：
     - 当 model 为 `auto/smart` 时，按 route_hints + affair_name 自动路由。
@@ -1255,6 +1725,7 @@ def load_aliyun_llm_config(
         region: 地域，用于选择默认 base_url。
         affair_name: 事务名称。
         route_hints: 路由提示，例如 task_type/budget_tier/input_chars。
+        secret_name: 逻辑密钥名，决定默认候选的厂商范围（默认百炼）。
 
     Returns:
         `AliyunLLMConfig` 对象。
@@ -1285,7 +1756,7 @@ def load_aliyun_llm_config(
             api_key = ""
 
     if not api_key:
-        for candidate in _iter_default_api_key_file_candidates():
+        for candidate in _iter_default_api_key_file_candidates(secret_name):
             api_key = _load_api_key_from_file(candidate, env_api_key_name=env_api_key_name)
             if api_key:
                 break
@@ -1340,6 +1811,16 @@ class AliyunLLMClient:
         """
 
         return self._config.model
+
+    @property
+    def api_key(self) -> str:
+        """返回当前 API Key（仅供脱敏与审计，调用方不得落盘或打印明文）。
+
+        Returns:
+            API Key 字符串。
+        """
+
+        return self._config.api_key
 
     @property
     def sdk_backend(self) -> SdkBackend:
@@ -1693,6 +2174,9 @@ def invoke_aliyun_llm(
 
     Returns:
         统一返回结构，包含 `status`、`selected_model`、`attempts`、`response`。
+        另含 `selected_vendor` 与 `switching`（模型切换审计，见
+        ``_build_switching_report``）——**调用方应把 ``switching["summary"]``
+        向上汇报**，以便人工判断产出内容实际由哪个模型生成。
     """
 
     resolved_intent = intent or ModelRoutingIntent(affair_name=affair_name)
@@ -1722,11 +2206,25 @@ def invoke_aliyun_llm(
                 max_tokens=max_tokens,
                 extra=extra,
             )
-            attempts.append({"model": candidate, "status": "PASS", "error": ""})
+            attempts.append(
+                {
+                    "model": candidate,
+                    "vendor": _infer_model_vendor(candidate),
+                    "status": "PASS",
+                    "error": "",
+                }
+            )
+            switching = _build_switching_report(
+                attempts,
+                primary_model=plan.primary_model,
+                selected_model=candidate,
+            )
             return {
                 "status": "PASS",
                 "selected_model": candidate,
+                "selected_vendor": _infer_model_vendor(candidate),
                 "attempts": attempts,
+                "switching": switching,
                 "response": {
                     "text": text,
                     **build_aliyun_llm_runtime_payload(cfg),
@@ -1748,12 +2246,25 @@ def invoke_aliyun_llm(
             message = str(exc)
             if cfg is not None:
                 message = _masked_text(message, cfg.api_key)
-            attempts.append({"model": candidate, "status": "FAIL", "error": message})
+            attempts.append(
+                {
+                    "model": candidate,
+                    "vendor": _infer_model_vendor(candidate),
+                    "status": "FAIL",
+                    "error": message,
+                }
+            )
 
     return {
         "status": "FAIL",
         "selected_model": "",
+        "selected_vendor": "",
         "attempts": attempts,
+        "switching": _build_switching_report(
+            attempts,
+            primary_model=plan.primary_model,
+            selected_model="",
+        ),
         "response": {},
         "error": "all_models_failed",
     }
