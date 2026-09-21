@@ -90,20 +90,36 @@
 - `secret_path` / `iter_secret_candidates` — 逻辑密钥名 → 文件路径
 - 完整安全条款见 `~/.config/autodo-suite/security-policy.md`
 
-### 大模型 Provider（多后端调用）
+### 大模型 Provider（多后端调用）+ 模型目录
 
-- `list_providers` / `get_provider` / `resolve_provider` — provider 注册与解析（`auto` 本地优先）
+**模型目录（数据文件驱动，推荐入口）**
+
+- `catalog_info` — 目录概览（版本/模型数/provider 顺序/币种）
+- `list_models` — 列模型（可筛 provider / 厂商 / 状态 / 任务类型）
+- `find_models` — **按需筛模型**（能力 / 成本等级 / 上下文 / 币种 / 价格已核对）
+- `get_model` / `describe_model` — 取单个模型的参数、能力、价格（含可读文本）
+- `format_model_table` — 渲染可读表格
+- `resolve_model_provider` — **反查模型归属的 provider**（基于目录 `provider` 字段，非 vendor）
+- `model_provider_map` — 批量反查，标出无法判定归属的候选（预检拼写错误）
+- `parse_model_candidates` — 解析模型候选清单（序列或逗号分隔字符串，保留大小写）
+- `build_request_extra` — 组装厂商私有请求字段（含**关闭思考模式**）
+- `provider_priority` / `load_catalog` / `reload_catalog` — 调用顺序与热加载
+
+> **单一真相源**：`autodokit/tools/atomic/llm/catalog/llm_catalog.json`。
+> 新增/下架模型、调整调用顺序只需改这份 JSON，无需改 Python；
+> 读取失败时自动退回内置兜底快照。
+
+**Provider 管理**
+
+- `list_providers` / `get_provider` / `resolve_provider` — provider 注册与解析（`auto` 按优先级选首个可用）
+- `iter_provider_chain` — 返回依次尝试的 provider 序列（可传 `order=` 按次覆盖顺序）
 - `is_local_online` — 本地 provider（LM Studio）在线探测
 - `build_llm_client` — 按 provider 构造客户端（复用 `AliyunLLMClient`）
-- `invoke_llm` — 统一调用入口（百炼 / LM Studio / 未来更多后端）
+- `invoke_llm` — 统一调用入口（含 provider 级 + 模型级两层回退）；
+  **支持 `model_candidates=[...]` 按调用方给定的顺序逐个尝试**
+  （菜单模式，与 `provider_order` 是两个正交维度：一个排模型、一个排厂商）；
+  **`disable_thinking=True` 可关闭思考模式**（分类/抽取类任务必开）
 - `load_provider_config` — 读取 config.json `llm.providers` 覆盖
-
-### 超长会话索引与批量读取
-
-- `import_chat_session_markdown` / `get_chat_pair_info` / `repair_exported_chat_markdown`
-- `batch_read_pairs_by_llm` — 逐 Pair 调用大模型（断点续跑）
-- `session_index.json` 的每个 session 含 `attachments` 字段（附件元信息，无附件为空数组）；
-  `rebuild_indexes` 重建后从 `attachments/manifest.json` 补回附件信息
 
 ### 直接查源码
 

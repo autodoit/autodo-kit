@@ -1,4 +1,4 @@
-﻿"""AOK 工具统一导出入口。
+"""AOK 工具统一导出入口。
 
 本模块采用“直调函数优先”的设计：
 
@@ -470,9 +470,9 @@ def lint_affairs(affairs_root: str | Path | None = None) -> list[dict[str, Any]]
     return findings
 
 _LAZY_TOOL_MODULES: tuple[str, ...] = (
+    "autodokit.tools.time_utils",
     "autodokit.tools.affair_result",
     "autodokit.tools.atomic.path.windows_long_filename_tools",
-    "autodokit.tools.aob",
     "autodokit.tools.cnki_affair_helpers",
     "autodokit.tools.bibliodb",
     "autodokit.tools.reference_citation_tools",
@@ -508,13 +508,9 @@ _LAZY_TOOL_MODULES: tuple[str, ...] = (
     "autodokit.tools.ocr.unlimited_ocr.equation_backfill",
     "autodokit.tools.ocr.unlimited_ocr.table_repair",
     "autodokit.tools.ocr.unlimited_ocr.runner",
-    "autodokit.tools.workspace_path_migration",
     "autodokit.tools.tex_dag_tools",
     "autodokit.tools.math_delimiter_converter",
-    "autodokit.tools.chat_session_index_tools",
-    "autodokit.tools.chat_session_index_tools_v2",
     "autodokit.tools.atomic.llm",
-    "autodokit.tools.lmstudio_download_tools",
     "autodokit.tools.zotero-tools.cookjohn-bridge.extract_tags",
 )
 
@@ -554,14 +550,6 @@ def manage_online_retrieval_daily_usage(payload: dict[str, Any]) -> dict[str, An
     return runner(payload)
 
 
-def lmstudio_download_models(*args: Any, **kwargs: Any) -> dict[str, Any]:
-    """延迟加载 LM Studio 单模型下载工具，避免入口模块循环导入。"""
-
-    module = importlib.import_module("autodokit.tools.lmstudio_download_tools")
-    impl = getattr(module, "lmstudio_download_models")
-    return impl(*args, **kwargs)
-
-
 def convert_pdf_to_structured_data_mineru(*args: Any, **kwargs: Any) -> Any:
     """延迟加载 MinerU PDF 转结构化数据工具，避免入口模块循环导入。"""
 
@@ -578,37 +566,7 @@ def convert_pdf_to_structured_data_file_mineru(*args: Any, **kwargs: Any) -> Any
     return impl(*args, **kwargs)
 
 
-def lmstudio_download_from_list(*args: Any, **kwargs: Any) -> dict[str, Any]:
-    """延迟加载 LM Studio 清单批量下载工具，避免入口模块循环导入。"""
-
-    module = importlib.import_module("autodokit.tools.lmstudio_download_tools")
-    impl = getattr(module, "lmstudio_download_from_list")
-    return impl(*args, **kwargs)
-
-
-def lmstudio_download_list_models(*args: Any, **kwargs: Any) -> dict[str, Any]:
-    """延迟加载 LM Studio 模型清单查询工具，避免入口模块循环导入。"""
-
-    module = importlib.import_module("autodokit.tools.lmstudio_download_tools")
-    impl = getattr(module, "lmstudio_download_list_models")
-    return impl(*args, **kwargs)
-
-
-def lmstudio_download_ensure_curl(*args: Any, **kwargs: Any) -> bool:
-    """延迟加载 LM Studio 下载 curl 检测工具，避免入口模块循环导入。"""
-
-    module = importlib.import_module("autodokit.tools.lmstudio_download_tools")
-    impl = getattr(module, "lmstudio_download_ensure_curl")
-    return impl(*args, **kwargs)
-
-
 _用户公开工具 = [
-    "import_chat_session_markdown",
-    "get_chat_pair_info",
-    "import_chat_session_markdown_v2",
-    "get_chat_pair_info_v2",
-    "batch_read_pairs_by_llm",
-    "repair_exported_chat_markdown",
     "mask_api_key",
     "secrets_dir",
     "secret_path",
@@ -668,9 +626,8 @@ _用户公开工具 = [
     "knowledge_attach_file",
     "knowledge_get",
     "knowledge_find_by_literature",
-    "DEFAULT_OBSIDIAN_NOTE_TIMEZONE",
     "DEFAULT_OBSIDIAN_TIME_FIELDS",
-    "get_current_time_iso",
+    "now_iso",
     "convert_timestamp_to_timezone",
     "rewrite_obsidian_note_timestamps",
     "batch_rewrite_obsidian_note_timestamps",
@@ -713,8 +670,6 @@ _用户公开工具 = [
     "extract_pdf_elements_from_structured_file",
     "render_pdf_pages_to_png",
     "crop_image_by_normalized_bbox",
-    "PathMapping",
-    "migrate_workspace_paths",
     "build_structured_data_payload",
     "load_structured_data",
     "extract_reference_lines_from_structured_data",
@@ -725,28 +680,6 @@ _用户公开工具 = [
     "write_chunk_shards",
     "iter_chunk_files_from_manifest",
     "build_cnki_result",
-    "aob_validate_content",
-    "aob_sync_items",
-    "aob_aggregate_user_content",
-    "aob_backup_user_content",
-    "aob_publish_user_content",
-    "aob_update_user_content",
-    "aob_import_external_templates",
-    "aob_convert_workspace",
-    "aob_deploy_workflow",
-    "aob_check_opencode_deploy_regression",
-    "run_aob_aoc",
-    "run_aob_deploy",
-    "run_aob_library",
-    "run_aob_regression_opencode_deploy_check",
-    "run_aob_workflow_deploy",
-    "run_aob_items_sync",
-    "run_aob_aggregate_user_content",
-    "run_aob_backup_user_content",
-    "run_aob_publish_user_content",
-    "run_aob_update_user_content",
-    "run_aob_external_templates_import",
-    "run_aob_workspace_convert",
     "ensure_absolute_output_dir",
     "write_affair_json_result",
     "build_literature_main_table",
@@ -755,8 +688,6 @@ _用户公开工具 = [
     "build_entity_to_literatures_csv",
     "build_literature_main_audit_csv",
     "build_stable_attachment_uid",
-    "init_references_db",
-    "init_knowledge_db",
     "init_content_db",
     "load_reference_tables",
     "persist_reference_tables",
@@ -779,10 +710,6 @@ _用户公开工具 = [
     "isolate_unmatched_attachments",
     "manage_online_retrieval_daily_usage",
     # ── LM Studio 模型下载工具 ──
-    "lmstudio_download_models",
-    "lmstudio_download_from_list",
-    "lmstudio_download_list_models",
-    "lmstudio_download_ensure_curl",
     # ── CrossRef 验证工具 ──
     "crossref_search",
     "crossref_match_score",
@@ -822,14 +749,11 @@ _开发者工具 = [
     "build_entity_to_literatures_csv",
     "build_literature_main_audit_csv",
     "build_stable_attachment_uid",
-    "init_references_db",
-    "init_knowledge_db",
     "init_content_db",
     "load_attachment_entities_df",
     "load_literatures_df",
     "load_literature_attachment_links_df",
     "load_literature_attachments_df",
-    "load_literature_tags_df",
     "load_chunk_sets_df",
     "load_chunks_df",
     "save_structured_state",
@@ -837,13 +761,9 @@ _开发者工具 = [
     "replace_chunk_set_records",
     "rebuild_reference_relation_tables",
     "rebuild_reference_relation_tables_from_config",
-    "load_literature_tags_df",
     "rebuild_reference_relation_tables",
     "rebuild_reference_relation_tables_from_config",
-    "save_reference_tables",
     "load_index_df",
-    "load_knowledge_attachments_df",
-    "save_knowledge_tables",
     "load_reference_tables",
     "persist_reference_tables",
     "load_knowledge_tables",
@@ -857,30 +777,6 @@ _开发者工具 = [
     "translate_parse_asset_text",
     "run_literature_translation",
     "build_cnki_result",
-    "aob_validate_content",
-    "aob_sync_items",
-    "aob_aggregate_user_content",
-    "aob_backup_user_content",
-    "aob_publish_user_content",
-    "aob_update_user_content",
-    "aob_import_external_templates",
-    "aob_convert_workspace",
-    "aob_deploy_workflow",
-    "aob_check_opencode_deploy_regression",
-    "run_aob_aoc",
-    "run_aob_deploy",
-    "run_aob_library",
-    "run_aob_regression_opencode_deploy_check",
-    "run_aob_workflow_deploy",
-    "run_aob_items_sync",
-    "run_aob_aggregate_user_content",
-    "run_aob_backup_user_content",
-    "run_aob_publish_user_content",
-    "run_aob_update_user_content",
-    "run_aob_external_templates_import",
-    "run_aob_workspace_convert",
-    "PathMapping",
-    "migrate_workspace_paths",
     "parse_reference_text",
     "insert_placeholder_from_reference",
     "literature_upsert",
@@ -933,9 +829,8 @@ _开发者工具 = [
     "knowledge_attach_file",
     "knowledge_get",
     "knowledge_find_by_literature",
-    "DEFAULT_OBSIDIAN_NOTE_TIMEZONE",
     "DEFAULT_OBSIDIAN_TIME_FIELDS",
-    "get_current_time_iso",
+    "now_iso",
     "convert_timestamp_to_timezone",
     "rewrite_obsidian_note_timestamps",
     "batch_rewrite_obsidian_note_timestamps",

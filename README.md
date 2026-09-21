@@ -58,8 +58,6 @@ AOB 历史执行能力已经统一收敛到 autodokit.tools，并通过以下脚
 - Python 直调：from autodokit.tools import run_aob_deploy 等 API
 - CLI 调用：使用本仓库 scripts 下的薄入口脚本
 
-autodo-lib 已切换为静态内容仓，不再保留可执行兼容壳。
-
 ## 工具导出管理
 
 AOK 工具采用“函数直调 + 集中导出”方式：

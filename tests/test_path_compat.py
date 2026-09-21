@@ -55,9 +55,9 @@ def test_translate_absolute_path_to_runtime_should_map_windows_drive_to_macos_ho
     """macOS 运行时应优先把旧 Windows home 路径映射到当前 home。"""
 
     result = translate_absolute_path_to_runtime(
-        "C:/Users/Ethan/CoreFiles/demo.txt",
+        "C:/Users/Example/CoreFiles/demo.txt",
         runtime_family="macos",
-        home_path_text="/Users/ethan",
+        home_path_text="/Users/example",
     )
 
-    assert result == "/Users/ethan/CoreFiles/demo.txt"
+    assert result == "/Users/example/CoreFiles/demo.txt"

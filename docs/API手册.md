@@ -449,46 +449,6 @@ def innovation_feasibility_score(innovation_item: dict) -> dict
 
 ---
 
-### 2.8 AOB 用户内容工具
-
-AOB（Autodo Office Business）负责 `autodo-lib` 内容库与用户本地 AI 办公区之间的聚合、发布、同步、备份与转换。
-
-**原子入口（事务直调用）**：
-
-| 函数 | 说明 |
-| --- | --- |
-| `aob_validate_content(input_path, repo_root)` | 执行 AOC 内容合法性校验。 |
-| `aob_sync_items(strategy, dry_run, repo_root)` | 同步内容库清单 `database/items.csv`。 |
-| `aob_aggregate_user_content(source_paths, scopes, project_dirs, home_dir, dry_run, ...)` | 聚合用户级 AI 内容到 canonical AOL。 |
-| `aob_publish_user_content(target_paths, scopes, project_dirs, home_dir, engine_vendors, ide_vendors, ...)` | 将 canonical AOL 发布回用户办公区。 |
-| `aob_backup_user_content(target_paths, scopes, project_dirs, home_dir, backup_dir, ...)` | 备份用户级 AI 内容。 |
-| `aob_update_user_content(target_paths, scopes, project_dirs, home_dir, ...)` | 一键双向同步：备份→反编译→判定→写回→发布。 |
-| `aob_import_external_templates(...)` | 导入外部模板并联动同步。 |
-| `aob_convert_workspace(...)` | 跨引擎办公区转换（如 `.opencode` ↔ `.claude`）。 |
-| `aob_deploy_workflow(...)` | 按 workflow + engine 安装部署。 |
-| `aob_check_opencode_deploy_regression(...)` | OpenCode 最小部署回归检查。 |
-
-**CLI 兼容入口**：
-
-| 函数 | 对应的原子入口 |
-| --- | --- |
-| `run_aob_aoc(argv)` | AOC CLI 兼容封装。 |
-| `run_aob_deploy(argv)` | `aob_deploy_workflow`。 |
-| `run_aob_library(argv)` | `aob_sync_items`。 |
-| `run_aob_workflow_deploy(...)` | `aob_deploy_workflow`。 |
-| `run_aob_items_sync(...)` | `aob_sync_items`。 |
-| `run_aob_aggregate_user_content(...)` | `aob_aggregate_user_content`。 |
-| `run_aob_publish_user_content(...)` | `aob_publish_user_content`。 |
-| `run_aob_backup_user_content(...)` | `aob_backup_user_content`。 |
-| `run_aob_update_user_content(...)` | `aob_update_user_content`。 |
-| `run_aob_external_templates_import(...)` | `aob_import_external_templates`。 |
-| `run_aob_workspace_convert(...)` | `aob_convert_workspace`。 |
-| `run_aob_regression_opencode_deploy_check(argv)` | `aob_check_opencode_deploy_regression`。 |
-
-原子入口的 `scopes` 参数支持 `"global"`、`"system"`、`"user"`、`"project"`；`project_dirs` 用于指定项目根列表。
-
----
-
 ### 2.9 在线检索工具
 
 #### run_online_retrieval_router
@@ -759,21 +719,25 @@ print(f"PASS={summary['pass_count']} PARTIAL={summary['partial_count']}")
 
 | 函数 | 说明 |
 | --- | --- |
-| `init_references_db(db_path)` | 初始化文献主库（兼容入口）。 |
+| `init_db(db_path)` | 初始化文献主库（建表、补列、补索引）。 |
+| `load_literatures_df(db_path)` | 读取文献主表。 |
+| `load_attachments_df(db_path)` | 读取附件表。 |
+| `load_tags_df(db_path)` | 读取标签表。 |
 | `load_reference_tables(db_path, ...)` | 读取文献主表与附件表。 |
 | `persist_reference_tables(literatures_df, attachments_df, db_path, ...)` | 写回文献主库。 |
-| `save_reference_tables(...)` | `persist_reference_tables` 别名。 |
+| `replace_reference_tables_only(...)` | 仅替换文献主表（保留其余表）。 |
+| `rebuild_reference_relation_tables(...)` | 重建文献关系表。 |
 
 #### 知识数据库（SQLite-first）
 
 | 函数 | 说明 |
 | --- | --- |
-| `init_knowledge_db(db_path)` | 初始化知识主库（兼容入口）。 |
+| `init_db(db_path)` | 初始化知识主库（建表、补列、补索引）。 |
+| `load_index_df(...)` | 读取知识索引表。 |
+| `load_attachments_df(db_path)` | 读取知识附件表。 |
 | `load_knowledge_tables(db_path, ...)` | 读取知识索引表与附件表。 |
 | `persist_knowledge_tables(index_df, attachments_df, db_path, ...)` | 写回知识主库。 |
-| `load_index_df(...)` | 读取知识索引表。 |
-| `load_knowledge_attachments_df(...)` | 读取知识附件表。 |
-| `save_knowledge_tables(...)` | `persist_knowledge_tables` 别名。 |
+| `save_tables(index_df, attachments_df, db_path, ...)` | 写回数据表（通用入口）。 |
 
 #### content.db 直接读写
 
@@ -783,7 +747,7 @@ print(f"PASS={summary['pass_count']} PARTIAL={summary['partial_count']}")
 | `load_literature_attachment_links_df(db_path)` | 读取文献附件关联。 |
 | `load_literature_attachments_df(db_path)` | 读取附件总视图。 |
 | `load_attachment_entities_df(db_path)` | 读取附件实体表。 |
-| `load_literature_tags_df(db_path)` | 读取文献标签关联。 |
+| `load_tags_df(db_path)` | 读取文献标签关联。 |
 | `load_author_entities_df(db_path)` | 读取作者表。 |
 | `load_literature_author_links_df(db_path)` | 读取文献作者关联。 |
 | `load_knowledge_literature_links_df(db_path)` | 读取知识-文献关系表。 |
@@ -870,16 +834,29 @@ def migrate_workspace_paths(
 
 ---
 
-### 2.17 Obsidian 时间工具
+### 2.17 时间工具
+
+**通用时间（`time_utils`）**：
 
 | 函数 | 说明 |
 | --- | --- |
-| `get_current_time_iso(timezone_name="Asia/Shanghai")` | 当前时间 ISO 字符串。 |
-| `convert_timestamp_to_timezone(timestamp, target_timezone, ...)` | 时间戳时区转换。 |
-| `rewrite_obsidian_note_timestamps(note_path, target_timezone, ...)` | 改写单篇笔记时间字段时区。 |
+| `now_iso(timezone_name=None, timespec=None)` | 当前时间 ISO 字符串。 |
+| `now_compact(timezone_name=None, fmt="%Y%m%d%H%M%S")` | 紧凑时间字符串。 |
+| `now_dt(timezone_name=None)` | 当前时间 `datetime`。 |
+| `now_year(timezone_name=None)` | 当前年份。 |
+| `resolve_timezone(timezone_name=None)` | 解析为 `ZoneInfo`。 |
+| `convert_timestamp_to_timezone(timestamp, target_timezone, assume_timezone="UTC")` | 时间戳时区转换。 |
+
+常量：`DEFAULT_TIMEZONE_NAME`（`"Asia/Shanghai"`）。
+
+**Obsidian frontmatter（`obsidian_note_timezone_tools`）**：
+
+| 函数 | 说明 |
+| --- | --- |
+| `rewrite_obsidian_note_timestamps(note_path, target_timezone, ...)` | 改写单篇笔记 frontmatter 时间字段。 |
 | `batch_rewrite_obsidian_note_timestamps(note_paths, note_dir, target_timezone, ...)` | 批量改写。 |
 
-常量：`DEFAULT_OBSIDIAN_NOTE_TIMEZONE`（`"Asia/Shanghai"`）、`DEFAULT_OBSIDIAN_TIME_FIELDS`。
+常量：`DEFAULT_OBSIDIAN_TIME_FIELDS`（`("created", "updated")`）。
 
 ---
 
@@ -1451,8 +1428,43 @@ from autodokit.tools import resolve_model_plan, invoke_aliyun_llm, load_aliyun_l
 | 函数 | 说明 |
 | --- | --- |
 | `resolve_model_plan(intent, ...)` | 根据任务语义与质量/成本/时延档位输出主模型与回退链。 |
-| `invoke_aliyun_llm(prompt, intent, ...)` | 按路由计划执行调用，失败时按回退链重试，返回 `attempts` 审计。 |
+| `invoke_aliyun_llm(prompt, intent, ...)` | 按路由计划执行调用，失败时按回退链重试；返回 `attempts`（逐模型审计）与 `switching`（切换报告）。 |
 | `load_aliyun_llm_config(...)` | 加载阿里百炼配置（内部走统一路由）。 |
+
+#### 模型目录（2026-09 更新）
+
+主模型池按「任务类型 × 成本档位」选型，依据百炼「选择模型」页（2026-09-14 更新）：
+
+| 档位 | 模型 | 备注 |
+| --- | --- | --- |
+| `cheap` | `qwen3.8-flash` | 官方主推 |
+| `balanced` | `qwen3.7-plus` | 官方主推；plus 档尚未发 3.8 |
+| `premium` | `qwen3.8-max` | 官方主推 |
+
+回退链分两段，顺序固定：
+
+1. **同系列段**：本任务同档位 → 本任务 balanced → 通用 balanced → cheap → premium；
+2. **跨厂商段**：`deepseek-v4.1-flash` → `deepseek-v4-pro-0813` → `kimi-k3` →
+   `glm-5.2` → `MiniMax-M3`（百炼平台托管的第三方模型）。
+
+> **收录边界**：只有「同档位已被新一代直接取代」或「官方公告明示下线」的型号才进入
+> `_DEPRECATED_MODEL_REPLACEMENTS`。**“不在主推列表”不等于“已下线”**——官方只列
+> 每档主推款，其余历史版本仍可调用。因此 `qwen3.6-plus` / `qwen3.5-plus` /
+> `qwen3.5-flash` 等上一代型号保持 `active`，未被静默重写。
+>
+> **价格字段为估算值**：官方「选择模型」页仅列名不列价，目录中的
+> `input_price_per_million_min` / `output_price_per_million_min` 按同代同档位
+> 量级估计，仅用于成本预估与档位排序，**不作结算依据**。
+
+#### 两级容灾（互补，不可互替）
+
+| 层级 | 抵抗的故障 | 实现 |
+| --- | --- | --- |
+| provider 层 | 平台级：某厂商账户欠费 / 服务不可用 | `resolve_provider`（`auto` 本地优先→回退 bailian） |
+| 模型层 | 模型级：单模型限流 / 下线 / 临时不可用 | `invoke_aliyun_llm`（同系列→跨厂商回退链） |
+
+> **边界**：模型层的跨厂商回退**不能**抵抗账户级故障（欠费、封禁、额度耗尽）——
+> 那些故障下同账户的所有模型会同时失败，必须在 provider 层切换。
 
 ### Word/LaTeX 双向转换
 
@@ -1580,9 +1592,10 @@ from autodokit.tools.atomic.llm import invoke_llm, invoke_aliyun_llm, mask_api_k
 子模块：`llm_clients`（客户端 + 模型路由 + 阿里百炼）、`llm_providers`（多后端抽象）、
 `llm_parsing`（输出解析）、`secrets_manager`（密钥与脱敏）。
 
-「大模型调用」抽象为独立维度：`LLMProvider` 是一级概念，阿里百炼只是 provider 之一，
-LM Studio 是第二个内置 provider。密钥统一存放于 `~/.config/autodo-suite/secrets/`
-（权限 600 / 700），任何 provider 的密钥均不落代码、文档、日志。
+「大模型调用」抽象为独立维度：`LLMProvider` 是一级概念，内置 **三个** provider：
+阿里百炼（`bailian`）、DeepSeek 官方（`deepseek`）、LM Studio 本地（`lmstudio`）。
+密钥统一存放于 `~/.config/autodo-suite/secrets/`（目录 700 / 文件 600），
+任何 provider 的密钥均不落代码、文档、日志。
 
 #### 密钥安全
 
@@ -1590,22 +1603,167 @@ LM Studio 是第二个内置 provider。密钥统一存放于 `~/.config/autodo-
 | --- | --- |
 | `mask_api_key(key, keep_head=3, keep_tail=4)` | 密钥脱敏，返回 `sk-***末尾4位`。 |
 | `secrets_dir()` | 统一密钥仓库目录（默认 `~/.config/autodo-suite/secrets/`，可用 `AUTODO_SUITE_SECRETS_DIR` 覆盖）。 |
-| `secret_path(name)` | 逻辑密钥名 → 密钥文件路径（如 `bailian` → `bailian-api-key.txt`）。 |
+| `secret_path(name, *, profile=None)` | 返回该逻辑名的**最优先可用**密钥文件；均不存在时返回历史标准路径。 |
 | `ensure_secrets_layout()` | 初始化密钥仓库目录（权限 700）。 |
-| `iter_secret_candidates(name)` | 密钥候选路径列表（按优先级）。 |
+| `iter_secret_candidates(name, *, profile=None)` | 密钥候选路径列表（按优先级，存在者在前）。 |
+| `list_secret_inventory()` | 列出密钥仓库文件清单（**仅元信息，不返回内容**）。 |
 
-#### Provider 管理
+#### 密钥文件命名（支持配置档案）
+
+支持三种命名形式，**大小写不敏感**：
+
+| 形式 | 示例 | 说明 |
+| --- | --- | --- |
+| `{名}_api-key_{档案}.txt` | `DeepSeek_api-key_autodo-kit.txt` | 当前推荐；档案可区分项目/环境 |
+| `{名}-api-key.txt` | `bailian-api-key.txt` | 历史命名，仍兼容 |
+| `{名}.txt` | `deepseek.txt` | 最简命名 |
+
+配置档案优先级：显式 `profile` 参数 → 环境变量 `AUTODO_SUITE_SECRET_PROFILE`
+→ `normal` → `autodo-kit` → 其余按文件名排序。同一逻辑名存有多个档案文件时
+**全部返回**，避免“静默选中一个而调用方不知情”。
+
+> **单一密钥名真相源**："bailian" 的别名 `aliyun`/`dashscope` 会归一化为同一逻辑名；
+> 新增厂商只需存入 `{名}_api-key_{档案}.txt` 并在 `_BUILTIN_PROVIDERS` 注册。
+
+#### 模型目录（**数据文件驱动**，单一真相源）
+
+可用的模型、它们各自的参数/能力/价格、provider 的调用顺序，全部定义在：
+
+```
+autodokit/tools/atomic/llm/catalog/llm_catalog.json
+```
+
+**为什么用数据文件**：各家厂商每隔一段时间就会推新模型、下架旧模型，
+且不同模型的参数、能力、价格都不一样。外置为数据后，**新增/下架模型或调整
+调用顺序只需改 JSON**，不必改 Python、改测试、重新部署。改完调
+`reload_catalog()` 即生效（同进程内缓存）。
+
+> JSON 读取失败（文件缺失/损坏）时，工具**自动退回内置兜底快照**，
+> 功能不中断；失败原因可通过 `catalog_warnings()` 或 `catalog_info()["error"]` 查看。
+
+数据文件的顶层结构：
+
+| 分节 | 内容 |
+| --- | --- |
+| `providers` | provider 列表（含 `priority`、端点、默认模型、密钥名、`extra_body`） |
+| `models` | 模型清单（能力位、上下文上限、定价、成本等级、状态） |
+| `task_pools` | 任务类型 × 成本档位 → 主模型 |
+| `cross_vendor_fallbacks` | 百炼平台内的跨厂商兜底链 |
+| `deprecated_replacements` | 下线模型 → 替代模型 |
+| `cn_only_prefixes` / `vendor_rules` / `regions` | 地域限制、厂商识别、端点映射 |
+
+模型条目字段（参考 VS Code Copilot 的 `chatLanguageModels.json` 设计）：
+
+```jsonc
+{
+  "id": "deepseek-flash",
+  "vendor": "deepseek",
+  "provider": "deepseek",
+  "display_name": "DeepSeek V4.1 Flash（官方直连·文本+视觉）",
+  "family": "deepseek",
+  "status": "active",            // active | deprecated
+  "replacement": "",             // 下线后的替代模型
+  "task_types": ["general", "long_text", "coding", "math_reasoning", "vision"],
+  "capabilities": {               // 不同模型的“特异功能”差异
+    "thinking": true, "vision": true, "tool_calling": true,
+    "json_output": true, "streaming": true
+  },
+  "limits": { "max_input_tokens": 1000000, "max_output_tokens": 384000 },
+  "pricing": {
+    "currency": "USD",           // 币种显式声明，不可跨币种相加
+    "unit": "per_million_tokens",
+    "input": 0.3, "output": 1.2,
+    "input_offpeak": 0.15, "output_offpeak": 0.6,
+    "source": "官方定价页（高峰价）",
+    "verified_at": "2026-09-15"   // 为空表示估算值
+  },
+  "cost_level": 1                 // 0=免费，越大越贵（用于粗排与筛选）
+}
+```
+
+#### 按需选模型（用户入口）
 
 ```python
-from autodokit.tools import list_providers, get_provider, resolve_provider, is_local_online
+from autodokit.tools import find_models, describe_model, list_models, catalog_info
+
+# 需要视觉 + JSON 输出，且成本等级 ≤ 2
+for item in find_models(needs_vision=True, needs_json=True, max_cost_level=2):
+    print(item.id, item.display_name, item.pricing.input, item.pricing.currency)
+
+# 看某个模型的全貌（含价格、能力、上限、备注的可读文本）
+print(describe_model("deepseek-flash")["text"])
 ```
 
 | 函数 | 说明 |
 | --- | --- |
-| `list_providers()` | 已注册 provider 名列表（`["bailian", "lmstudio"]`）。 |
-| `get_provider(name)` | 按名称获取 `LLMProvider` 定义（含 base_url / 默认模型 / 密钥名 / 是否本地）。 |
-| `resolve_provider(name="auto")` | 解析 provider：`auto` 时本地（lmstudio）在线则优先，否则回退 bailian。 |
+| `catalog_info()` | 目录概览：版本、模型计数、provider 顺序、币种、告警。 |
+| `list_models(*, provider, vendor, status, task_type)` | 列模型（按成本等级、再按 id 排序）。 |
+| `find_models(**条件)` | **按需筛选**（见下表），结果为 AND 关系。 |
+| `get_model(id)` / `describe_model(id)` | 单个模型的对象 / 完整说明（含 `text`）。 |
+| `format_model_table(models)` | 渲染可读表格（供 CLI 与人工挑选用）。 |
+| `provider_priority()` | auto 路由的 provider 顺序。 |
+| `resolve_model_provider(model)` | **反查模型归属的 provider**（见「模型候选清单」）。 |
+| `model_provider_map(models)` | 批量反查，返回「模型 → provider」对照表（含 `registered` 标记）。 |
+| `parse_model_candidates(raw)` | 解析模型候选清单（序列或逗号分隔字符串）。 |
+| `build_request_extra(provider, disable_thinking=)` | 组装厂商私有请求字段（含关闭思考）。 |
+| `load_catalog()` / `reload_catalog()` | 加载 / 强制重载数据文件。 |
+
+`find_models` 支持的筛选维度：
+
+| 参数 | 含义 |
+| --- | --- |
+| `task_type` | 任务类型（vision / coding / long_text / math_reasoning / general） |
+| `needs_vision` / `needs_thinking` / `needs_tool_calling` / `needs_json` / `needs_streaming` | 能力要求（`None` = 不限制） |
+| `provider` / `vendor` | 归属 provider / 厂商 |
+| `status` | 生命周期（默认只看 `active`；传 `"*"` 看全部） |
+| `max_cost_level` / `min_cost_level` | 成本等级区间 |
+| `min_input_tokens` | 最小上下文长度 |
+| `currency` | 定价币种（`CNY` / `USD`） |
+| `verified_pricing_only` | 只返回价格经人工核对的模型 |
+
+> **价格的币种是显式字段**：百炼系为 `CNY`、DeepSeek 官方直连为 `USD`。
+> 工具不做汇率换算，**跨币种金额不可直接相加**；`estimated_cost_range` 的
+> 币种随所选模型而定。
+
+#### Provider 管理
+
+```python
+from autodokit.tools import list_providers, get_provider, resolve_provider, iter_provider_chain
+```
+
+| 函数 | 说明 |
+| --- | --- |
+| `list_providers()` | 已注册 provider 名列表（`["deepseek", "bailian", "lmstudio"]`）。 |
+| `get_provider(name)` | 按名称获取 `LLMProvider` 定义（含 base_url / 默认模型 / 密钥名 / 是否本地 / 模型回退链 / extra_body）。 |
+| `resolve_provider(name="auto")` | 解析 provider：`auto` 时返回**首个可用**者（按优先级）；均不可用时返回首位。 |
+| `iter_provider_chain(name="auto")` | 返回**依次尝试**的 provider 序列（provider 级回退用）；显式指定时只含该项。 |
 | `is_local_online(provider, timeout=1.5)` | 探测本地 provider 服务是否在线（GET `/v1/models`）。 |
+
+**`auto` 优先级**（默认 DeepSeek → 百炼 → 本地）：
+
+优先级的三个来源，从高到低：
+
+| 来源 | 用法 | 适用场景 |
+| --- | --- | --- |
+| **按次参数** | `invoke_llm(..., provider_order="lmstudio,bailian,deepseek")` | 单次调用临时换顺序 |
+| **环境变量** | `AUTODO_LLM_PROVIDER_PRIORITY="bailian,deepseek"` | 当前 shell 会话内持续生效 |
+| **数据文件** | `llm_catalog.json` 中 provider 的 `priority` 字段 | 长期默认 |
+
+> **顺序 ≠ 白名单**：`order` 指定的是**尝试顺序**。未列出的 provider 会被
+> **追加到末尾**，避免因漏写而彻底不可达。若只想用某一家，请显式传
+> `provider="bailian"`（此时不做跨厂回退）。
+
+可用性判定：本地 provider 探活；云端 provider 看密钥文件是否存在。
+
+#### 凭据隔离（强制）
+
+`build_llm_client` **必须**为每个 provider 传入自己的 `api_key_file` 与 `secret_name`。
+
+> **历史缺陷**：早期实现对非本地 provider 只传 `env_api_key_name` 而不传 `api_key_file`，
+> 于是回落到硬编码为 `bailian`/`dashscope` 的默认候选——结果是
+> **把百炼的凭据发给了 DeepSeek**（服务端返回 401）。跨厂商误送凭据属凭据泄露风险，
+> 因此 `_iter_default_api_key_file_candidates(secret_name)` 已改为按厂商限定候选范围，
+> 且**不做跨厂商兼容回退**。回归测试：`test_build_llm_client_uses_own_secret_only`。
 
 #### 统一调用
 
@@ -1616,15 +1774,162 @@ def invoke_llm(
     system: str | None = None,
     provider: str = "auto",
     model: str = "",
+    model_candidates=None,
     base_url: str = "",
     max_tokens: int = 2048,
     temperature: float = 0.2,
     config_path=None,
     route_hints=None,
+    provider_order=None,
+    fallback_to_chain: bool = False,
 ) -> dict
 ```
 
-统一调用入口，返回 `status` / `provider` / `selected_model` / `response` / `error`。
+统一调用入口（含 **provider 级回退**），返回 `status` / `provider` /
+`selected_provider` / `selected_model` / `selected_vendor` / `candidate_index` /
+`attempts` / `provider_attempts` / `switching` / `provider_switching` /
+`response` / `error`。
+
+**三种选模型方式**（对应「餐厅点菜」的三个层次）：
+
+| 方式 | 含义 | 适用 |
+| --- | --- | --- |
+| （都不传） | 由 provider 决定默认 → 回退链 | 没主意，交给工具决定 |
+| `model="x"` | **锁定**单个模型，失败即失败 | 调试、复现、强制某一型号 |
+| `model_candidates=[...]` | **按序尝试**清单，前面的优先 | 业务方有自己的点菜顺序 |
+
+> `model` 与 `model_candidates` **互斥**；同时给出时以 `model` 为准（锁定语义更强）。
+
+**两级容灾**（互补，不可互替）：
+
+```mermaid
+flowchart LR
+    A["invoke_llm(provider=auto)"] --> B{"provider 链"}
+    B -->|1| C["deepseek<br/>deepseek-flash → deepseek-v4-pro"]
+    C -->|失败| D["bailian<br/>地域/档位路由 → 跨厂商链"]
+    D -->|失败| E["lmstudio<br/>本地单模型"]
+    C -->|成功| F["返回 + 审计"]
+    D -->|成功| F
+    E -->|成功| F
+```
+
+| 层级 | 抵抗的故障 | 实现 |
+| --- | --- | --- |
+| provider 层 | 平台级：账户欠费 / 服务不可用 | `iter_provider_chain` 逐个尝试 |
+| 模型层 | 模型级：限流 / 下线 / 临时不可用 | 各 provider 内部回退链 |
+
+行为区别：
+
+- `provider="auto"`：按优先级逐个尝试，**上一家失败自动换下一家**；
+- `provider="<名>"`：只试该家（尊重显式选择，**不静默换厂**）；
+- 显式 `base_url`：走 provider 内直连，`switching.mode == "provider-internal"`；
+- 有 `model_candidates`：进**菜单模式**，`switching.mode == "model-candidates"`。
+
+> **边界**：模型级回退救不了**账户级**故障（同账户全模型同时失败）；
+> 这也正是需要 provider 级回退的原因。
+
+#### 模型候选清单（「点菜单」）
+
+`model_candidates` 让调用方**用自己的顺序**选模型，而不是接受工具内部的优先级表。
+它与 `provider_order` 是**两个正交维度**：前者排模型（细），后者排厂商（粗）。
+
+```python
+from autodokit.tools import invoke_llm, find_models, model_provider_map
+
+# 1) 显式清单：按序尝试，最靠前的先上；每个模型自动路由到其归属平台
+result = invoke_llm(
+    prompt="...",
+    model_candidates=["qwen3.7-flash", "deepseek-flash", "qwen3.7-plus"],
+)
+print(result["selected_model"], result["candidate_index"])   # 命中了第几个
+
+# 2) 先查菜单再点菜：按能力/成本筛出候选，直接喂给调用
+candidates = [m.id for m in find_models(needs_json=True, max_cost_level=1)]
+result = invoke_llm(prompt="...", model_candidates=candidates)
+
+# 3) 预检：挑出拼错的模型名（业务方配置里最容易犯的错）
+for item in model_provider_map(["qwen3.7-flash", "qwen3.7-flsh"]):
+    if item["registered"] != "True":
+        print("无法判定归属，可能拼错:", item["model"])
+
+# 4) 锁定到某一平台（清单上所有模型都交给这一家）
+result = invoke_llm(prompt="...", provider="bailian",
+                    model_candidates=["qwen3.8-max", "qwen3.7-plus"])
+```
+
+**路由规则**：
+
+| `provider` | 行为 |
+| --- | --- |
+| `"auto"`（默认） | 逐个模型用 `resolve_model_provider` 反查归属平台；无法判定时退回 auto 链首位 |
+| 显式名（如 `"bailian"`） | 清单上**所有**模型都交给该家（适合「都在同一平台，只是挑型号」）；未注册时抛 `KeyError` |
+
+**失败语义**：单个模型失败**继续下一个**；清单耗尽即失败，`error` 为
+`all_candidate_models_failed: <清单>`。
+
+> **默认不扩大尝试范围**：清单就是调用方的意图，工具**不得**擅自换用清单之外的
+> 模型。否则产出质量异常时无从归因——分不清是「模型选错了」还是「任务本身有问题」。
+> 确实需要兜底时显式传 `fallback_to_chain=True`，此时清单耗尽后会回落常规
+> provider 链，并在 `switching.candidate_failures` 中保留候选失败记录。
+
+> **为什么用 ``provider`` 而不是 ``vendor`` 反查**：两者不等价。百炼是聚合平台，
+> 例如 `deepseek-v4.1-flash` 的 `vendor` 是 deepseek，但服务由百炼提供
+> （`provider` 为 bailian）。若按 vendor 路由到 DeepSeek 官方端点，会得到 404。
+
+菜单模式独有的审计字段：`candidate_index`（命中第几个，未命中为 `-1`）、
+`switching.candidates`、`switching.candidate_failures`、`switching.fallback_to_chain`；
+`attempts` 每项额外带 `requested_model` 与 `provider`。
+
+> 返回体形状稳定：链模式的 `candidate_index` 恒为 `-1`，调用方无需做 `None` 分支。
+> 回归测试：`tests/test_llm_model_candidates.py`。
+
+#### 关闭思考模式（`disable_thinking`）
+
+分类 / 抽取类任务不应让模型思考，否则会：
+
+| 后果 | 说明 |
+| --- | --- |
+| **输出预算被吃光** | 思考会占满 `max_tokens`，实测导致整批 JSON 被截断、解析失败 |
+| **成本上升** | 思考 token 按输出计费，而输出单价通常是输入的 4～6 倍 |
+| **延迟飙升** | 实测百炼 `qwen3.7-flash` **23.4s → 1.1s** |
+
+```python
+invoke_llm(prompt="...", model_candidates=["qwen3.7-flash"], disable_thinking=True)
+```
+
+各厂商参数名不同，存放在数据文件的 provider `no_thinking_body` 字段：
+
+| provider | 参数 |
+| --- | --- |
+| `bailian` | `{"enable_thinking": false}` |
+| `deepseek` | `{"thinking": {"type": "disabled"}}` |
+| `lmstudio` | （无）——关闭方式取决于所加载模型的 chat template，无法在 provider 层统一表达 |
+
+> **实现陷阱**：`extra` 必须包一层 `extra_body`。
+> `AliyunLLMClient.generate_text(extra=...)` 是直接 `kwargs.update(extra)` 展开到
+> `chat.completions.create()` 的，传 `{"enable_thinking": False}` 会被当成顶层
+> 关键字参数而报 `unexpected keyword argument`。
+> 该缺陷曾真实存在，且让 provider 的 `extra_body` 字段**从未生效过**。
+> 回归测试：`tests/test_llm_thinking_control.py`。
+
+`build_request_extra(provider, disable_thinking=)` 负责组装，无字段可传时返回 `None`。
+
+#### 必须向上汇报模型切换
+
+回退链一旦生效，**产出内容可能已非首选厂商/模型**。调用方**必须**读取
+`switching["summary"]` 并向上汇报，否则无法判断产出质量的来源。
+
+```python
+result = invoke_llm(prompt="...", provider="auto")
+if result["switching"]["switched"]:
+    print(result["switching"]["summary"])
+    # 例：provider deepseek 失败 → 已切换至 bailian；使用 qwen3.7-plus（alibaba），无切换
+if result["provider_switching"]["switched"]:
+    print(result["provider_switching"]["attempted_providers"])   # ['deepseek', 'bailian']
+```
+
+`switching` 字段：`switched` / `cross_vendor` / `primary_model` / `primary_vendor` /
+`selected_model` / `selected_vendor` / `failed_models` / `mode` / `summary`。
 
 ```python
 def build_llm_client(provider="auto", *, model="", base_url="", ...) -> tuple[AliyunLLMClient, str]
@@ -1639,7 +1944,7 @@ def build_llm_client(provider="auto", *, model="", base_url="", ...) -> tuple[Al
   "llm": {
     "default_provider": "auto",
     "providers": {
-      "bailian":  { "model": "qwen-plus" },
+      "bailian":  { "model": "qwen3.7-plus" },
       "lmstudio": { "model": "<本地模型名>", "base_url": "http://127.0.0.1:1234/v1" }
     }
   }
@@ -1654,41 +1959,6 @@ def build_llm_client(provider="auto", *, model="", base_url="", ...) -> tuple[Al
 `autodokit.affairs.模型路由派发` 的配置新增 `provider` 字段（默认 `auto`）：
 决策结果包含 `provider`、`provider_display`、`provider_base_url`、`provider_is_local`；
 `run_inference=true` 时按选定 provider 实际调用。
-
----
-
-### 2.22 超长会话批量读取工具
-
-```python
-from autodokit.tools import batch_read_pairs_by_llm
-```
-
-```python
-def batch_read_pairs_by_llm(
-    store_root,
-    *,
-    pair_ids=None,
-    provider="auto",
-    model="",
-    prompt_template="...",
-    system_prompt=None,
-    max_tokens=2048,
-    temperature=0.2,
-    result_path=None,
-    resume=True,
-) -> dict
-```
-
-逐 Pair 调用大模型批量读取会话：每个 Pair（一组问答）单独调用一次大模型，
-天然规避超长上下文问题。`resume=True` 时跳过已处理 Pair（断点续跑，
-结果逐条落盘到 `<store>/index_db/pair_llm_results.json`）。
-
-返回：`total` / `processed` / `skipped` / `failed` / `result_path` / `results`。
-
-```python
-# 配套检索入口（既有）
-from autodokit.tools import import_chat_session_markdown, get_chat_pair_info, repair_exported_chat_markdown
-```
 
 ---
 

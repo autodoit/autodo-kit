@@ -3,6 +3,21 @@
 uv.lock
 .github/**
 
+# ===== 用户专属运行时状态与配置（禁止提交）=====
+# 说明：这些文件承载【本机专属】的路径、项目清单与历史状态，可能含私密信息
+# （个人项目列表、目录结构）。开源仓只提供代码与配置模板
+# （sources.example.json），用户自行准备 sources.json 并通过 --config、
+# AOW_CONFIG 环境变量或 ~/.config/autodo-suite/aow_config.txt 指定。
+#
+# AOW（工作区同步）：包内兜底配置（正常应放在用户侧，此处仅为防误提交）
+autodokit/tools/workspace_sync/sources.json
+
+# AOB 用户级内容备份与撤销记录（大体积快照 + 私密内容）
+autodokit/tools/**/datastore/
+autodokit/tools/**/sync_undo/
+# 生成器的临时快照（项目壳等生成动作留下的中间产物）
+*.preshell-*
+
 
 # Created by https://www.toptal.com/developers/gitignore/api/r,c++,lyx,tex,java,node,rust,julia,latex,linux,macos,spark,stata,vcpkg,matlab,octave,python,pycharm,windows,obsidian,sublimetext,visualstudio,jupyternotebooks,visualstudiocode,venv
 # Edit at https://www.toptal.com/developers/gitignore?templates=r,c++,lyx,tex,java,node,rust,julia,latex,linux,macos,spark,stata,vcpkg,matlab,octave,python,pycharm,windows,obsidian,sublimetext,visualstudio,jupyternotebooks,visualstudiocode,venv
