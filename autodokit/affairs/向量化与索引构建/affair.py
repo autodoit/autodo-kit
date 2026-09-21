@@ -31,9 +31,33 @@ from pathlib import Path
 from typing import Any, Dict, List, Tuple
 
 from autodokit.tools import load_json_or_py
-from autodokit.tools.bibliodb_sqlite import load_chunk_sets_df
-from autodokit.tools.contentdb_sqlite import resolve_content_db_config
 from autodokit.tools.ocr.classic.pdf_structured_data_tools import iter_chunk_files_from_manifest
+
+#: 统一内容主库的配置键（含历史兼容别名）。
+_CONTENT_DB_KEYS: tuple[str, ...] = ("content_db", "references_db", "knowledge_db")
+
+
+def _resolve_content_db(raw_cfg: Dict[str, Any]) -> tuple[str, str]:
+    """惰性解析统一内容主库路径。
+
+    只有配置中确实声明了主库字段时才导入 content.db 集成层 ——
+    纯路径模式（仅用 ``input_chunk_manifest_json``）无需加载该层。
+
+    Args:
+        raw_cfg: 事务配置字典。
+
+    Returns:
+        ``(主库路径文本, 命中的配置键)``；未声明时返回 ``("", "")``。
+
+    Examples:
+        _resolve_content_db({})
+    """
+    if not any(str(raw_cfg.get(key) or "").strip() for key in _CONTENT_DB_KEYS):
+        return "", ""
+    from autodokit.tools.contentdb_sqlite import resolve_content_db_config
+
+    path, key = resolve_content_db_config(raw_cfg)
+    return (str(path) if path is not None else ""), key
 
 
 @dataclass
@@ -92,7 +116,7 @@ def execute(config_path: Path) -> List[Path]:
     raw_cfg = load_json_or_py(config_path)
 
     affair_cfg: Dict[str, Any] = dict(raw_cfg)
-    content_db_path, db_input_key = resolve_content_db_config(affair_cfg)
+    content_db_text, db_input_key = _resolve_content_db(affair_cfg)
 
     ngram_raw = affair_cfg.get("ngram_range") or [1, 2]
     if isinstance(ngram_raw, (list, tuple)) and len(ngram_raw) == 2:
@@ -106,7 +130,7 @@ def execute(config_path: Path) -> List[Path]:
         max_features=int(affair_cfg.get("max_features") or 20000),
         ngram_range=ngram_range,
         input_chunk_manifest_json=str(affair_cfg.get("input_chunk_manifest_json") or ""),
-        content_db=str(content_db_path) if content_db_path is not None else "",
+        content_db=str(content_db_text) if content_db_text else "",
         chunks_uid=str(affair_cfg.get("chunks_uid") or ""),
         db_input_key=db_input_key,
     )
@@ -128,6 +152,8 @@ def execute(config_path: Path) -> List[Path]:
                 "content_db 必须为绝对路径：请确认 main.py 已启用统一路径解析，"
                 f"当前值={cfg.content_db!r}"
             )
+        from autodokit.tools.bibliodb_sqlite import load_chunk_sets_df
+
         chunk_sets = load_chunk_sets_df(content_db).fillna("")
         if chunk_sets.empty:
             raise ValueError("content.db 中不存在可用的 literature_chunk_sets 记录。")

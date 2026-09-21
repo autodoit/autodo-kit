@@ -12,14 +12,37 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 from autodokit.tools import load_json_or_py
-from autodokit.tools.bibliodb_sqlite import load_literatures_df, replace_chunk_set_records
-from autodokit.tools.contentdb_sqlite import resolve_content_db_config
 from autodokit.tools.ocr.classic.pdf_structured_data_tools import (
     build_chunk_entries_from_structured_data,
     load_structured_data,
     write_chunk_shards,
 )
 from autodokit.tools.time_utils import now_compact
+
+#: 统一内容主库的配置键（含历史兼容别名）。
+_CONTENT_DB_KEYS: tuple[str, ...] = ("content_db", "references_db", "knowledge_db")
+
+
+def _resolve_content_db(raw_cfg: Dict[str, Any]) -> tuple[Optional[Path], str]:
+    """惰性解析统一内容主库路径。
+
+    只有配置中确实声明了主库字段时才导入 content.db 集成层 ——
+    纯路径模式（仅用 ``input_structured_dir``）无需加载该层。
+
+    Args:
+        raw_cfg: 事务配置字典。
+
+    Returns:
+        ``(主库路径, 命中的配置键)``；未声明时返回 ``(None, "")``。
+
+    Examples:
+        _resolve_content_db({})
+    """
+    if not any(str(raw_cfg.get(key) or "").strip() for key in _CONTENT_DB_KEYS):
+        return None, ""
+    from autodokit.tools.contentdb_sqlite import resolve_content_db_config
+
+    return resolve_content_db_config(raw_cfg)
 
 
 @dataclass
@@ -54,6 +77,8 @@ def _collect_structured_paths(*, structured_dir: Optional[str], content_db: Opti
         db_path = Path(str(content_db))
         if not db_path.is_absolute():
             raise ValueError(f"content_db 必须为绝对路径：{db_path}")
+        from autodokit.tools.bibliodb_sqlite import load_literatures_df
+
         table = load_literatures_df(db_path).fillna("")
         if "structured_abs_path" in table.columns:
             for _, row in table.iterrows():
@@ -81,7 +106,7 @@ def execute(config_path: Path) -> List[Path]:
     raw_cfg = load_json_or_py(config_path)
 
     affair_cfg: Dict[str, Any] = dict(raw_cfg)
-    content_db_path, db_input_key = resolve_content_db_config(affair_cfg)
+    content_db_path, db_input_key = _resolve_content_db(affair_cfg)
 
     cfg = ChunkConfig(
         output_dir=str(affair_cfg.get("output_dir") or ""),
@@ -159,6 +184,8 @@ def execute(config_path: Path) -> List[Path]:
                     "created_at": str(manifest.get("created_at") or ""),
                 }
             )
+        from autodokit.tools.bibliodb_sqlite import replace_chunk_set_records
+
         replace_chunk_set_records(
             Path(str(cfg.content_db)),
             chunk_set_row={

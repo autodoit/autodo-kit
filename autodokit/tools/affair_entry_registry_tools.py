@@ -8,7 +8,7 @@ from typing import Any
 
 from autodokit.path_compat import resolve_portable_path
 from autodokit.tools.config_contract_utils import export_to_chinese_contract, normalize_to_legacy_contract
-from autodokit.tools.obsidian_note_timezone_tools import get_current_time_iso
+from autodokit.tools.time_utils import now_iso
 
 
 MAINLINE_AFFAIR_ENTRY_MAP: dict[str, dict[str, Any]] = {
@@ -121,7 +121,7 @@ def build_mainline_affair_entry_registry(
 
     payload = {
         "schema_version": "2026-04-05-mainline-entry-v1",
-        "generated_at": get_current_time_iso(timezone_name),
+        "generated_at": now_iso(timezone_name),
         "workspace_root": str(resolved_root),
         "timezone": timezone_name,
         "records": records,

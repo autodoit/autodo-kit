@@ -1,19 +1,24 @@
-"""Obsidian 笔记时间元数据工具。
+"""Obsidian 笔记 frontmatter 时间字段的重写工具。
 
-用于统一处理 Markdown frontmatter 中的 `created`、`updated` 等时间字段，
-默认以北京时间 `Asia/Shanghai` 作为输出时区，同时允许国际用户显式指定其它时区。
+只处理**笔记 frontmatter 的 `created` / `updated` 字段**（切分 frontmatter、
+替换字段值、批量遍历）。
+
+通用时间能力（取当前时间、时区换算）不在此模块，统一由 ``time_utils`` 提供 ——
+本模块只做 Obsidian 专属的 frontmatter 改写。
 """
 
 from __future__ import annotations
 
-from datetime import datetime
 from pathlib import Path
 import re
 from typing import Any, Iterable, Sequence
-from zoneinfo import ZoneInfo
 
+from autodokit.tools.time_utils import (
+    DEFAULT_TIMEZONE_NAME,
+    convert_timestamp_to_timezone,
+    now_iso,
+)
 
-DEFAULT_OBSIDIAN_NOTE_TIMEZONE = "Asia/Shanghai"
 DEFAULT_OBSIDIAN_TIME_FIELDS: tuple[str, ...] = ("created", "updated")
 
 
@@ -33,41 +38,10 @@ def _split_frontmatter(text: str) -> tuple[str, str, str]:
     return "---\n", frontmatter, body
 
 
-def _resolve_timezone(timezone_name: str | None = None) -> ZoneInfo:
-    """解析时区对象。"""
-
-    return ZoneInfo(str(timezone_name or DEFAULT_OBSIDIAN_NOTE_TIMEZONE).strip() or DEFAULT_OBSIDIAN_NOTE_TIMEZONE)
-
-
-def get_current_time_iso(timezone_name: str = DEFAULT_OBSIDIAN_NOTE_TIMEZONE) -> str:
-    """返回指定时区下的当前 ISO 时间字符串。"""
-
-    return datetime.now(tz=_resolve_timezone(timezone_name)).isoformat()
-
-
-def convert_timestamp_to_timezone(
-    timestamp: str,
-    *,
-    target_timezone: str = DEFAULT_OBSIDIAN_NOTE_TIMEZONE,
-    assume_timezone: str = "UTC",
-) -> str:
-    """把单个时间字符串转换到目标时区。"""
-
-    raw = str(timestamp or "").strip()
-    if not raw:
-        return ""
-
-    normalized = raw[:-1] + "+00:00" if raw.endswith("Z") else raw
-    parsed = datetime.fromisoformat(normalized)
-    if parsed.tzinfo is None:
-        parsed = parsed.replace(tzinfo=_resolve_timezone(assume_timezone))
-    return parsed.astimezone(_resolve_timezone(target_timezone)).isoformat()
-
-
 def rewrite_obsidian_note_timestamps(
     note_path: str | Path,
     *,
-    target_timezone: str = DEFAULT_OBSIDIAN_NOTE_TIMEZONE,
+    target_timezone: str = DEFAULT_TIMEZONE_NAME,
     fields: Sequence[str] = DEFAULT_OBSIDIAN_TIME_FIELDS,
     assume_timezone: str = "UTC",
     fill_missing: bool = False,
@@ -108,7 +82,7 @@ def rewrite_obsidian_note_timestamps(
                     assume_timezone=assume_timezone,
                 )
             elif fill_missing:
-                new_value = get_current_time_iso(target_timezone)
+                new_value = now_iso(target_timezone)
             else:
                 new_value = current_value
             rewritten_line = f'{prefix_text}"{new_value}"' if new_value else line
@@ -125,7 +99,7 @@ def rewrite_obsidian_note_timestamps(
 
     if fill_missing and remaining_fields:
         for field in remaining_fields:
-            new_value = get_current_time_iso(target_timezone)
+            new_value = now_iso(target_timezone)
             rewritten_lines.append(f'{field}: "{new_value}"')
             updated_fields[field] = new_value
             changed = True
@@ -148,7 +122,7 @@ def batch_rewrite_obsidian_note_timestamps(
     note_paths: Iterable[str | Path] | None = None,
     note_dir: str | Path | None = None,
     glob_pattern: str = "**/*.md",
-    target_timezone: str = DEFAULT_OBSIDIAN_NOTE_TIMEZONE,
+    target_timezone: str = DEFAULT_TIMEZONE_NAME,
     fields: Sequence[str] = DEFAULT_OBSIDIAN_TIME_FIELDS,
     assume_timezone: str = "UTC",
     fill_missing: bool = False,
@@ -195,10 +169,7 @@ def batch_rewrite_obsidian_note_timestamps(
 
 
 __all__ = [
-    "DEFAULT_OBSIDIAN_NOTE_TIMEZONE",
     "DEFAULT_OBSIDIAN_TIME_FIELDS",
-    "get_current_time_iso",
-    "convert_timestamp_to_timezone",
-    "rewrite_obsidian_note_timestamps",
     "batch_rewrite_obsidian_note_timestamps",
+    "rewrite_obsidian_note_timestamps",
 ]

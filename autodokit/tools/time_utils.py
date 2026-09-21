@@ -52,12 +52,47 @@ def now_year(timezone_name: str | None = None) -> int:
     return now_dt(timezone_name).year
 
 
+def convert_timestamp_to_timezone(
+    timestamp: str,
+    *,
+    target_timezone: str | None = None,
+    assume_timezone: str = "UTC",
+) -> str:
+    """把时间字符串转换到目标时区。
+
+    Args:
+        timestamp: 待转换的时间字符串（ISO 8601）；结尾为 `Z` 时按 UTC 处理。
+        target_timezone: 目标时区名；省略时用默认时区。
+        assume_timezone: 原字符串不带时区信息时的假定时区。
+
+    Returns:
+        str: 目标时区下的 ISO 时间字符串；输入为空时返回空串。
+
+    Raises:
+        ValueError: 时间字符串无法解析。
+
+    Examples:
+        convert_timestamp_to_timezone("2026-01-01T00:00:00Z")
+    """
+
+    raw = str(timestamp or "").strip()
+    if not raw:
+        return ""
+
+    normalized = raw[:-1] + "+00:00" if raw.endswith("Z") else raw
+    parsed = datetime.fromisoformat(normalized)
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=resolve_timezone(assume_timezone))
+    return parsed.astimezone(resolve_timezone(target_timezone)).isoformat()
+
+
 __all__ = [
     "DEFAULT_TIMEZONE_NAME",
-    "resolve_timezone_name",
-    "resolve_timezone",
+    "convert_timestamp_to_timezone",
+    "now_compact",
     "now_dt",
     "now_iso",
-    "now_compact",
     "now_year",
+    "resolve_timezone",
+    "resolve_timezone_name",
 ]

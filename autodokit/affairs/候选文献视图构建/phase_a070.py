@@ -40,7 +40,7 @@ from autodokit.tools import (
     knowledge_index_sync_from_note,
     literature_bind_standard_note,
     load_json_or_py,
-    get_current_time_iso,
+    now_iso,
     process_reference_citation,
     refine_review_state_with_llm,
     sentence_line_from_review_state,
@@ -136,7 +136,7 @@ PLACEHOLDER_HINTS: Tuple[str, ...] = (
 
 
 def _note_now_iso() -> str:
-    return get_current_time_iso()
+    return now_iso()
 
 
 def _stringify(value: Any) -> str:

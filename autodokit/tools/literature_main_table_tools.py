@@ -16,7 +16,7 @@ from autodokit.tools.bibliodb import (
     generate_uid,
     parse_year_int,
 )
-from autodokit.tools.obsidian_note_timezone_tools import get_current_time_iso
+from autodokit.tools.time_utils import now_iso
 
 
 def _pick_better_text(current: str, candidate: str) -> str:
@@ -169,7 +169,7 @@ def build_literature_main_table(
     dedup_rows: List[Dict[str, Any]] = []
     dedup_map: Dict[str, int] = {}
     used_uid: set[str] = set()
-    now_iso = get_current_time_iso("Asia/Shanghai")
+    written_at = now_iso("Asia/Shanghai")
 
     for record, raw_pdf_match in zip(records, pdf_matches):
         if isinstance(raw_pdf_match, Mapping):
@@ -227,9 +227,9 @@ def build_literature_main_table(
         row["primary_attachment_name"] = Path(pdf_path).name if pdf_path else ""
         row["primary_attachment_source_path"] = pdf_source_path
         row["standard_note_uid"] = ""
-        row["created_at"] = now_iso
-        row["updated_at"] = now_iso
-        row["imported_at"] = now_iso
+        row["created_at"] = written_at
+        row["updated_at"] = written_at
+        row["imported_at"] = written_at
         row["authors"] = authors_text
         row["abstract"] = abstract_text
         row["keywords"] = keywords_text

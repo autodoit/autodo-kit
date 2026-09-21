@@ -17,7 +17,7 @@ from typing import Any, Dict, List, Tuple
 
 import pandas as pd
 
-from autodokit.tools.obsidian_note_timezone_tools import get_current_time_iso
+from autodokit.tools.time_utils import now_iso
 from autodokit.tools.task_docs import split_frontmatter
 
 
@@ -70,7 +70,7 @@ def _note_now_iso() -> str:
         默认知识笔记时间字符串。
     """
 
-    return get_current_time_iso()
+    return now_iso()
 
 
 def _stringify(value: Any) -> str:

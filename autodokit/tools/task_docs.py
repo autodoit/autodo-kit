@@ -21,8 +21,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Iterable, List, Optional
 
-from autodokit.tools.obsidian_note_timezone_tools import get_current_time_iso
-from autodokit.tools.time_utils import now_dt
+from autodokit.tools.time_utils import now_dt, now_iso
 
 
 @dataclass(frozen=True)
@@ -101,7 +100,7 @@ def _note_now_iso() -> str:
         形如 `2026-02-24T20:34:56+08:00` 的时间字符串。
     """
 
-    return get_current_time_iso()
+    return now_iso()
 
 
 def _safe_filename_component(text: str) -> str:
