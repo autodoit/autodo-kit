@@ -9,13 +9,13 @@ uv pip install --python .venv/Scripts/python.exe -r docs/sphinx/requirements.txt
 ## 生成预置事务手册
 
 ```bash
-~/CoreFiles/ProjectsFile/autodo-kit/.venv/Scripts/python.exe scripts/generate_affair_manual.py
+.venv/Scripts/python.exe scripts/generate_affair_manual.py
 ```
 
 ## 生成预置事务手册
 
 ```bash
-~/CoreFiles/ProjectsFile/autodo-kit/.venv/Scripts/python.exe scripts/generate_affair_manual.py
+.venv/Scripts/python.exe scripts/generate_affair_manual.py
 ```
 
 ## 通过 Python 直调事务
@@ -34,13 +34,13 @@ aok.run_affair(
 ## 通过 Python 直调工具
 
 ```bash
-~/CoreFiles/ProjectsFile/autodo-kit/.venv/Scripts/python.exe demos/scripts/demo_tool_user_import_call.py
-~/CoreFiles/ProjectsFile/autodo-kit/.venv/Scripts/python.exe demos/scripts/demo_tool_developer_get_tool_call.py
-~/CoreFiles/ProjectsFile/autodo-kit/.venv/Scripts/python.exe demos/scripts/demo_tool_cli_call.py
+.venv/Scripts/python.exe demos/scripts/demo_tool_user_import_call.py
+.venv/Scripts/python.exe demos/scripts/demo_tool_developer_get_tool_call.py
+.venv/Scripts/python.exe demos/scripts/demo_tool_cli_call.py
 ```
 
 ## 构建 Sphinx HTML
 
 ```bash
-~/CoreFiles/ProjectsFile/autodo-kit/.venv/Scripts/python.exe -m sphinx -b html docs/sphinx docs/sphinx/_build/html
+.venv/Scripts/python.exe -m sphinx -b html docs/sphinx docs/sphinx/_build/html
 ```
