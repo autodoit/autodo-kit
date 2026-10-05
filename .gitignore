@@ -1824,3 +1824,14 @@ docs/mailbox/relay/archive/
 
 # mailbox/relay — 治理信箱已迁出仓库（2026-10-05）
 docs/mailbox/relay/
+
+# 联合体治理：运行产物含本机绝对路径与业务数据，不入库（2026-10-05）
+output/attachments_to_literatures.csv
+output/literature_relations.csv
+
+# 联合体治理：机器生成的导航附件，仅含本机绝对路径，不入库（2026-10-05）
+WORKSPACE_GUIDE.md
+
+# 联合体治理：运行态数据库，不入库（2026-10-05）
+database/tasks/tasks.db
+output/

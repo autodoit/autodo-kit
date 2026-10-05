@@ -14,8 +14,7 @@
 ## 禁止与易踩坑
 <!-- TODO: 禁改目录、易踩坑、通用性红线等 -->
 
-## 工作区地图（移动端速查，详情见 WORKSPACE_GUIDE.md）
+## 项目结构（速查，详情见 WORKSPACE_GUIDE.md）
 
-- 💻 代码仓库 · autodo-kit → `/Users/ethan/CoreFiles/ProjectsFile/autodo-kit`
-- 📓 笔记 · 笔记：Engs：自动运作系统 → `/Users/ethan/Library/Mobile Documents/iCloud~md~obsidian/Documents/Engs_notebook/Projects/自动运作系统`
-- 📓 笔记 · 笔记：ES：通用任务事务运作流程管理 → `/Users/ethan/Library/Mobile Documents/iCloud~md~obsidian/Documents/ES_notebook/Projects/通用任务事务运作流程管理`
+- 💻 本项目 · autodo-kit → `./`
+
