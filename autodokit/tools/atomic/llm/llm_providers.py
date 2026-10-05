@@ -53,6 +53,9 @@ _VENDOR_DEFAULT_PROVIDER: Dict[str, str] = {
 }
 
 
+from .external_guard import check_external_call
+
+
 def _get_providers() -> Dict[str, LLMProvider]:
     """取得 provider 注册表（**数据文件优先，内置兜底**）。
 
@@ -1190,6 +1193,16 @@ def invoke_llm(
     # 锁定语义强于清单语义：同时给出时以 ``model`` 为准，避免「点了菜又锁了一道」歧义。
     if (model or "").strip():
         candidates = []
+
+    # 出境闸：外部 LLM 调用前过闸。
+    # 未注册钩子时直接放行 —— 通用仓不替宿主做安全决策。
+    # 钩子抛异常即阻断（宿主策略：机密内容禁止送外部服务）。
+    check_external_call(
+        prompt=prompt,
+        system=system,
+        provider=str(provider or "auto"),
+        model=str(model or ""),
+    )
 
     if candidates:
         menu_result = _invoke_candidate_models(

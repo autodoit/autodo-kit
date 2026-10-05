@@ -17,8 +17,8 @@
 
 ### 📓 笔记
 
-#### 笔记：Engs：autodo
-- **路径**: `/Users/ethan/Library/Mobile Documents/iCloud~md~obsidian/Documents/Engs_notebook/Projects/autodo`
+#### 笔记：Engs：自动运作系统
+- **路径**: `/Users/ethan/Library/Mobile Documents/iCloud~md~obsidian/Documents/Engs_notebook/Projects/自动运作系统`
 - **说明**: Obsidian 项目笔记，含 notes/、tasks/、archive/ 等
 - **子目录**: archive, design, docs, notes, sessions, tasks
 
@@ -39,4 +39,4 @@
 
 ---
 
-*本文件由 `generate_workspace_guides.py` 自动生成*
+*本文件由 `mlms_kit.aoc.workspace_guides` 自动生成*

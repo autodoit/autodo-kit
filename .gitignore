@@ -1821,3 +1821,6 @@ output/logs/
 # mailbox/relay — 运行时状态与归档（不入库）
 .mailbox/
 docs/mailbox/relay/archive/
+
+# mailbox/relay — 治理信箱已迁出仓库（2026-10-05）
+docs/mailbox/relay/
